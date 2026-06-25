@@ -15,12 +15,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python deps
+# Copy source + metadata together (hatchling reads src/buoy/__init__.py for version)
 COPY pyproject.toml ./
+COPY src/ ./src/
+
+# Install the package (deps + buoy itself)
 RUN pip install --no-cache-dir .
 
-# Copy application code
-COPY src/ ./src/
+# Copy frontend assets
 COPY static/ ./static/
 COPY buoy.yaml.example ./buoy.yaml.example
 
