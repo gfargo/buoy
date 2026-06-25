@@ -397,6 +397,20 @@ async def on_startup():
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 
 
+def _resolve_static_dir() -> Path:
+    """Resolve the static files directory.
+
+    Checks (in order):
+    1. /app/static — Docker container (Dockerfile copies static/ here)
+    2. Relative to source — local development (src/buoy/../../static)
+    """
+    docker_path = Path("/app/static")
+    if docker_path.exists():
+        return docker_path
+    # Development: relative to this file (src/buoy/server.py → src/buoy → src → project root)
+    return Path(__file__).parent.parent.parent / "static"
+
+
 def _validate_container_name(name: str) -> bool:
     """Validate container name to prevent injection."""
     return bool(_CONTAINER_NAME_RE.match(name)) and len(name) <= 128
@@ -435,7 +449,7 @@ async def _empty_disk_detail():
 
 async def index(request: Request) -> Response:
     """Serve the dashboard HTML."""
-    static_dir = Path(__file__).parent.parent.parent / "static"
+    static_dir = _resolve_static_dir()
     index_path = static_dir / "index.html"
     if not index_path.exists():
         return Response("index.html not found", status_code=500)
@@ -453,7 +467,7 @@ def create_app(config: BuoyConfig) -> Starlette:
     global _config
     _config = config
 
-    static_dir = Path(__file__).parent.parent.parent / "static"
+    static_dir = _resolve_static_dir()
 
     routes = [
         Route("/", index),
