@@ -32,7 +32,8 @@ class DockerCollector:
         """Run a docker command and return (returncode, stdout, stderr)."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "docker", *args,
+                "docker",
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -86,7 +87,8 @@ class DockerCollector:
 
         # Basic inspect
         code, stdout, stderr = await self._run(
-            "inspect", "--format",
+            "inspect",
+            "--format",
             '{"status":"{{.State.Status}}","started":"{{.State.StartedAt}}",'
             '"image":"{{.Config.Image}}","restart_count":{{.RestartCount}},'
             '"pid":{{.State.Pid}},"image_created":"{{.Created}}"}',
@@ -105,7 +107,9 @@ class DockerCollector:
 
         # Resource usage (docker stats --no-stream)
         stats_code, stats_out, _ = await self._run(
-            "stats", "--no-stream", "--format",
+            "stats",
+            "--no-stream",
+            "--format",
             '{"cpu_pct":"{{.CPUPerc}}","mem_usage":"{{.MemUsage}}",'
             '"mem_pct":"{{.MemPerc}}","net_io":"{{.NetIO}}","block_io":"{{.BlockIO}}"}',
             name,
@@ -130,7 +134,11 @@ class DockerCollector:
             return {"error": "invalid container name"}
 
         code, stdout, stderr = await self._run(
-            "logs", "--tail", str(tail), "--timestamps", name,
+            "logs",
+            "--tail",
+            str(tail),
+            "--timestamps",
+            name,
             timeout=5,
         )
 

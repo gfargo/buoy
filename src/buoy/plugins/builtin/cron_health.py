@@ -35,7 +35,14 @@ class CronHealthPlugin(Plugin):
         """Read cron CMD entries from journald (last 24h)."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "nsenter", "-t", "1", "-m", "-n", "--", "bash", "-c",
+                "nsenter",
+                "-t",
+                "1",
+                "-m",
+                "-n",
+                "--",
+                "bash",
+                "-c",
                 "journalctl -u cron --since '24 hours ago' --no-pager -q 2>/dev/null"
                 " | grep ') CMD ' | tail -20",
                 stdout=asyncio.subprocess.PIPE,
@@ -52,11 +59,13 @@ class CronHealthPlugin(Plugin):
             for line in stdout.decode().strip().split("\n"):
                 match = pattern.match(line)
                 if match:
-                    entries.append({
-                        "time": match.group(1),
-                        "user": match.group(2),
-                        "cmd": match.group(3)[:80],
-                    })
+                    entries.append(
+                        {
+                            "time": match.group(1),
+                            "user": match.group(2),
+                            "cmd": match.group(3)[:80],
+                        }
+                    )
             return entries
         except (TimeoutError, FileNotFoundError):
             return []

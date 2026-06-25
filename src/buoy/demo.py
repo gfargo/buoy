@@ -83,8 +83,18 @@ class DemoSystemCollector:
                 "load_5": round(max(0, _sinusoidal(1.0, 0.5)), 2),
                 "load_15": round(max(0, _sinusoidal(0.8, 0.3)), 2),
                 "top_processes": [
-                    {"pid": 1842, "cpu": round(cpu_val * 0.4, 1), "mem": 3.2, "cmd": "docker-containerd"},
-                    {"pid": 2901, "cpu": round(cpu_val * 0.2, 1), "mem": 8.1, "cmd": "grafana-server"},
+                    {
+                        "pid": 1842,
+                        "cpu": round(cpu_val * 0.4, 1),
+                        "mem": 3.2,
+                        "cmd": "docker-containerd",
+                    },
+                    {
+                        "pid": 2901,
+                        "cpu": round(cpu_val * 0.2, 1),
+                        "mem": 8.1,
+                        "cmd": "grafana-server",
+                    },
                     {"pid": 3104, "cpu": round(cpu_val * 0.15, 1), "mem": 5.4, "cmd": "postgres"},
                     {"pid": 1203, "cpu": round(cpu_val * 0.1, 1), "mem": 2.8, "cmd": "nginx"},
                     {"pid": 4501, "cpu": round(cpu_val * 0.05, 1), "mem": 1.2, "cmd": "node"},
@@ -176,9 +186,30 @@ class DemoDiskCollector:
     async def collect_detail(self) -> dict:
         return {
             "mounts": [
-                {"fs": "/dev/nvme0n1p2", "size": "953G", "used": "428G", "avail": "477G", "pct": 45, "mount": "/"},
-                {"fs": "/dev/nvme0n1p1", "size": "512M", "used": "63M", "avail": "449M", "pct": 12, "mount": "/boot/firmware"},
-                {"fs": "/dev/sda1", "size": "32G", "used": "4.8G", "avail": "25G", "pct": 16, "mount": "/mnt/backup"},
+                {
+                    "fs": "/dev/nvme0n1p2",
+                    "size": "953G",
+                    "used": "428G",
+                    "avail": "477G",
+                    "pct": 45,
+                    "mount": "/",
+                },
+                {
+                    "fs": "/dev/nvme0n1p1",
+                    "size": "512M",
+                    "used": "63M",
+                    "avail": "449M",
+                    "pct": 12,
+                    "mount": "/boot/firmware",
+                },
+                {
+                    "fs": "/dev/sda1",
+                    "size": "32G",
+                    "used": "4.8G",
+                    "avail": "25G",
+                    "pct": 16,
+                    "mount": "/mnt/backup",
+                },
             ],
             "io_read_gb": round(_sinusoidal(142, 2), 1),
             "io_write_gb": round(_sinusoidal(86, 1), 1),

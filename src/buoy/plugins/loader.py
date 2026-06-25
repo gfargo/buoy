@@ -65,7 +65,9 @@ class PluginManager:
             task = asyncio.create_task(self._collect_loop(plugin_id, plugin))
             self._tasks.append(task)
 
-        print(f"[buoy:plugins] {len(self._plugins)} plugin(s) active: {', '.join(self._plugins.keys())}")
+        print(
+            f"[buoy:plugins] {len(self._plugins)} plugin(s) active: {', '.join(self._plugins.keys())}"
+        )
 
     async def stop(self):
         """Teardown all plugins and cancel tasks."""

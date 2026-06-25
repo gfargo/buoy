@@ -29,7 +29,9 @@ class LokiPlugin(Plugin):
 
         try:
             query = '{job=~".+"} |~ "(?i)error|fatal|crit"'
-            params = urllib.parse.urlencode({"query": query, "limit": "15", "direction": "backward"})
+            params = urllib.parse.urlencode(
+                {"query": query, "limit": "15", "direction": "backward"}
+            )
             api_url = f"{url.rstrip('/')}/loki/api/v1/query_range?{params}"
             req = urllib.request.Request(api_url)
             with urllib.request.urlopen(req, timeout=8) as resp:
@@ -39,11 +41,13 @@ class LokiPlugin(Plugin):
             for stream in data.get("data", {}).get("result", []):
                 labels = stream.get("stream", {})
                 for ts, line in stream.get("values", [])[:15]:
-                    entries.append({
-                        "ts": ts,
-                        "line": line[:200],
-                        "job": labels.get("job", ""),
-                    })
+                    entries.append(
+                        {
+                            "ts": ts,
+                            "line": line[:200],
+                            "job": labels.get("job", ""),
+                        }
+                    )
 
             count = len(entries)
             status = "warn" if count > 0 else "ok"

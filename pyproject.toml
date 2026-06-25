@@ -48,6 +48,10 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+ignore = [
+    "E501",  # Line too long — inline JS templates in plugins are intentionally long
+    "F823",  # False positive for module-level globals referenced in functions
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

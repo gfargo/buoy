@@ -105,9 +105,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         try:
             decoded = base64.b64decode(auth_header[6:]).decode()
             user, password = decoded.split(":", 1)
-            return (
-                hmac.compare_digest(user, expected_user)
-                and hmac.compare_digest(password, expected_pass)
+            return hmac.compare_digest(user, expected_user) and hmac.compare_digest(
+                password, expected_pass
             )
         except Exception:
             return False

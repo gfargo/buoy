@@ -96,7 +96,8 @@ class MetricStore:
         cutoff = int(time.time()) - period_seconds
         try:
             cursor = self._conn.execute(
-                "SELECT ts, data FROM metrics WHERE collector = 'stats' AND ts >= ? ORDER BY ts ASC",
+                "SELECT ts, data FROM metrics "
+                "WHERE collector = 'stats' AND ts >= ? ORDER BY ts ASC",
                 (cutoff,),
             )
             results = []

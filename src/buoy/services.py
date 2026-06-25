@@ -51,24 +51,28 @@ async def discover_services(config: BuoyConfig, is_tailscale: bool) -> dict:
         else:
             url = ""
 
-        local_services.append({
-            "name": display_name,
-            "desc": desc,
-            "icon": icon,
-            "url": url,
-        })
+        local_services.append(
+            {
+                "name": display_name,
+                "desc": desc,
+                "icon": icon,
+                "url": url,
+            }
+        )
 
     # Build network services from config peers
     network_services = []
     for peer in config.network.peers:
         if peer.name == hostname:
             continue
-        network_services.append({
-            "name": peer.name,
-            "url": peer.url,
-            "tier": peer.tier,
-            "host": peer.name,
-        })
+        network_services.append(
+            {
+                "name": peer.name,
+                "url": peer.url,
+                "tier": peer.tier,
+                "host": peer.name,
+            }
+        )
 
     return {
         "local": local_services,

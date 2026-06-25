@@ -1,6 +1,5 @@
 """Tests for the Buoy configuration system."""
 
-
 import yaml
 
 from buoy.config import _apply_env_overrides, _build_config, load_config
@@ -67,11 +66,7 @@ class TestConfigFromYAML:
 
     def test_services_overrides(self):
         raw = {
-            "services": {
-                "overrides": {
-                    "grafana": {"name": "Grafana", "icon": "📊", "port": 3000}
-                }
-            }
+            "services": {"overrides": {"grafana": {"name": "Grafana", "icon": "📊", "port": 3000}}}
         }
         config = _build_config(raw)
         assert "grafana" in config.services.overrides

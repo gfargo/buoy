@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,46 +35,49 @@ _alert_engine = None
 
 async def api_health(request: Request) -> JSONResponse:
     """Health check endpoint."""
-    return JSONResponse({
-        "status": "ok",
-        "hostname": _config.node.name,
-        "version": "2.0.0-alpha.1",
-    })
+    return JSONResponse(
+        {
+            "status": "ok",
+            "hostname": _config.node.name,
+            "version": "2.0.0-alpha.1",
+        }
+    )
 
 
 async def api_config(request: Request) -> JSONResponse:
     """Public config subset — no secrets, just display/feature info."""
-    return JSONResponse({
-        "node": {
-            "name": _config.node.name,
-            "tier": _config.node.tier,
-            "role": _config.node.role,
-        },
-        "network": {
-            "tailnet_domain": _config.network.tailnet_domain,
-            "peers": [
-                {"name": p.name, "url": p.url, "tier": p.tier}
-                for p in _config.network.peers
-            ],
-        },
-        "theme": {
-            "preset": _config.theme.preset,
-            "custom": _config.theme.custom,
-        },
-        "features": {
-            "websocket": _config.features.websocket,
-            "history": _config.features.history,
-            "demo_mode": _config.features.demo_mode,
-            "night_mode": _config.features.night_mode,
-            "keyboard_shortcuts": _config.features.keyboard_shortcuts,
-        },
-        "refresh": {
-            "stats_interval": _config.refresh.stats_interval,
-            "services_interval": _config.refresh.services_interval,
-            "fleet_interval": _config.refresh.fleet_interval,
-            "plugins_interval": _config.refresh.plugins_interval,
-        },
-    })
+    return JSONResponse(
+        {
+            "node": {
+                "name": _config.node.name,
+                "tier": _config.node.tier,
+                "role": _config.node.role,
+            },
+            "network": {
+                "tailnet_domain": _config.network.tailnet_domain,
+                "peers": [
+                    {"name": p.name, "url": p.url, "tier": p.tier} for p in _config.network.peers
+                ],
+            },
+            "theme": {
+                "preset": _config.theme.preset,
+                "custom": _config.theme.custom,
+            },
+            "features": {
+                "websocket": _config.features.websocket,
+                "history": _config.features.history,
+                "demo_mode": _config.features.demo_mode,
+                "night_mode": _config.features.night_mode,
+                "keyboard_shortcuts": _config.features.keyboard_shortcuts,
+            },
+            "refresh": {
+                "stats_interval": _config.refresh.stats_interval,
+                "services_interval": _config.refresh.services_interval,
+                "fleet_interval": _config.refresh.fleet_interval,
+                "plugins_interval": _config.refresh.plugins_interval,
+            },
+        }
+    )
 
 
 async def api_stats(request: Request) -> JSONResponse:
@@ -113,7 +117,13 @@ async def api_stats_detail(request: Request) -> JSONResponse:
     system_detail = results[0] if not isinstance(results[0], Exception) else {}
     disk_detail = results[1] if not isinstance(results[1], Exception) else {}
 
-    return JSONResponse({"cpu": system_detail.get("cpu", {}), "memory": system_detail.get("memory", {}), "disk": disk_detail})
+    return JSONResponse(
+        {
+            "cpu": system_detail.get("cpu", {}),
+            "memory": system_detail.get("memory", {}),
+            "disk": disk_detail,
+        }
+    )
 
 
 async def api_services(request: Request) -> JSONResponse:
@@ -233,7 +243,9 @@ async def api_history(request: Request) -> JSONResponse:
 
     valid_metrics = {"cpu", "mem", "temp", "disk", "containers"}
     if metric not in valid_metrics:
-        return JSONResponse({"error": f"invalid metric, must be one of: {valid_metrics}"}, status_code=400)
+        return JSONResponse(
+            {"error": f"invalid metric, must be one of: {valid_metrics}"}, status_code=400
+        )
 
     data = _metric_store.query(metric, period_seconds)
     return JSONResponse({"metric": metric, "period": period_str, "data": data})
@@ -341,6 +353,7 @@ async def on_startup():
 
     if _config.features.demo_mode:
         from buoy.demo import DemoDiskCollector, DemoDockerCollector, DemoSystemCollector
+
         _collectors["system"] = DemoSystemCollector(_config)
         _collectors["docker"] = DemoDockerCollector(_config)
         _collectors["disk"] = DemoDiskCollector(_config)
@@ -358,12 +371,14 @@ async def on_startup():
     # Initialize metric history store (if enabled)
     if _config.features.history:
         from buoy.storage import MetricStore
+
         _metric_store = MetricStore(_config)
         _metric_store.open()
         print("[buoy] History storage enabled (SQLite ring buffer)")
 
     # Initialize alert engine
     from buoy.alerts import AlertEngine
+
     _alert_engine = AlertEngine(_config, broadcast_fn=broadcast_alert)
 
     # Start WebSocket broadcast loop
@@ -372,13 +387,12 @@ async def on_startup():
 
     # Initialize plugin manager
     from buoy.plugins.loader import PluginManager
+
     _plugin_manager = PluginManager(_config)
     await _plugin_manager.start()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-
-import re
 
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 
@@ -389,7 +403,15 @@ def _validate_container_name(name: str) -> bool:
 
 
 async def _empty_system():
-    return {"hostname": _config.node.name, "cpu": 0, "mem_used": 0, "mem_total": 0, "temp": 0, "uptime_h": 0, "uptime_m": 0}
+    return {
+        "hostname": _config.node.name,
+        "cpu": 0,
+        "mem_used": 0,
+        "mem_total": 0,
+        "temp": 0,
+        "uptime_h": 0,
+        "uptime_m": 0,
+    }
 
 
 async def _empty_docker():
@@ -479,6 +501,7 @@ def create_app(config: BuoyConfig) -> Starlette:
     # Add auth middleware if enabled
     if config.auth.enabled:
         from buoy.auth import AuthMiddleware
+
         middleware.append(Middleware(AuthMiddleware, auth_config=config.auth))
 
     app = Starlette(

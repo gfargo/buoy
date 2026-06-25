@@ -20,10 +20,10 @@ if TYPE_CHECKING:
 
 # Default thresholds (can be overridden in config in the future)
 DEFAULT_THRESHOLDS = {
-    "cpu": {"warn": 80, "crit": 95, "duration": 60},       # % for 60s
-    "memory": {"warn": 85, "crit": 95, "duration": 60},    # % for 60s
-    "disk": {"warn": 80, "crit": 90, "duration": 0},       # % immediate
-    "temp": {"warn": 75, "crit": 85, "duration": 30},      # °C for 30s
+    "cpu": {"warn": 80, "crit": 95, "duration": 60},  # % for 60s
+    "memory": {"warn": 85, "crit": 95, "duration": 60},  # % for 60s
+    "disk": {"warn": 80, "crit": 90, "duration": 0},  # % immediate
+    "temp": {"warn": 75, "crit": 85, "duration": 30},  # °C for 30s
 }
 
 
@@ -140,13 +140,15 @@ class AlertEngine:
 
         # Broadcast via WebSocket
         if self._broadcast_fn:
-            await self._broadcast_fn({
-                "type": "alert",
-                "level": level,
-                "metric": metric,
-                "message": message,
-                "value": value,
-            })
+            await self._broadcast_fn(
+                {
+                    "type": "alert",
+                    "level": level,
+                    "metric": metric,
+                    "message": message,
+                    "value": value,
+                }
+            )
 
         # Send webhook (non-blocking)
         asyncio.create_task(self._send_webhooks(alert))
@@ -158,11 +160,13 @@ class AlertEngine:
             alert.resolved_at = time.time()
             # Broadcast resolution
             if self._broadcast_fn:
-                await self._broadcast_fn({
-                    "type": "alert_resolved",
-                    "metric": metric,
-                    "message": f"{metric.upper()} returned to normal",
-                })
+                await self._broadcast_fn(
+                    {
+                        "type": "alert_resolved",
+                        "metric": metric,
+                        "message": f"{metric.upper()} returned to normal",
+                    }
+                )
 
     async def _send_webhooks(self, alert: Alert):
         """Send alert to configured webhooks (Discord, Slack, generic)."""
@@ -171,14 +175,16 @@ class AlertEngine:
             return
 
         # Generic webhook payload
-        payload = json.dumps({
-            "text": alert.message,
-            "level": alert.level,
-            "metric": alert.metric,
-            "value": alert.value,
-            "hostname": self.config.node.name,
-            "timestamp": alert.fired_at,
-        }).encode()
+        payload = json.dumps(
+            {
+                "text": alert.message,
+                "level": alert.level,
+                "metric": alert.metric,
+                "value": alert.value,
+                "hostname": self.config.node.name,
+                "timestamp": alert.fired_at,
+            }
+        ).encode()
 
         try:
             req = urllib.request.Request(

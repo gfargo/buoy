@@ -66,9 +66,23 @@ class DiskCollector:
         """Use nsenter to get host mount info."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "nsenter", "-t", "1", "-m", "--",
-                "df", "-h", "-x", "tmpfs", "-x", "devtmpfs",
-                "-x", "squashfs", "-x", "overlay", "-x", "efivarfs",
+                "nsenter",
+                "-t",
+                "1",
+                "-m",
+                "--",
+                "df",
+                "-h",
+                "-x",
+                "tmpfs",
+                "-x",
+                "devtmpfs",
+                "-x",
+                "squashfs",
+                "-x",
+                "overlay",
+                "-x",
+                "efivarfs",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -85,14 +99,16 @@ class DiskCollector:
                         pct = int(pct_str)
                     except ValueError:
                         pct = 0
-                    mounts.append({
-                        "fs": parts[0],
-                        "size": parts[1],
-                        "used": parts[2],
-                        "avail": parts[3],
-                        "pct": pct,
-                        "mount": parts[5],
-                    })
+                    mounts.append(
+                        {
+                            "fs": parts[0],
+                            "size": parts[1],
+                            "used": parts[2],
+                            "avail": parts[3],
+                            "pct": pct,
+                            "mount": parts[5],
+                        }
+                    )
             return mounts
         except (TimeoutError, FileNotFoundError):
             return []
@@ -106,14 +122,16 @@ class DiskCollector:
             used_gb = usage.used / (1024**3)
             avail_gb = usage.free / (1024**3)
             pct = int((usage.used / usage.total) * 100)
-            mounts.append({
-                "fs": "/",
-                "size": f"{total_gb:.1f}G",
-                "used": f"{used_gb:.1f}G",
-                "avail": f"{avail_gb:.1f}G",
-                "pct": pct,
-                "mount": "/",
-            })
+            mounts.append(
+                {
+                    "fs": "/",
+                    "size": f"{total_gb:.1f}G",
+                    "used": f"{used_gb:.1f}G",
+                    "avail": f"{avail_gb:.1f}G",
+                    "pct": pct,
+                    "mount": "/",
+                }
+            )
         except Exception:
             pass
         return mounts
@@ -127,7 +145,9 @@ class DiskCollector:
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                "smartctl", "-a", "/dev/nvme0n1",
+                "smartctl",
+                "-a",
+                "/dev/nvme0n1",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -175,8 +195,9 @@ class DiskCollector:
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _extract_smart(output: str, prefix: str, word_idx: int,
-                       strip_pct: bool = False, strip_comma: bool = False) -> str | None:
+    def _extract_smart(
+        output: str, prefix: str, word_idx: int, strip_pct: bool = False, strip_comma: bool = False
+    ) -> str | None:
         for line in output.split("\n"):
             if prefix in line:
                 parts = line.split()

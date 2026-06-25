@@ -208,7 +208,9 @@ class SystemCollector:
         sort_flag = "-%cpu" if sort_key == "cpu" else "-%mem"
         try:
             proc = await asyncio.create_subprocess_exec(
-                "ps", "aux", f"--sort={sort_flag}",
+                "ps",
+                "aux",
+                f"--sort={sort_flag}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -218,12 +220,14 @@ class SystemCollector:
             for line in lines:
                 parts = line.split(None, 10)
                 if len(parts) >= 11:
-                    result.append({
-                        "pid": int(parts[1]),
-                        "cpu": float(parts[2]),
-                        "mem": float(parts[3]),
-                        "cmd": parts[10][:80],
-                    })
+                    result.append(
+                        {
+                            "pid": int(parts[1]),
+                            "cpu": float(parts[2]),
+                            "mem": float(parts[3]),
+                            "cmd": parts[10][:80],
+                        }
+                    )
             return result
         except Exception:
             return []

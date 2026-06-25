@@ -62,7 +62,11 @@ class GitHubPlugin(Plugin):
                 summary=summary,
                 detail={
                     "notifications": [
-                        {"title": n["subject"]["title"], "repo": n["repository"]["full_name"], "type": n["subject"]["type"]}
+                        {
+                            "title": n["subject"]["title"],
+                            "repo": n["repository"]["full_name"],
+                            "type": n["subject"]["type"],
+                        }
                         for n in notifications[:5]
                     ],
                     "notification_count": notif_count,

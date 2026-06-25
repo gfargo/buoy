@@ -194,11 +194,13 @@ def _parse_peers(raw_peers: list[dict]) -> list[PeerConfig]:
     """Parse peer config entries."""
     peers = []
     for p in raw_peers:
-        peers.append(PeerConfig(
-            name=p.get("name", ""),
-            url=p.get("url", ""),
-            tier=p.get("tier", ""),
-        ))
+        peers.append(
+            PeerConfig(
+                name=p.get("name", ""),
+                url=p.get("url", ""),
+                tier=p.get("tier", ""),
+            )
+        )
     return peers
 
 

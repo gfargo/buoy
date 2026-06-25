@@ -69,16 +69,19 @@ class NetworkCollector:
             try:
                 async with httpx.AsyncClient(timeout=4.0, verify=False) as client:
                     import time
+
                     start = time.monotonic()
                     r = await client.get(f"{peer.url}/api/health")
                     elapsed = (time.monotonic() - start) * 1000
 
                     if r.status_code == 200:
-                        results.append({
-                            "name": peer.name,
-                            "latency_ms": round(elapsed, 1),
-                            "online": True,
-                        })
+                        results.append(
+                            {
+                                "name": peer.name,
+                                "latency_ms": round(elapsed, 1),
+                                "online": True,
+                            }
+                        )
                     else:
                         results.append({"name": peer.name, "latency_ms": -1, "online": False})
             except Exception:

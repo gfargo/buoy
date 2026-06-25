@@ -38,7 +38,9 @@ class PlanePlugin(Plugin):
             return PanelData(status="disabled", summary="Not configured")
 
         try:
-            url = f"{plane_url.rstrip('/')}/api/v1/workspaces/{workspace}/projects/{project}/cycles/"
+            url = (
+                f"{plane_url.rstrip('/')}/api/v1/workspaces/{workspace}/projects/{project}/cycles/"
+            )
             req = urllib.request.Request(
                 url, headers={"x-api-key": api_key, "Accept": "application/json"}
             )

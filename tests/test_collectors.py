@@ -138,12 +138,14 @@ class TestDockerContainerNameValidation:
 
     def test_valid_names(self):
         from buoy.collectors.docker import _valid_name
+
         assert _valid_name("grafana") is True
         assert _valid_name("my-container_1.0") is True
         assert _valid_name("plane-api-1") is True
 
     def test_invalid_names(self):
         from buoy.collectors.docker import _valid_name
+
         assert _valid_name("") is False
         assert _valid_name("-starts-with-dash") is False
         assert _valid_name("../../etc/passwd") is False

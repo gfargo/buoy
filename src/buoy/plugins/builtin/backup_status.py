@@ -39,7 +39,11 @@ class BackupStatusPlugin(Plugin):
         # Find backup files matching pattern
         files = sorted(backup_path.glob(pattern), key=lambda f: f.stat().st_mtime, reverse=True)
         if not files:
-            return PanelData(status="error", summary="No backups found", detail={"path": backup_dir, "pattern": pattern})
+            return PanelData(
+                status="error",
+                summary="No backups found",
+                detail={"path": backup_dir, "pattern": pattern},
+            )
 
         latest = files[0]
         stat = latest.stat()
