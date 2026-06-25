@@ -166,20 +166,11 @@ ruff check src/ tests/
 
 ## Documentation
 
-- [Configuration Reference](docs/configuration.md) — full YAML config guide
-- [Plugin Development](docs/plugins.md) — create custom plugins
-- [Deployment Guide](docs/deployment.md) — single node, fleet, reverse proxy patterns
+- [Configuration Reference](https://github.com/gfargo/buoy/wiki/Configuration) — full YAML config guide
+- [Plugin Development](https://github.com/gfargo/buoy/wiki/Plugins) — create custom plugins
+- [Deployment Guide](https://github.com/gfargo/buoy/wiki/Deployment) — single node, fleet, reverse proxy patterns
 - [Changelog](CHANGELOG.md) — release history
 - [Contributing](CONTRIBUTING.md) — dev setup, PR process
-
-## Roadmap
-
-- [x] Phase 1: Foundation (config, collectors, frontend split, demo mode)
-- [x] Phase 2: Real-time (WebSocket push, fleet polling)
-- [x] Phase 3: Plugins (plugin system, built-in integrations)
-- [x] Phase 4: Security (auth, rate limiting, security headers)
-- [x] Phase 5: History (SQLite trends, alert engine, notifications)
-- [x] Phase 6: Documentation & public launch
 
 ## License
 

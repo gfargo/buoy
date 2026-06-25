@@ -29,6 +29,7 @@ Thumbs.db
 buoy.yaml
 hub.db
 /data/
+.wiki/
 
 # Test / coverage
 .coverage
