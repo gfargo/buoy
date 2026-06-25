@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>buoy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Outfit:wght@300;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/buoy.css">
+<link rel="stylesheet" href="/static/css/themes/terminal.css" id="theme-stylesheet">
+</head>
+<body>
+<div class="shell">
+  <header>
+    <h1 id="hostname">--</h1>
+    <span class="tag" id="tier-tag">--</span>
+    <span class="access-badge" id="access-badge" style="display:none">tailscale</span>
+    <div class="uptime">up <span id="uptime">--</span></div>
+  </header>
+
+  <section class="gauges" aria-label="System metrics">
+    <div class="gauge" data-detail="cpu" role="button" tabindex="0" aria-label="CPU usage">
+      <div class="label">CPU</div>
+      <div class="value"><span id="cpu">--</span><span class="unit">%</span></div>
+      <div class="bar"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+      <span class="expand-hint" aria-hidden="true">&#9662; detail</span>
+    </div>
+    <div class="gauge" data-detail="memory" role="button" tabindex="0" aria-label="Memory usage">
+      <div class="label">Memory</div>
+      <div class="value"><span id="mem">--</span><span class="unit">GB</span></div>
+      <div class="bar"><div class="bar-fill" id="mem-bar" style="width:0%"></div></div>
+      <span class="expand-hint" aria-hidden="true">&#9662; detail</span>
+    </div>
+    <div class="gauge" data-detail="disk" role="button" tabindex="0" aria-label="Disk usage">
+      <div class="label">Disk</div>
+      <div class="value"><span id="disk">--</span><span class="unit">%</span></div>
+      <div class="bar"><div class="bar-fill" id="disk-bar" style="width:0%"></div></div>
+      <div class="sparkline" id="disk-sparkline"></div>
+      <span class="expand-hint" aria-hidden="true">&#9662; detail</span>
+    </div>
+    <div class="gauge no-detail" aria-label="CPU temperature">
+      <div class="label">CPU Temp</div>
+      <div class="value"><span id="temp">--</span><span class="unit">&deg;C</span></div>
+      <div class="bar"><div class="bar-fill" id="temp-bar" style="width:0%"></div></div>
+      <div class="sparkline" id="temp-sparkline"></div>
+    </div>
+    <div class="gauge" data-detail="containers" role="button" tabindex="0" aria-label="Container count">
+      <div class="label">Containers</div>
+      <div class="value"><span id="containers">--</span></div>
+      <span class="expand-hint" aria-hidden="true">&#9662; detail</span>
+    </div>
+    <div class="gauge no-detail" id="nvme-temp-gauge" style="display:none" aria-label="NVMe temperature">
+      <div class="label">NVMe Temp</div>
+      <div class="value"><span id="nvme-temp">--</span><span class="unit">&deg;C</span></div>
+      <div class="bar"><div class="bar-fill" id="nvme-temp-bar" style="width:0%"></div></div>
+    </div>
+  </section>
+
+  <div class="detail-panel" id="detail-panel" aria-live="polite">
+    <div class="detail-inner" id="detail-content"></div>
+  </div>
+
+  <section class="nvme-panel" id="nvme-panel" style="display:none" aria-label="NVMe health">
+    <div class="panel-header">
+      <div class="panel-title">NVMe Health</div>
+      <div class="health-badge" id="nvme-badge">Healthy</div>
+    </div>
+    <div class="nvme-grid">
+      <div class="nvme-stat"><div class="label">Wear Level</div><div class="val" id="nvme-wear">--%</div></div>
+      <div class="nvme-stat"><div class="label">Power On</div><div class="val" id="nvme-hours">-- hrs</div></div>
+      <div class="nvme-stat"><div class="label">Data Read</div><div class="val" id="nvme-read">--</div></div>
+      <div class="nvme-stat"><div class="label">Data Written</div><div class="val" id="nvme-written">--</div></div>
+    </div>
+  </section>
+
+  <section aria-label="Local services">
+    <div class="section-label">This Node</div>
+    <div class="services" id="services-local">
+      <div class="skeleton skel-service"></div>
+      <div class="skeleton skel-service"></div>
+      <div class="skeleton skel-service"></div>
+    </div>
+  </section>
+
+  <section aria-label="Network fleet">
+    <div class="section-label" id="network-label">Network</div>
+    <div class="fleet-grid" id="network-grid">
+      <div class="skeleton skel-fleet"></div>
+      <div class="skeleton skel-fleet"></div>
+    </div>
+  </section>
+
+  <section aria-label="Plugins" id="plugins-section" style="display:none">
+    <div class="section-label">Integrations</div>
+    <div class="services" id="plugins-grid"></div>
+  </section>
+
+  <footer id="footer">
+    <span id="footer-model">--</span>
+    <span id="footer-version">buoy v2.0.0</span>
+  </footer>
+</div>
+
+<script type="module" src="/static/js/buoy.js"></script>
+</body>
+</html>

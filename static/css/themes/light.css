@@ -1,0 +1,18 @@
+/* Light theme — clean, minimal. */
+
+:root {
+  --bg: #f8f9fb;
+  --surface: #ffffff;
+  --border: #e2e5ea;
+  --border-hi: #d0d4da;
+  --text: #3a3f48;
+  --text-dim: #8a8f98;
+  --text-bright: #1a1d22;
+  --amber: #d48820;
+  --amber-dim: #f0e0c0;
+  --green: #1a9848;
+  --green-dim: #d0f0dc;
+  --red: #d43838;
+  --cyan: #1888b0;
+  --cyan-dim: #d0e8f0;
+}

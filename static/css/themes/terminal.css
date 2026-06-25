@@ -1,0 +1,26 @@
+/* Terminal theme — dark, CRT-inspired. Default for Buoy. */
+
+:root {
+  --bg: #0a0c0f;
+  --surface: #12151a;
+  --border: #1e2228;
+  --border-hi: #2a3040;
+  --text: #c8cdd5;
+  --text-dim: #5a6270;
+  --text-bright: #eef0f4;
+  --amber: #e8a838;
+  --amber-dim: #7a5a20;
+  --green: #38e878;
+  --green-dim: #1a6838;
+  --red: #e84848;
+  --cyan: #38c8e8;
+  --cyan-dim: #1a5868;
+}
+
+/* Night mode — slightly deeper darks (auto-applied via JS) */
+body.night-mode {
+  --bg: #08090c;
+  --surface: #0e1015;
+  --border: #181c22;
+  --text: #b8bcc4;
+}

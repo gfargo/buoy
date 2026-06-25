@@ -1,0 +1,133 @@
+# ┌──────────────────────────────────────────────────────────┐
+# │  buoy.yaml — configuration for the Buoy dashboard       │
+# │                                                          │
+# │  Minimal config: just set node.name and you're running.  │
+# │  Everything else has sensible defaults.                  │
+# │                                                          │
+# │  Environment variables override any value here.          │
+# │  Prefix: BUOY_ (e.g., BUOY_NODE_NAME, BUOY_AUTH_TOKEN)  │
+# └──────────────────────────────────────────────────────────┘
+
+# ── Node Identity ──────────────────────────────────────────
+# The name shown in the dashboard header and used for fleet identification.
+node:
+  name: my-server            # Required: your hostname or display name
+  tier: ""                   # Optional: label like "Tier 1A", "prod", "edge"
+  role: ""                   # Optional: description like "Database Server"
+
+# ── Network ────────────────────────────────────────────────
+network:
+  listen_port: 8090          # Port buoy listens on
+
+  # If set, enables Tailscale-aware URL generation (HTTPS links via tailnet)
+  tailnet_domain: ""         # e.g., "tailb82ead.ts.net"
+
+  # Fleet peers — other buoy instances to show in the Network section.
+  # Each peer's /api/stats is polled for live vitals.
+  peers: []
+  # Example:
+  # peers:
+  #   - name: harbor
+  #     url: https://harbor.example.ts.net
+  #     tier: "Tier 1A"
+  #   - name: watch
+  #     url: https://watch.example.ts.net
+  #     tier: "Tier 2"
+
+# ── Services ───────────────────────────────────────────────
+# Buoy auto-discovers local Docker containers and shows them as services.
+# Use 'hidden' to exclude noise, 'overrides' to customize display.
+services:
+  # Container names to hide from the dashboard
+  hidden: []
+  # Example:
+  # hidden:
+  #   - "redis"
+  #   - "postgres"
+  #   - "my-app-db-1"
+
+  # Display overrides for discovered containers
+  overrides: {}
+  # Example:
+  # overrides:
+  #   grafana:
+  #     name: Grafana
+  #     icon: "\U0001F4CA"    # 📊
+  #     desc: "Dashboards & Logs"
+  #     port: 3000
+  #   jellyfin:
+  #     name: Jellyfin
+  #     icon: "\U0001F3AC"    # 🎬
+  #     desc: "Media Server"
+  #     port: 8096
+
+# ── Theme ──────────────────────────────────────────────────
+theme:
+  preset: terminal           # terminal (dark) | light
+  # For custom CSS variable overrides:
+  # custom:
+  #   bg: "#0a0c0f"
+  #   surface: "#12151a"
+  #   accent: "#e8a838"
+
+# ── Authentication ─────────────────────────────────────────
+# Optional. When enabled, protects destructive APIs (restart, logs).
+# Read-only APIs (stats, services) remain public for fleet polling.
+auth:
+  enabled: false
+  type: token                # token | basic
+  token: ""                  # Set via BUOY_AUTH_TOKEN env var (preferred)
+  # For basic auth:
+  # username: admin
+  # password: ""             # Set via BUOY_AUTH_PASSWORD env var
+
+# ── Features ───────────────────────────────────────────────
+features:
+  websocket: true            # Real-time updates via WebSocket
+  history: false             # SQLite ring buffer for 24h trends (Phase 5)
+  demo_mode: false           # Serve mock data (no Docker/host access needed)
+  night_mode: auto           # auto (10pm-6am) | always | never
+  keyboard_shortcuts: true   # 1-4 for gauges, Escape to close
+
+# ── Refresh Intervals (seconds) ───────────────────────────
+refresh:
+  stats_interval: 5          # System vitals polling
+  services_interval: 30      # Service discovery refresh
+  fleet_interval: 15         # Peer node polling
+  plugins_interval: 60       # Plugin data refresh
+
+# ── Plugins ────────────────────────────────────────────────
+# Built-in plugins are disabled by default. Enable and configure below.
+# Custom plugins go in the /plugins volume mount.
+plugins:
+  enabled: true
+  directory: /plugins        # Mount point for user plugins
+
+  builtin:
+    # GitHub notifications + open PRs
+    github:
+      enabled: false
+      token: ""              # Or BUOY_GITHUB_TOKEN env var
+
+    # UptimeKuma service health badges
+    uptime_kuma:
+      enabled: false
+      url: ""                # e.g., http://localhost:3001
+
+    # Loki recent error log
+    loki:
+      enabled: false
+      url: ""                # e.g., http://localhost:3100
+
+    # Plane sprint/cycle progress
+    plane:
+      enabled: false
+      api_key: ""
+      url: ""
+      workspace: ""
+      project: ""
+
+    # Actual Budget monthly summary (pending)
+    actual_budget:
+      enabled: false
+      url: ""
