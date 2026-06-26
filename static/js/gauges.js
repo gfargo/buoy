@@ -71,6 +71,12 @@ export function updateGauges(data) {
     setText('nvme-hours', (data.nvme.power_hours || 0).toLocaleString() + ' hrs');
     setText('nvme-read', data.nvme.read || '--');
     setText('nvme-written', data.nvme.written || '--');
+    const badge = document.getElementById('nvme-badge');
+    if (badge) {
+      const wear = data.nvme.wear_pct || 0;
+      badge.textContent = wear >= 90 ? 'Critical' : wear >= 70 ? 'Warning' : 'Healthy';
+      badge.className = 'health-badge' + (wear >= 90 ? ' crit' : wear >= 70 ? ' warn' : '');
+    }
   }
 
   // Tailscale badge

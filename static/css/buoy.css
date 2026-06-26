@@ -124,6 +124,7 @@ header .uptime span { color: var(--green); }
 .nvme-panel .panel-title { font-family: 'Outfit', sans-serif; font-weight: 600; font-size: 0.85rem; color: var(--text-bright); }
 .nvme-panel .health-badge { font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.1em; padding: 0.15rem 0.5rem; border-radius: 2px; background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
 .nvme-panel .health-badge.warn { background: var(--amber-dim); color: var(--amber); border-color: var(--amber); }
+.nvme-panel .health-badge.crit { background: var(--red-dim, rgba(255,80,80,0.15)); color: var(--red); border-color: var(--red); }
 .nvme-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
 .nvme-stat .label { font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
 .nvme-stat .val { font-size: 1rem; font-weight: 500; color: var(--cyan); margin-top: 0.2rem; }
