@@ -68,6 +68,31 @@ Initial public release. Complete rewrite from the internal "hub" dashboard.
 - Deployment patterns (single node, fleet, reverse proxy)
 - Contributing guide
 
+## [2.0.2] - 2026-06-26
+
+### Fixed
+- NVMe SMART collection now uses `nsenter -t 1 -m` to access host smartctl from within containers (#2, PR #12)
+- Removed `os.path.exists('/dev/nvme0n1')` guard that always blocked NVMe collection in Docker
+- Health badge in gauges.js reflects actual wear level (Healthy / Warning ≥70% / Critical ≥90%)
+- Added `.health-badge.crit` CSS style for critical NVMe state
+- Static directory path resolution for Docker installs (`/app/static` fallback)
+
+### Changed
+- Design spec added as reference document for open issues #1–#11
+
+## [2.0.1] - 2026-06-25
+
+### Fixed
+- Dockerfile build order: copy `src/` before `pip install` (hatchling needs `__init__.py` for version)
+- Include `README.md` in Docker build context for hatchling metadata
+- Resolved CI lint failures (E402, long lines, ruff format)
+
+### Changed
+- CI: build only linux/amd64 in CI for speed; multi-arch reserved for releases
+- Release workflow: trigger on `v*` tags with semver Docker tags
+- Documentation moved to GitHub wiki; roadmap removed from README
+- Ruff config: ignore E501 (inline JS) and F823 (module globals)
+
 ## Unreleased
 
 _Nothing yet._
