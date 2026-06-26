@@ -36,6 +36,34 @@ async function refreshStats() {
   } catch (e) { console.error('[buoy] stats error:', e); }
 }
 
+async function fetchDeployInfo() {
+  try {
+    const r = await fetch('/api/deploy-info');
+    if (!r.ok) return;
+    const d = await r.json();
+
+    const versionEl = document.getElementById('footer-version');
+    const deployEl = document.getElementById('footer-deploy');
+
+    if (versionEl && d.version) {
+      versionEl.textContent = `buoy v${d.version}`;
+    }
+
+    if (deployEl) {
+      const parts = [];
+      if (d.container_started) {
+        const dt = new Date(d.container_started);
+        parts.push(`built ${dt.toLocaleDateString()}`);
+      }
+      if (d.git_head) {
+        const sha = d.git_head.split(' ')[0];
+        parts.push(`sha-${sha}`);
+      }
+      deployEl.textContent = parts.join(' · ');
+    }
+  } catch (e) { /* best-effort */ }
+}
+
 function applyNightMode(mode) {
   if (mode === 'always') {
     document.body.classList.add('night-mode');
@@ -91,6 +119,7 @@ async function init() {
   await refreshServices(config);
   await refreshFleet(config);
   await refreshPlugins();
+  await fetchDeployInfo();
 
   // Refresh loops
   setInterval(refreshStats, config.refresh.stats_interval * 1000);

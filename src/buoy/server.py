@@ -80,6 +80,47 @@ async def api_config(request: Request) -> JSONResponse:
     )
 
 
+async def api_deploy_info(request: Request) -> JSONResponse:
+    """Deployment metadata — version, build time, git SHA."""
+    import buoy
+
+    info: dict = {"version": buoy.__version__}
+
+    # Container creation time (image build date)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "stat", "-c", "%W", "/proc/1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+        if stdout and stdout.strip() != b"0":
+            import datetime
+
+            boot_ts = int(stdout.strip())
+            info["container_started"] = (
+                datetime.datetime.fromtimestamp(boot_ts, tz=datetime.UTC).isoformat()
+            )
+    except Exception:
+        pass
+
+    # Git HEAD from host strut repo (optional, best-effort)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "nsenter", "-t", "1", "-m", "--",
+            "bash", "-c", "cd ~/strut 2>/dev/null && git log -1 --format='%h %s' 2>/dev/null",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        if stdout and stdout.strip():
+            info["git_head"] = stdout.decode().strip()
+    except Exception:
+        pass
+
+    return JSONResponse(info)
+
+
 async def api_stats(request: Request) -> JSONResponse:
     """System vitals — CPU, RAM, disk, temp, containers, uptime."""
 
@@ -473,6 +514,7 @@ def create_app(config: BuoyConfig) -> Starlette:
         Route("/", index),
         Route("/api/health", api_health),
         Route("/api/config", api_config),
+        Route("/api/deploy-info", api_deploy_info),
         Route("/api/stats", api_stats),
         Route("/api/stats/detail", api_stats_detail),
         Route("/api/services", api_services),
