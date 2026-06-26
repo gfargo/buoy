@@ -131,14 +131,152 @@ function renderContainersDetail() {
   if (containers.length) {
     html += `<div class="container-grid">`;
     containers.forEach(c => {
-      html += `<div class="ctr"><div class="dot-sm"></div><div class="ctr-name">${c.name}</div></div>`;
+      html += `<div class="ctr" onclick="window._buoyInspectContainer('${c.name}')"><div class="dot-sm"></div><div class="ctr-name">${c.name}</div></div>`;
     });
     html += `</div>`;
+    html += `<div id="container-inspect-panel"></div>`;
   } else {
     html += `<div style="color:var(--text-dim);font-size:0.7rem">No containers running</div>`;
   }
   return html;
 }
 
-// Expose closeDetail globally for inline onclick handlers
+/**
+ * Fetch and display detailed info for a single container.
+ */
+async function inspectContainer(name) {
+  const panel = document.getElementById('container-inspect-panel');
+  if (!panel) return;
+
+  // Toggle off if same container clicked again
+  if (panel.dataset.active === name) {
+    panel.innerHTML = '';
+    panel.dataset.active = '';
+    return;
+  }
+
+  panel.dataset.active = name;
+  panel.innerHTML = `<div class="ctr-inspect loading"><span class="ctr-inspect-text">Loading ${name}...</span></div>`;
+
+  try {
+    const r = await fetch(`/api/container/${encodeURIComponent(name)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+
+    panel.innerHTML = renderContainerInspect(d, name);
+  } catch (e) {
+    panel.innerHTML = `<div class="ctr-inspect error"><span class="ctr-inspect-text">Failed to load: ${e.message}</span></div>`;
+  }
+}
+
+function renderContainerInspect(d, name) {
+  const status = d.status || 'unknown';
+  const statusDot = status === 'running' ? 'green' : status === 'exited' ? 'red' : 'amber';
+  const image = d.image || '';
+  const started = d.started_at ? new Date(d.started_at).toLocaleString() : 'N/A';
+  const restarts = d.restart_count ?? 0;
+  const res = d.resources || {};
+  const cpu = res.cpu_pct != null ? `${res.cpu_pct}%` : 'N/A';
+  const mem = res.mem_usage || 'N/A';
+  const netIO = res.net_io || 'N/A';
+  const blockIO = res.block_io || 'N/A';
+  const imageAge = d.image_age || '';
+
+  return `<div class="ctr-inspect">
+    <div class="ctr-inspect-header">
+      <div class="ctr-inspect-name"><div class="dot-sm" style="background:var(--${statusDot})"></div>${name}</div>
+      <button class="ctr-inspect-close" onclick="document.getElementById('container-inspect-panel').innerHTML='';document.getElementById('container-inspect-panel').dataset.active=''">&#10005;</button>
+    </div>
+    <div class="ctr-inspect-grid">
+      <div class="ctr-stat"><span class="ctr-stat-label">Status</span><span class="ctr-stat-value">${status}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Started</span><span class="ctr-stat-value">${started}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Image</span><span class="ctr-stat-value ctr-image">${image}</span></div>
+      ${imageAge ? `<div class="ctr-stat"><span class="ctr-stat-label">Image Age</span><span class="ctr-stat-value">${imageAge}</span></div>` : ''}
+      <div class="ctr-stat"><span class="ctr-stat-label">Restarts</span><span class="ctr-stat-value">${restarts}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">CPU</span><span class="ctr-stat-value">${cpu}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Memory</span><span class="ctr-stat-value">${mem}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Net I/O</span><span class="ctr-stat-value">${netIO}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Block I/O</span><span class="ctr-stat-value">${blockIO}</span></div>
+    </div>
+    <div class="ctr-inspect-actions">
+      <button class="ctr-btn ctr-btn-restart" onclick="window._buoyRestartContainer('${name}', this)">↻ restart</button>
+      <button class="ctr-btn ctr-btn-logs" onclick="window._buoyContainerLogs('${name}')">⊞ logs</button>
+    </div>
+  </div>`;
+}
+
+/**
+ * Confirm-before-restart pattern: first click shows warning, second click confirms.
+ */
+async function restartContainer(name, btn) {
+  if (!btn.classList.contains('confirm')) {
+    btn.textContent = '⚠ click again to confirm';
+    btn.classList.add('confirm');
+    setTimeout(() => {
+      if (btn.classList.contains('confirm')) {
+        btn.textContent = '↻ restart';
+        btn.classList.remove('confirm');
+      }
+    }, 4000);
+    return;
+  }
+
+  btn.textContent = 'restarting...';
+  btn.disabled = true;
+  btn.classList.remove('confirm');
+
+  try {
+    const r = await fetch(`/api/container/${encodeURIComponent(name)}/restart`, { method: 'POST' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    btn.textContent = '✓ restarted';
+    btn.classList.add('success');
+    setTimeout(() => {
+      btn.textContent = '↻ restart';
+      btn.classList.remove('success');
+      btn.disabled = false;
+    }, 3000);
+  } catch (e) {
+    btn.textContent = '✗ failed';
+    btn.classList.add('error');
+    setTimeout(() => {
+      btn.textContent = '↻ restart';
+      btn.classList.remove('error');
+      btn.disabled = false;
+    }, 3000);
+  }
+}
+
+/**
+ * Show recent logs for a container inline.
+ */
+async function showContainerLogs(name) {
+  const panel = document.getElementById('container-inspect-panel');
+  if (!panel) return;
+
+  try {
+    const r = await fetch(`/api/container/${encodeURIComponent(name)}/logs`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+
+    const lines = (d.lines || []).join('\n');
+    const existing = panel.querySelector('.ctr-logs');
+    if (existing) { existing.remove(); return; }
+
+    const logsDiv = document.createElement('div');
+    logsDiv.className = 'ctr-logs';
+    logsDiv.innerHTML = `<div class="ctr-logs-header">Logs — ${name} (last ${d.lines?.length || 0} lines)<button class="ctr-logs-close" onclick="this.closest('.ctr-logs').remove()">&#10005;</button></div><pre class="ctr-logs-pre">${escapeHtml(lines)}</pre>`;
+    panel.appendChild(logsDiv);
+  } catch (e) {
+    // Silently fail
+  }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Expose functions globally for inline onclick handlers
 window._buoyCloseDetail = closeDetail;
+window._buoyInspectContainer = inspectContainer;
+window._buoyRestartContainer = restartContainer;
+window._buoyContainerLogs = showContainerLogs;
