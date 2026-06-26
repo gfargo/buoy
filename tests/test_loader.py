@@ -184,7 +184,7 @@ class TestLoadUserPlugins:
     @pytest.mark.asyncio
     async def test_loads_plugin_from_file(self, tmp_path):
         plugin_file = tmp_path / "my_plugin.py"
-        plugin_file.write_text('''
+        plugin_file.write_text("""
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 class MyCustomPlugin(Plugin):
@@ -192,7 +192,7 @@ class MyCustomPlugin(Plugin):
 
     async def collect(self):
         return PanelData(status="ok", summary="Custom works")
-''')
+""")
 
         config = _make_config(builtin={})
         config.plugins.directory = str(tmp_path)

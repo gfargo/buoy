@@ -88,15 +88,27 @@ class TestGitHubPlugin:
     async def test_successful_collect(self):
         plugin = self._make_plugin()
 
-        notifications_response = json.dumps([
-            {"subject": {"title": "Fix CI", "type": "PullRequest"}, "repository": {"full_name": "gfargo/buoy"}},
-            {"subject": {"title": "Bump deps", "type": "Issue"}, "repository": {"full_name": "gfargo/strut"}},
-        ]).encode()
+        notifications_response = json.dumps(
+            [
+                {
+                    "subject": {"title": "Fix CI", "type": "PullRequest"},
+                    "repository": {"full_name": "gfargo/buoy"},
+                },
+                {
+                    "subject": {"title": "Bump deps", "type": "Issue"},
+                    "repository": {"full_name": "gfargo/strut"},
+                },
+            ]
+        ).encode()
 
-        prs_response = json.dumps({
-            "total_count": 1,
-            "items": [{"title": "Add tests", "html_url": "https://github.com/gfargo/buoy/pull/12"}],
-        }).encode()
+        prs_response = json.dumps(
+            {
+                "total_count": 1,
+                "items": [
+                    {"title": "Add tests", "html_url": "https://github.com/gfargo/buoy/pull/12"}
+                ],
+            }
+        ).encode()
 
         call_count = [0]
 
@@ -189,19 +201,21 @@ class TestLokiPlugin:
     async def test_errors_found(self):
         plugin = self._make_plugin()
 
-        loki_response = json.dumps({
-            "data": {
-                "result": [
-                    {
-                        "stream": {"job": "buoy"},
-                        "values": [
-                            ["1719300000000000000", "ERROR: connection timeout"],
-                            ["1719299000000000000", "FATAL: disk full"],
-                        ],
-                    }
-                ]
+        loki_response = json.dumps(
+            {
+                "data": {
+                    "result": [
+                        {
+                            "stream": {"job": "buoy"},
+                            "values": [
+                                ["1719300000000000000", "ERROR: connection timeout"],
+                                ["1719299000000000000", "FATAL: disk full"],
+                            ],
+                        }
+                    ]
+                }
             }
-        }).encode()
+        ).encode()
 
         mock_cm = MagicMock()
         mock_cm.__enter__ = lambda s: MagicMock(read=lambda: loki_response)
@@ -273,13 +287,15 @@ class TestUptimeKumaPlugin:
     async def test_all_up(self):
         plugin = self._make_plugin()
 
-        response = json.dumps({
-            "heartbeatList": {
-                "1": [{"status": 1, "msg": "Grafana"}],
-                "2": [{"status": 1, "msg": "Plane"}],
-                "3": [{"status": 1, "msg": "Trigger.dev"}],
+        response = json.dumps(
+            {
+                "heartbeatList": {
+                    "1": [{"status": 1, "msg": "Grafana"}],
+                    "2": [{"status": 1, "msg": "Plane"}],
+                    "3": [{"status": 1, "msg": "Trigger.dev"}],
+                }
             }
-        }).encode()
+        ).encode()
 
         mock_cm = MagicMock()
         mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
@@ -295,12 +311,14 @@ class TestUptimeKumaPlugin:
     async def test_some_down(self):
         plugin = self._make_plugin()
 
-        response = json.dumps({
-            "heartbeatList": {
-                "1": [{"status": 1, "msg": "Grafana"}],
-                "2": [{"status": 0, "msg": "Plane"}],
+        response = json.dumps(
+            {
+                "heartbeatList": {
+                    "1": [{"status": 1, "msg": "Grafana"}],
+                    "2": [{"status": 0, "msg": "Plane"}],
+                }
             }
-        }).encode()
+        ).encode()
 
         mock_cm = MagicMock()
         mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
@@ -339,12 +357,14 @@ class TestPlanePlugin:
         from buoy.plugins.builtin.plane import PlanePlugin
 
         plugin = PlanePlugin()
-        plugin.configure({
-            "api_key": "test-key",
-            "url": "https://plane.example.com",
-            "workspace": "gfargo",
-            "project": "cf7d9230",
-        })
+        plugin.configure(
+            {
+                "api_key": "test-key",
+                "url": "https://plane.example.com",
+                "workspace": "gfargo",
+                "project": "cf7d9230",
+            }
+        )
         return plugin
 
     @pytest.mark.asyncio
@@ -364,17 +384,19 @@ class TestPlanePlugin:
         end = (date.today() + timedelta(days=5)).isoformat()
         start = (date.today() - timedelta(days=9)).isoformat()
 
-        response = json.dumps({
-            "results": [
-                {
-                    "name": "Sprint 4",
-                    "start_date": start,
-                    "end_date": end,
-                    "total_issues": 20,
-                    "completed_issues": 12,
-                }
-            ]
-        }).encode()
+        response = json.dumps(
+            {
+                "results": [
+                    {
+                        "name": "Sprint 4",
+                        "start_date": start,
+                        "end_date": end,
+                        "total_issues": 20,
+                        "completed_issues": 12,
+                    }
+                ]
+            }
+        ).encode()
 
         mock_cm = MagicMock()
         mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
@@ -396,11 +418,19 @@ class TestPlanePlugin:
         past_end = (date.today() - timedelta(days=5)).isoformat()
         past_start = (date.today() - timedelta(days=19)).isoformat()
 
-        response = json.dumps({
-            "results": [
-                {"name": "Sprint 3", "start_date": past_start, "end_date": past_end, "total_issues": 10, "completed_issues": 10}
-            ]
-        }).encode()
+        response = json.dumps(
+            {
+                "results": [
+                    {
+                        "name": "Sprint 3",
+                        "start_date": past_start,
+                        "end_date": past_end,
+                        "total_issues": 10,
+                        "completed_issues": 10,
+                    }
+                ]
+            }
+        ).encode()
 
         mock_cm = MagicMock()
         mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
@@ -438,7 +468,14 @@ class TestBackupStatusPlugin:
         from buoy.plugins.builtin.backup_status import BackupStatusPlugin
 
         plugin = BackupStatusPlugin()
-        plugin.configure({"backup_dir": backup_dir, "pattern": "*.sql.gz", "max_age_hours": 36, "min_size_bytes": 100})
+        plugin.configure(
+            {
+                "backup_dir": backup_dir,
+                "pattern": "*.sql.gz",
+                "max_age_hours": 36,
+                "min_size_bytes": 100,
+            }
+        )
         return plugin
 
     @pytest.mark.asyncio
@@ -670,7 +707,17 @@ class TestPrometheusExporterPlugin:
     def test_format_metrics_has_help_and_type(self):
         from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
 
-        stats = {"hostname": "test", "cpu": 0, "mem_used": 0, "mem_total": 1, "temp": 0, "disk_pct": 0, "containers": 0, "uptime_h": 0, "uptime_m": 0}
+        stats = {
+            "hostname": "test",
+            "cpu": 0,
+            "mem_used": 0,
+            "mem_total": 1,
+            "temp": 0,
+            "disk_pct": 0,
+            "containers": 0,
+            "uptime_h": 0,
+            "uptime_m": 0,
+        }
         output = PrometheusExporterPlugin.format_metrics(stats)
 
         assert "# HELP buoy_cpu_percent" in output

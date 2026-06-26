@@ -68,8 +68,19 @@ class NetworkCollector:
         """
         try:
             proc = await asyncio.create_subprocess_exec(
-                "nsenter", "-t", "1", "-m", "-n", "--",
-                "tailscale", "ping", "-c", "1", "--timeout", "3s", peer_name,
+                "nsenter",
+                "-t",
+                "1",
+                "-m",
+                "-n",
+                "--",
+                "tailscale",
+                "ping",
+                "-c",
+                "1",
+                "--timeout",
+                "3s",
+                peer_name,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
