@@ -82,24 +82,29 @@ async def api_config(request: Request) -> JSONResponse:
 
 async def api_stats(request: Request) -> JSONResponse:
     """System vitals — CPU, RAM, disk, temp, containers, uptime."""
+    from buoy.services import top_services
 
     system_coll = _collectors.get("system")
     docker_coll = _collectors.get("docker")
     disk_coll = _collectors.get("disk")
+
+    is_tailscale = ".ts.net" in request.headers.get("host", "")
 
     # Gather all stats concurrently
     results = await asyncio.gather(
         system_coll.collect() if system_coll else _empty_system(),
         docker_coll.collect_summary() if docker_coll else _empty_docker(),
         disk_coll.collect_summary() if disk_coll else _empty_disk(),
+        top_services(_config, is_tailscale),
         return_exceptions=True,
     )
 
     system_data = results[0] if not isinstance(results[0], Exception) else {}
     docker_data = results[1] if not isinstance(results[1], Exception) else {}
     disk_data = results[2] if not isinstance(results[2], Exception) else {}
+    services = results[3] if not isinstance(results[3], Exception) else []
 
-    return JSONResponse({**system_data, **docker_data, **disk_data})
+    return JSONResponse({**system_data, **docker_data, **disk_data, "top_services": services})
 
 
 async def api_stats_detail(request: Request) -> JSONResponse:

@@ -81,3 +81,16 @@ async def discover_services(config: BuoyConfig, is_tailscale: bool) -> dict:
         "tailscale": is_tailscale,
         "tailnet_domain": tailnet,
     }
+
+
+async def top_services(config: BuoyConfig, is_tailscale: bool, limit: int = 5) -> list[dict]:
+    """Return the first `limit` local services that have a URL.
+
+    Used by /api/stats so fleet cards can render service link pills.
+    """
+    data = await discover_services(config, is_tailscale)
+    return [
+        {"name": s["name"], "icon": s["icon"], "url": s["url"]}
+        for s in data["local"]
+        if s["url"]
+    ][:limit]
