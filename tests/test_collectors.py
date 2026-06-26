@@ -189,3 +189,88 @@ class TestDiskCollectorNvme:
         assert "power_hours" in nvme
         assert "read" in nvme
         assert "written" in nvme
+
+
+class TestNetworkLatency:
+    """Tests for NetworkCollector tailscale ping and HTTP fallback."""
+
+    def _make_net_config(self, peers=None):
+        from buoy.config import PeerConfig
+
+        config = _make_config("compass")
+        if peers:
+            config.network.peers = [PeerConfig(name=n, url=u) for n, u in peers]
+        return config
+
+    def _mock_proc(self, returncode, stdout):
+        from unittest.mock import AsyncMock, MagicMock
+
+        proc = MagicMock()
+        proc.returncode = returncode
+        proc.communicate = AsyncMock(return_value=(stdout, b""))
+        return proc
+
+    @pytest.mark.asyncio
+    async def test_tailscale_ping_parses_latency(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config()
+        coll = NetworkCollector(config)
+        proc = self._mock_proc(0, b"pong from compass (100.64.67.98) via DERP(nyc) in 2.1ms\n")
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            result = await coll._tailscale_ping("compass")
+
+        assert result == 2.1
+
+    @pytest.mark.asyncio
+    async def test_tailscale_ping_returns_none_on_failure(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config()
+        coll = NetworkCollector(config)
+        proc = self._mock_proc(1, b"")
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            result = await coll._tailscale_ping("compass")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_measure_latency_falls_back_to_http(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config([("harbor", "http://harbor.local")])
+        coll = NetworkCollector(config)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                results = await coll.measure_latency()
+
+        assert len(results) == 1
+        assert results[0]["online"] is True
+        assert results[0]["latency_ms"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_measure_latency_self_node(self):
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config([("compass", "http://compass.local")])
+        coll = NetworkCollector(config)
+        results = await coll.measure_latency()
+
+        assert results == [{"name": "compass", "latency_ms": 0, "online": True}]
