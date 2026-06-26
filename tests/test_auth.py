@@ -3,9 +3,7 @@
 import base64
 import time
 
-import pytest
-
-from buoy.auth import AuthMiddleware, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW, _rate_limit
+from buoy.auth import RATE_LIMIT_MAX, RATE_LIMIT_WINDOW, AuthMiddleware, _rate_limit
 
 
 class FakeAuthConfig:
