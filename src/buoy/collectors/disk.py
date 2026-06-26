@@ -7,7 +7,6 @@ Falls back to local filesystem info when nsenter is not available.
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
 from typing import TYPE_CHECKING
 
@@ -139,39 +138,49 @@ class DiskCollector:
     # ── NVMe SMART ─────────────────────────────────────────────────────────────
 
     async def _nvme_smart(self) -> dict | None:
-        """Read NVMe SMART data via smartctl."""
-        if not os.path.exists("/dev/nvme0n1"):
+        """Read NVMe SMART data via smartctl.
+
+        Tries nsenter first (container with pid:host) to access the host's
+        /dev/nvme0n1, then falls back to direct access.
+        """
+        # Build command: prefer nsenter to reach host device from container
+        nsenter_cmd = ["nsenter", "-t", "1", "-m", "--", "smartctl", "-a", "/dev/nvme0n1"]
+        direct_cmd = ["smartctl", "-a", "/dev/nvme0n1"]
+
+        output: str | None = None
+        for cmd in (nsenter_cmd, direct_cmd):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                if proc.returncode is not None and stdout:
+                    output = stdout.decode()
+                    break
+            except (TimeoutError, FileNotFoundError):
+                continue
+
+        if not output:
             return None
 
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "smartctl",
-                "-a",
-                "/dev/nvme0n1",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-            output = stdout.decode()
+        temp = self._extract_smart(output, "Temperature:", 1)
+        wear = self._extract_smart(output, "Percentage Used:", 2, strip_pct=True)
+        hours = self._extract_smart(output, "Power On Hours:", 3, strip_comma=True)
 
-            temp = self._extract_smart(output, "Temperature:", 1)
-            wear = self._extract_smart(output, "Percentage Used:", 2, strip_pct=True)
-            hours = self._extract_smart(output, "Power On Hours:", 3, strip_comma=True)
+        read_line = self._find_line(output, "Data Units Read:")
+        written_line = self._find_line(output, "Data Units Written:")
+        read_val = self._extract_bracket(read_line) if read_line else "unknown"
+        written_val = self._extract_bracket(written_line) if written_line else "unknown"
 
-            read_line = self._find_line(output, "Data Units Read:")
-            written_line = self._find_line(output, "Data Units Written:")
-            read_val = self._extract_bracket(read_line) if read_line else "unknown"
-            written_val = self._extract_bracket(written_line) if written_line else "unknown"
-
-            return {
-                "temp": int(temp) if temp else 0,
-                "wear_pct": int(wear) if wear else 0,
-                "read": read_val,
-                "written": written_val,
-                "power_hours": int(hours) if hours else 0,
-            }
-        except (TimeoutError, FileNotFoundError):
-            return None
+        return {
+            "temp": int(temp) if temp else 0,
+            "wear_pct": int(wear) if wear else 0,
+            "read": read_val,
+            "written": written_val,
+            "power_hours": int(hours) if hours else 0,
+        }
 
     # ── Disk I/O ───────────────────────────────────────────────────────────────
 

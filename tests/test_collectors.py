@@ -152,3 +152,40 @@ class TestDockerContainerNameValidation:
         assert _valid_name("a" * 200) is False
         assert _valid_name("has spaces") is False
         assert _valid_name("has;semicolon") is False
+
+
+class TestDiskCollectorNvme:
+    """Tests for real DiskCollector NVMe SMART path."""
+
+    @pytest.mark.asyncio
+    async def test_nvme_smart_returns_none_when_unavailable(self):
+        """_nvme_smart returns None gracefully when nsenter and smartctl are absent."""
+        from unittest.mock import patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        config = _make_config()
+        coll = DiskCollector(config)
+
+        # Both nsenter and direct smartctl calls raise FileNotFoundError
+        with patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=FileNotFoundError("smartctl not found"),
+        ):
+            result = await coll._nvme_smart()
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_demo_disk_nvme_in_summary(self):
+        """DemoDiskCollector always returns nvme data in collect_summary."""
+        config = _make_config()
+        coll = DemoDiskCollector(config)
+        data = await coll.collect_summary()
+        assert "nvme" in data
+        nvme = data["nvme"]
+        assert "temp" in nvme
+        assert "wear_pct" in nvme
+        assert "power_hours" in nvme
+        assert "read" in nvme
+        assert "written" in nvme
