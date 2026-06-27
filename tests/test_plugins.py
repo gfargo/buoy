@@ -6,13 +6,11 @@ Each plugin's collect() method is tested by mocking external calls
 
 import json
 import time
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
-
 
 # =============================================================================
 # Plugin protocol / base class
@@ -363,7 +361,6 @@ class TestPlanePlugin:
         from datetime import date, timedelta
 
         plugin = self._make_plugin()
-        today = date.today().isoformat()
         end = (date.today() + timedelta(days=5)).isoformat()
         start = (date.today() - timedelta(days=9)).isoformat()
 
@@ -551,9 +548,9 @@ class TestCronHealthPlugin:
         plugin = self._make_plugin()
 
         journal_output = (
-            "Jun 26 14:05:01 compass CRON[1234]: (root) CMD (/backup/scripts/nightly-plane.sh)\n"
-            "Jun 26 14:06:01 compass CRON[1235]: (gfargo) CMD (python3 /home/gfargo/pironman5-oled/pages/rgb_status.py)\n"
-        ).encode()
+            b"Jun 26 14:05:01 compass CRON[1234]: (root) CMD (/backup/scripts/nightly-plane.sh)\n"
+            b"Jun 26 14:06:01 compass CRON[1235]: (gfargo) CMD (python3 /home/gfargo/pironman5-oled/pages/rgb_status.py)\n"
+        )
 
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(journal_output, b""))
