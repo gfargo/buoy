@@ -3,6 +3,38 @@
  */
 
 let currentDetail = null;
+let _openCtrName = null;
+let _authToken = null;
+
+async function authedFetch(url, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (_authToken) headers['Authorization'] = `Bearer ${_authToken}`;
+  let r = await fetch(url, { ...opts, headers });
+  if (r.status === 401) {
+    const tok = prompt('Authentication required. Enter token:');
+    if (!tok) return r;
+    _authToken = tok;
+    headers['Authorization'] = `Bearer ${tok}`;
+    r = await fetch(url, { ...opts, headers });
+    if (r.status === 401) { _authToken = null; }
+  }
+  return r;
+}
+
+function formatStarted(iso) {
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
+function imageAgeDays(iso) {
+  try {
+    const diff = Date.now() - new Date(iso).getTime();
+    return Math.floor(diff / 86400000);
+  } catch { return '?'; }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 export function initDetail() {
   document.querySelectorAll('.gauge[data-detail]').forEach(gauge => {
@@ -10,6 +42,13 @@ export function initDetail() {
     gauge.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(gauge.dataset.detail); }
     });
+  });
+
+  document.getElementById('detail-content').addEventListener('click', e => {
+    const ctr = e.target.closest('.ctr[data-name]');
+    if (ctr) { e.stopPropagation(); toggleContainerDetail(ctr.dataset.name); return; }
+    const btn = e.target.closest('[data-ctr-action]');
+    if (btn) { e.stopPropagation(); handleCtrAction(btn); }
   });
 }
 
@@ -122,6 +161,7 @@ function renderDiskDetail(d) {
 
 function renderContainersDetail() {
   const containers = window._latestContainers || [];
+  _openCtrName = null;
   let html = `
     <div class="detail-header">
       <div class="detail-title">Running Containers (${containers.length})</div>
@@ -131,13 +171,88 @@ function renderContainersDetail() {
   if (containers.length) {
     html += `<div class="container-grid">`;
     containers.forEach(c => {
-      html += `<div class="ctr"><div class="dot-sm"></div><div class="ctr-name">${c.name}</div></div>`;
+      html += `<div class="ctr" data-name="${escHtml(c.name)}" role="button" tabindex="0"><div class="dot-sm"></div><div class="ctr-name">${escHtml(c.name)}</div></div><div class="ctr-detail" id="ctr-slot-${escHtml(c.name)}"></div>`;
     });
     html += `</div>`;
   } else {
     html += `<div style="color:var(--text-dim);font-size:0.7rem">No containers running</div>`;
   }
   return html;
+}
+
+async function toggleContainerDetail(name) {
+  const slot = document.getElementById(`ctr-slot-${name}`);
+  if (!slot) return;
+  if (_openCtrName === name) {
+    slot.innerHTML = '';
+    _openCtrName = null;
+    return;
+  }
+  if (_openCtrName) {
+    const prev = document.getElementById(`ctr-slot-${_openCtrName}`);
+    if (prev) prev.innerHTML = '';
+  }
+  _openCtrName = name;
+  slot.innerHTML = `<div class="ctr-card-loading">Loading…</div>`;
+  try {
+    const r = await authedFetch('/api/container/' + encodeURIComponent(name));
+    if (r.status === 401) { slot.innerHTML = `<div class="ctr-card-err">Authentication failed</div>`; return; }
+    const d = await r.json();
+    if (d.error) { slot.innerHTML = `<div class="ctr-card-err">${escHtml(d.error)}</div>`; return; }
+    slot.innerHTML = renderContainerCard(d);
+  } catch (e) {
+    slot.innerHTML = `<div class="ctr-card-err">Failed to load</div>`;
+  }
+}
+
+function renderContainerCard(d) {
+  const res = d.resources || {};
+  const stats = [
+    ['Status', d.status || '—'],
+    ['Started', formatStarted(d.started)],
+    ['Image', d.image || '—'],
+    ['Image Age', d.image_created ? imageAgeDays(d.image_created) + ' days' : '—'],
+    ['Restarts', d.restart_count ?? '—'],
+    ['CPU', res.cpu_pct || '—'],
+    ['Memory', res.mem_usage || '—'],
+    ['Net I/O', res.net_io || '—'],
+    ['Block I/O', res.block_io || '—'],
+  ];
+  let html = `<div class="ctr-card">`;
+  html += `<div class="detail-grid">` + stats.map(([l, v]) =>
+    `<div class="detail-stat"><div class="ds-label">${escHtml(l)}</div><div class="ds-value">${escHtml(String(v))}</div></div>`
+  ).join('') + `</div>`;
+  html += `<div class="ctr-actions">
+    <button class="ctr-btn" data-ctr-action="restart" data-name="${escHtml(d.name)}">↻ restart</button>
+    <button class="ctr-btn" data-ctr-action="logs" data-name="${escHtml(d.name)}">⊞ logs</button>
+  </div>
+  <div class="ctr-logs" id="ctr-logs-${escHtml(d.name)}"></div>
+  </div>`;
+  return html;
+}
+
+async function handleCtrAction(btn) {
+  const action = btn.dataset.ctrAction;
+  const name = btn.dataset.name;
+  if (action === 'restart') {
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const r = await authedFetch('/api/container/' + encodeURIComponent(name) + '/restart', { method: 'POST' });
+      const d = await r.json();
+      btn.textContent = d.success ? '✓ restarted' : '✗ failed';
+    } catch { btn.textContent = '✗ error'; }
+  } else if (action === 'logs') {
+    const logsEl = document.getElementById(`ctr-logs-${name}`);
+    if (!logsEl) return;
+    btn.disabled = true;
+    try {
+      const r = await authedFetch('/api/container/' + encodeURIComponent(name) + '/logs');
+      const d = await r.json();
+      logsEl.innerHTML = `<pre class="ctr-log-pre">${escHtml((d.lines || []).join('\n'))}</pre>`;
+    } catch { logsEl.innerHTML = `<div class="ctr-card-err">Failed to load logs</div>`; }
+    btn.disabled = false;
+  }
 }
 
 // Expose closeDetail globally for inline onclick handlers
