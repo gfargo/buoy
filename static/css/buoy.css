@@ -158,6 +158,10 @@ header .uptime span { color: var(--green); }
 .fleet-node .fn-stats { grid-column: 1 / -1; display: flex; gap: 1rem; font-size: 0.6rem; color: var(--text-dim); flex-wrap: wrap; }
 .fleet-node .fn-stats span { display: flex; align-items: center; gap: 0.25rem; }
 .fleet-node .fn-stats .fn-val { color: var(--text); font-weight: 500; }
+.fleet-node .fn-latency { font-size: 0.65rem; font-weight: 300; }
+.lat-good { color: var(--green); }
+.lat-warn { color: var(--amber); }
+.lat-bad  { color: var(--red); }
 
 /* ── Skeleton Loaders ────────────────────────────────── */
 
