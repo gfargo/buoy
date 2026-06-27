@@ -53,7 +53,9 @@ class TestAlertEngineEvaluation:
         config = _make_config()
         engine = AlertEngine(config)
 
-        await engine.evaluate({"cpu": 30, "mem_used": 2048, "mem_total": 8192, "temp": 45, "disk_pct": 50})
+        await engine.evaluate(
+            {"cpu": 30, "mem_used": 2048, "mem_total": 8192, "temp": 45, "disk_pct": 50}
+        )
         assert len(engine.active_alerts) == 0
 
     @pytest.mark.asyncio
@@ -63,7 +65,9 @@ class TestAlertEngineEvaluation:
         engine = AlertEngine(config)
 
         # First eval — starts the breach timer
-        await engine.evaluate({"cpu": 96, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50})
+        await engine.evaluate(
+            {"cpu": 96, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50}
+        )
         # With duration=60, alert doesn't fire on first eval
         assert len(engine.active_alerts) == 0
 
@@ -73,7 +77,9 @@ class TestAlertEngineEvaluation:
         config = _make_config()
         engine = AlertEngine(config)
 
-        await engine.evaluate({"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 92})
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 92}
+        )
         assert len(engine.active_alerts) == 1
         assert engine.active_alerts[0].metric == "disk"
         assert engine.active_alerts[0].level == "crit"
@@ -84,7 +90,9 @@ class TestAlertEngineEvaluation:
         config = _make_config()
         engine = AlertEngine(config)
 
-        await engine.evaluate({"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 82})
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 82}
+        )
         assert len(engine.active_alerts) == 1
         assert engine.active_alerts[0].level == "warn"
 
@@ -95,11 +103,15 @@ class TestAlertEngineEvaluation:
         engine = AlertEngine(config)
 
         # Fire
-        await engine.evaluate({"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 92})
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 92}
+        )
         assert len(engine.active_alerts) == 1
 
         # Resolve
-        await engine.evaluate({"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50})
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50}
+        )
         assert len(engine.active_alerts) == 0
 
     @pytest.mark.asyncio
@@ -108,7 +120,9 @@ class TestAlertEngineEvaluation:
         config = _make_config()
         engine = AlertEngine(config)
 
-        await engine.evaluate({"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 95})
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 95}
+        )
         assert len(engine.alert_history) == 1
         assert engine.alert_history[0]["metric"] == "disk"
 
@@ -119,7 +133,9 @@ class TestAlertEngineEvaluation:
         engine = AlertEngine(config)
 
         # Disk fires immediately (duration=0); CPU/temp have durations
-        await engine.evaluate({"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 95})
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 95}
+        )
         assert len(engine.active_alerts) == 1  # Just disk (others have duration)
 
 
@@ -135,7 +151,9 @@ class TestAlertEngineBroadcast:
             received.append(msg)
 
         engine = AlertEngine(config, broadcast_fn=fake_broadcast)
-        await engine.evaluate({"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 92})
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 92}
+        )
 
         assert len(received) == 1
         assert received[0]["type"] == "alert"
@@ -151,9 +169,13 @@ class TestAlertEngineBroadcast:
 
         engine = AlertEngine(config, broadcast_fn=fake_broadcast)
         # Fire
-        await engine.evaluate({"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 92})
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 92}
+        )
         # Resolve
-        await engine.evaluate({"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50})
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50}
+        )
 
         assert len(received) == 2
         assert received[1]["type"] == "alert_resolved"
@@ -164,7 +186,9 @@ class TestAlertEngineBroadcast:
         config = _make_config()
         engine = AlertEngine(config, broadcast_fn=None)
         # Should not raise
-        await engine.evaluate({"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 95})
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 95}
+        )
         assert len(engine.active_alerts) == 1
 
 
@@ -178,7 +202,9 @@ class TestAlertEngineDuration:
         engine = AlertEngine(config)
 
         # CPU has duration=60, so first breach just starts the timer
-        await engine.evaluate({"cpu": 96, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50})
+        await engine.evaluate(
+            {"cpu": 96, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50}
+        )
         assert len(engine.active_alerts) == 0
         assert "cpu" in engine._breach_start
 
@@ -189,14 +215,18 @@ class TestAlertEngineDuration:
         engine = AlertEngine(config)
 
         # Start breach
-        await engine.evaluate({"cpu": 96, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50})
+        await engine.evaluate(
+            {"cpu": 96, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50}
+        )
         assert len(engine.active_alerts) == 0
 
         # Simulate time passing beyond the duration threshold
         engine._breach_start["cpu"] -= 120  # Pretend it started 120s ago
 
         # Now it should fire
-        await engine.evaluate({"cpu": 96, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50})
+        await engine.evaluate(
+            {"cpu": 96, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50}
+        )
         assert len(engine.active_alerts) == 1
         assert engine.active_alerts[0].metric == "cpu"
 
@@ -207,9 +237,13 @@ class TestAlertEngineDuration:
         engine = AlertEngine(config)
 
         # Start breach
-        await engine.evaluate({"cpu": 96, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50})
+        await engine.evaluate(
+            {"cpu": 96, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50}
+        )
         assert "cpu" in engine._breach_start
 
         # Recover
-        await engine.evaluate({"cpu": 30, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50})
+        await engine.evaluate(
+            {"cpu": 30, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50}
+        )
         assert "cpu" not in engine._breach_start

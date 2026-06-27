@@ -90,7 +90,5 @@ async def top_services(config: BuoyConfig, is_tailscale: bool, limit: int = 5) -
     """
     data = await discover_services(config, is_tailscale)
     return [
-        {"name": s["name"], "icon": s["icon"], "url": s["url"]}
-        for s in data["local"]
-        if s["url"]
+        {"name": s["name"], "icon": s["icon"], "url": s["url"]} for s in data["local"] if s["url"]
     ][:limit]
