@@ -5,7 +5,7 @@ import time
 import pytest
 
 from buoy.config import BuoyConfig, FeaturesConfig, NodeConfig
-from buoy.storage import MetricStore, RETENTION_SECONDS
+from buoy.storage import RETENTION_SECONDS, MetricStore
 
 
 def _make_config():

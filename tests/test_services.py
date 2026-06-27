@@ -48,8 +48,8 @@ class TestDiscoverServicesLocal:
             {"name": "plane-api-1", "host_port": 8080},
         ]
 
-        with patch("buoy.collectors.docker.DockerCollector") as MockCollector:
-            instance = MockCollector.return_value
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
             instance.list_containers = AsyncMock(return_value=containers)
 
             result = await discover_services(config, is_tailscale=False)
@@ -67,8 +67,8 @@ class TestDiscoverServicesLocal:
             {"name": "postgres", "host_port": 5432},
         ]
 
-        with patch("buoy.collectors.docker.DockerCollector") as MockCollector:
-            instance = MockCollector.return_value
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
             instance.list_containers = AsyncMock(return_value=containers)
 
             result = await discover_services(config, is_tailscale=False)
@@ -84,8 +84,8 @@ class TestDiscoverServicesLocal:
         config = _make_config(overrides=overrides)
         containers = [{"name": "grafana", "host_port": 9999}]  # host_port gets overridden
 
-        with patch("buoy.collectors.docker.DockerCollector") as MockCollector:
-            instance = MockCollector.return_value
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
             instance.list_containers = AsyncMock(return_value=containers)
 
             result = await discover_services(config, is_tailscale=False)
@@ -100,8 +100,8 @@ class TestDiscoverServicesLocal:
         config = _make_config(name="compass", tailnet_domain="tailb82ead.ts.net")
         containers = [{"name": "grafana", "host_port": 3000}]
 
-        with patch("buoy.collectors.docker.DockerCollector") as MockCollector:
-            instance = MockCollector.return_value
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
             instance.list_containers = AsyncMock(return_value=containers)
 
             result = await discover_services(config, is_tailscale=True)
@@ -113,8 +113,8 @@ class TestDiscoverServicesLocal:
         config = _make_config()
         containers = [{"name": "some-worker"}]  # No host_port
 
-        with patch("buoy.collectors.docker.DockerCollector") as MockCollector:
-            instance = MockCollector.return_value
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
             instance.list_containers = AsyncMock(return_value=containers)
 
             result = await discover_services(config, is_tailscale=False)
@@ -125,8 +125,8 @@ class TestDiscoverServicesLocal:
     async def test_empty_containers(self):
         config = _make_config()
 
-        with patch("buoy.collectors.docker.DockerCollector") as MockCollector:
-            instance = MockCollector.return_value
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
             instance.list_containers = AsyncMock(return_value=[])
 
             result = await discover_services(config, is_tailscale=False)
@@ -145,8 +145,8 @@ class TestDiscoverServicesNetwork:
         ]
         config = _make_config(name="compass", peers=peers)
 
-        with patch("buoy.collectors.docker.DockerCollector") as MockCollector:
-            instance = MockCollector.return_value
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
             instance.list_containers = AsyncMock(return_value=[])
 
             result = await discover_services(config, is_tailscale=False)
@@ -164,8 +164,8 @@ class TestDiscoverServicesNetwork:
         ]
         config = _make_config(name="compass", peers=peers)
 
-        with patch("buoy.collectors.docker.DockerCollector") as MockCollector:
-            instance = MockCollector.return_value
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
             instance.list_containers = AsyncMock(return_value=[])
 
             result = await discover_services(config, is_tailscale=False)
@@ -182,8 +182,8 @@ class TestDiscoverServicesMetadata:
     async def test_response_shape(self):
         config = _make_config(name="watch", tailnet_domain="tailb82ead.ts.net")
 
-        with patch("buoy.collectors.docker.DockerCollector") as MockCollector:
-            instance = MockCollector.return_value
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
             instance.list_containers = AsyncMock(return_value=[])
 
             result = await discover_services(config, is_tailscale=True)

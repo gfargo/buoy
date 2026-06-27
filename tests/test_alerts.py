@@ -2,7 +2,7 @@
 
 import pytest
 
-from buoy.alerts import Alert, AlertEngine, DEFAULT_THRESHOLDS
+from buoy.alerts import Alert, AlertEngine
 from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig, PluginsConfig
 
 
