@@ -17,11 +17,10 @@ async function loadPluginJS() {
     const js = await r.text();
     if (js.trim()) {
       // Execute the JS to register render functions globally
-      const fn = new Function(js + '\nreturn { ' +
-        js.match(/function render_\w+/g)?.map(m => {
-          const name = m.replace('function ', '');
-          return `"${name}": ${name}`;
-        }).join(',') || '' + ' };');
+      const names = (js.match(/function render_\w+/g) || [])
+        .map(m => { const name = m.replace('function ', ''); return `"${name}": ${name}`; })
+        .join(',');
+      const fn = new Function(js + '\nreturn { ' + names + ' };');
       const renderers = fn();
       Object.assign(pluginRenderers, renderers);
     }
