@@ -193,3 +193,107 @@ class TestDiscoverServicesMetadata:
         assert result["tailnet_domain"] == "tailb82ead.ts.net"
         assert "local" in result
         assert "network" in result
+
+
+class TestTopServices:
+    """Tests for the top_services helper."""
+
+    @pytest.mark.asyncio
+    async def test_returns_url_bearing_services_only(self):
+        from buoy.services import top_services
+
+        config = _make_config()
+        containers = [
+            {"name": "grafana", "host_port": 3000},
+            {"name": "worker"},  # no port → no URL
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await top_services(config, is_tailscale=False)
+
+        assert len(result) == 1
+        assert result[0]["url"] == "http://localhost:3000"
+
+    @pytest.mark.asyncio
+    async def test_respects_limit(self):
+        from buoy.services import top_services
+
+        config = _make_config()
+        containers = [{"name": f"svc{i}", "host_port": 3000 + i} for i in range(10)]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await top_services(config, is_tailscale=False, limit=3)
+
+        assert len(result) == 3
+
+    @pytest.mark.asyncio
+    async def test_tailscale_url(self):
+        from buoy.services import top_services
+
+        config = _make_config(name="compass", tailnet_domain="tailb82ead.ts.net")
+        containers = [{"name": "grafana", "host_port": 3000}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await top_services(config, is_tailscale=True)
+
+        assert result[0]["url"] == "https://compass.tailb82ead.ts.net:3000"
+
+    @pytest.mark.asyncio
+    async def test_hidden_excluded(self):
+        from buoy.services import top_services
+
+        config = _make_config(hidden=["redis"])
+        containers = [
+            {"name": "grafana", "host_port": 3000},
+            {"name": "redis", "host_port": 6379},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await top_services(config, is_tailscale=False)
+
+        assert all(s["name"] != "redis" for s in result)
+
+    @pytest.mark.asyncio
+    async def test_overrides_applied(self):
+        from buoy.services import top_services
+
+        overrides = {"grafana": ServiceOverride(name="Grafana", icon="📊", port=3000)}
+        config = _make_config(overrides=overrides)
+        containers = [{"name": "grafana", "host_port": 9999}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await top_services(config, is_tailscale=False)
+
+        assert result[0]["name"] == "Grafana"
+        assert result[0]["icon"] == "📊"
+        assert result[0]["url"] == "http://localhost:3000"
+
+    @pytest.mark.asyncio
+    async def test_result_shape(self):
+        from buoy.services import top_services
+
+        config = _make_config()
+        containers = [{"name": "grafana", "host_port": 3000}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await top_services(config, is_tailscale=False)
+
+        assert set(result[0].keys()) == {"name", "icon", "url"}

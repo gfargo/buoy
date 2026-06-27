@@ -188,6 +188,11 @@ header .uptime span { color: var(--green); }
 .fleet-node .fn-stats { grid-column: 1 / -1; display: flex; gap: 1rem; font-size: 0.6rem; color: var(--text-dim); flex-wrap: wrap; }
 .fleet-node .fn-stats span { display: flex; align-items: center; gap: 0.25rem; }
 .fleet-node .fn-stats .fn-val { color: var(--text); font-weight: 500; }
+.fleet-node .fn-name-link { text-decoration: none; color: inherit; }
+.fleet-node .fn-name-link:hover { color: var(--cyan); }
+.fleet-node .fn-services { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.1rem; }
+.fn-svc { font-size: 0.6rem; padding: 0.15rem 0.45rem; border-radius: 3px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); text-decoration: none; white-space: nowrap; transition: border-color 0.15s, color 0.15s; }
+.fn-svc:hover { border-color: var(--cyan-dim); color: var(--cyan); }
 
 /* ── Skeleton Loaders ────────────────────────────────── */
 
