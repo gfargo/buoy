@@ -10,7 +10,6 @@ from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig
 from buoy.plugins.loader import PluginManager
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
-
 # =============================================================================
 # Config helpers
 # =============================================================================
