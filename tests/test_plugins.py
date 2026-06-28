@@ -729,3 +729,100 @@ class TestPrometheusExporterPlugin:
         plugin = self._make_plugin()
         assert plugin.manifest.id == "prometheus_exporter"
         assert plugin.manifest.refresh_interval == 9999  # Pulled on demand
+
+
+# =============================================================================
+# DNS Filter plugin
+# =============================================================================
+
+
+class TestDnsFilterPlugin:
+    """Tests for the Pi-hole / AdGuard Home DNS filter plugin."""
+
+    def _make_plugin(self, **cfg):
+        from buoy.plugins.builtin.dns_filter import DnsFilterPlugin
+
+        plugin = DnsFilterPlugin()
+        plugin.configure(cfg)
+        return plugin
+
+    def _mock_urlopen(self, payload: dict):
+        encoded = json.dumps(payload).encode()
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: encoded)
+        mock_cm.__exit__ = lambda s, *a: None
+        return mock_cm
+
+    @pytest.mark.asyncio
+    async def test_no_url_returns_disabled(self):
+        plugin = self._make_plugin()
+        result = await plugin.collect()
+        assert result.status == "disabled"
+        assert "Not configured" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_pihole_success(self):
+        plugin = self._make_plugin(url="http://pi.hole", type="pihole")
+        payload = {
+            "dns_queries_today": 12345,
+            "ads_blocked_today": 2222,
+            "ads_percentage_today": 18.0,
+            "status": "enabled",
+        }
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(payload)):
+            result = await plugin.collect()
+
+        assert result.status == "ok"
+        assert "12,345 queries" in result.summary
+        assert "18.0% blocked" in result.summary
+        assert result.detail["queries_today"] == 12345
+        assert result.detail["blocked_today"] == 2222
+        assert result.detail["blocked_pct"] == 18.0
+        assert result.detail["top_blocked"] == []
+
+    @pytest.mark.asyncio
+    async def test_adguard_success(self):
+        plugin = self._make_plugin(url="http://adguard:3000", type="adguard",
+                                   username="admin", password="secret")
+        payload = {
+            "num_dns_queries": 5000,
+            "num_blocked_filtering": 500,
+            "top_blocked_domains": [{"ads.example.com": 120}, {"tracker.io": 80}],
+        }
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(payload)):
+            result = await plugin.collect()
+
+        assert result.status == "ok"
+        assert "5,000 queries" in result.summary
+        assert "10.0% blocked" in result.summary
+        assert result.detail["top_blocked"] == [
+            {"domain": "ads.example.com", "count": 120},
+            {"domain": "tracker.io", "count": 80},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_high_block_rate_warns(self):
+        plugin = self._make_plugin(url="http://pi.hole", type="pihole")
+        payload = {
+            "dns_queries_today": 1000,
+            "ads_blocked_today": 300,
+            "ads_percentage_today": 30.0,
+            "status": "enabled",
+        }
+        with patch("urllib.request.urlopen", return_value=self._mock_urlopen(payload)):
+            result = await plugin.collect()
+
+        assert result.status == "warn"
+
+    @pytest.mark.asyncio
+    async def test_unreachable(self):
+        plugin = self._make_plugin(url="http://pi.hole", type="pihole")
+        with patch("urllib.request.urlopen", side_effect=Exception("Connection refused")):
+            result = await plugin.collect()
+
+        assert result.status == "error"
+        assert "Unreachable" in result.summary
+
+    def test_has_frontend_js(self):
+        plugin = self._make_plugin(url="http://pi.hole")
+        assert "render_dns_filter" in plugin.frontend_js()
