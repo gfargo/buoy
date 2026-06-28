@@ -840,3 +840,108 @@ class TestJournalErrorsPlugin:
         js = plugin.frontend_js()
         assert js is not None
         assert "render_journal_errors" in js
+
+
+# =============================================================================
+# Actual Budget plugin
+# =============================================================================
+
+
+class TestActualBudgetPlugin:
+    """Tests for the Actual Budget monthly summary plugin."""
+
+    def _make_plugin(self):
+        from buoy.plugins.builtin.actual_budget import ActualBudgetPlugin
+
+        plugin = ActualBudgetPlugin()
+        plugin.configure(
+            {
+                "url": "http://actual-http-api:5007",
+                "api_key": "test-key",
+                "budget_sync_id": "abc-123",
+            }
+        )
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_no_config_returns_disabled(self):
+        from buoy.plugins.builtin.actual_budget import ActualBudgetPlugin
+
+        plugin = ActualBudgetPlugin()
+        plugin.configure({})
+        result = await plugin.collect()
+        assert result.status == "disabled"
+        assert "Not configured" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_under_budget_ok(self):
+        plugin = self._make_plugin()
+
+        response = json.dumps(
+            {
+                "categoryGroups": [
+                    {
+                        "categories": [
+                            {"name": "Groceries", "budgeted": 500000, "spent": -300000},
+                            {"name": "Transport", "budgeted": 200000, "spent": -100000},
+                        ]
+                    }
+                ]
+            }
+        ).encode()
+
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
+            result = await plugin.collect()
+
+        assert result.status == "ok"
+        assert result.detail["spent"] == 400.0
+        assert result.detail["budgeted"] == 700.0
+        assert result.detail["pct"] == 57
+        assert "$400.00 / $700.00" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_over_90_percent_warn(self):
+        plugin = self._make_plugin()
+
+        response = json.dumps(
+            {
+                "categoryGroups": [
+                    {
+                        "categories": [
+                            {"name": "Groceries", "budgeted": 500000, "spent": -480000},
+                        ]
+                    }
+                ]
+            }
+        ).encode()
+
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
+            result = await plugin.collect()
+
+        assert result.status == "warn"
+        assert result.detail["pct"] == 96
+
+    @pytest.mark.asyncio
+    async def test_unreachable_returns_error(self):
+        plugin = self._make_plugin()
+
+        with patch("urllib.request.urlopen", side_effect=Exception("Connection refused")):
+            result = await plugin.collect()
+
+        assert result.status == "error"
+        assert "Unreachable" in result.summary
+        assert "error" in result.detail
+
+    def test_has_frontend_js(self):
+        plugin = self._make_plugin()
+        js = plugin.frontend_js()
+        assert js is not None
+        assert "render_actual_budget" in js

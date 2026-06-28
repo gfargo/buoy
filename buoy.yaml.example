@@ -127,10 +127,13 @@ plugins:
       workspace: ""
       project: ""
 
-    # Actual Budget monthly summary (pending)
+    # Actual Budget monthly summary
+    # Requires: actual-http-api sidecar (https://github.com/jhonderson/actual-http-api)
     actual_budget:
       enabled: false
-      url: ""
+      url: ""                # e.g., http://actual-http-api:5007
+      api_key: ""            # API key set on the HTTP adapter (not the Actual password)
+      budget_sync_id: ""     # Actual budget file sync ID
 
     # System journal priority-error count (last 24h)
     # Requires: privileged + pid: host deployment (see README)
