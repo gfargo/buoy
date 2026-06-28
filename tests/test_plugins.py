@@ -764,8 +764,16 @@ class TestTriggerDevPlugin:
         failed_resp = json.dumps(
             {
                 "data": [
-                    {"id": "run_1", "taskIdentifier": "send-email", "createdAt": "2026-06-28T01:00:00Z"},
-                    {"id": "run_2", "taskIdentifier": "process-payment", "createdAt": "2026-06-28T00:00:00Z"},
+                    {
+                        "id": "run_1",
+                        "taskIdentifier": "send-email",
+                        "createdAt": "2026-06-28T01:00:00Z",
+                    },
+                    {
+                        "id": "run_2",
+                        "taskIdentifier": "process-payment",
+                        "createdAt": "2026-06-28T00:00:00Z",
+                    },
                 ]
             }
         ).encode()
