@@ -71,9 +71,19 @@ class ProxmoxPlugin(Plugin):
             status=overall,
             summary=summary,
             detail={
-                "vms": [{"name": v.get("name"), "status": v.get("status"), "vmid": v.get("vmid")} for v in vms],
-                "cts": [{"name": c.get("name"), "status": c.get("status"), "vmid": c.get("vmid")} for c in cts],
-                "node": {"cpu_pct": cpu_pct, "mem_pct": mem_pct, "uptime": node_status.get("uptime", 0)},
+                "vms": [
+                    {"name": v.get("name"), "status": v.get("status"), "vmid": v.get("vmid")}
+                    for v in vms
+                ],
+                "cts": [
+                    {"name": c.get("name"), "status": c.get("status"), "vmid": c.get("vmid")}
+                    for c in cts
+                ],
+                "node": {
+                    "cpu_pct": cpu_pct,
+                    "mem_pct": mem_pct,
+                    "uptime": node_status.get("uptime", 0),
+                },
             },
         )
 
