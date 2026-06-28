@@ -56,7 +56,15 @@ class WireGuardPlugin(Plugin):
     async def _read_wg_dump(self, iface: str) -> str | None:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "nsenter", "-t", "1", "-m", "--", "wg", "show", iface, "dump",
+                "nsenter",
+                "-t",
+                "1",
+                "-m",
+                "--",
+                "wg",
+                "show",
+                iface,
+                "dump",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -109,13 +117,15 @@ def _parse_peers(dump: str, stale_seconds: int) -> list[dict]:
             ts = 0
         age = (now - ts) if ts > 0 else -1
         stale = ts == 0 or age > stale_seconds
-        peers.append({
-            "public_key": public_key[:12] + "…",
-            "endpoint": endpoint,
-            "allowed_ips": allowed_ips,
-            "handshake_age": age,
-            "rx": int(rx) if rx.isdigit() else 0,
-            "tx": int(tx) if tx.isdigit() else 0,
-            "stale": stale,
-        })
+        peers.append(
+            {
+                "public_key": public_key[:12] + "…",
+                "endpoint": endpoint,
+                "allowed_ips": allowed_ips,
+                "handshake_age": age,
+                "rx": int(rx) if rx.isdigit() else 0,
+                "tx": int(tx) if tx.isdigit() else 0,
+                "stale": stale,
+            }
+        )
     return peers
