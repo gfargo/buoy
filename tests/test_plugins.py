@@ -1086,6 +1086,7 @@ ALL_BUILTIN_IDS = {
     "backup_status",
     "cron_health",
     "github",
+    "immich",
     "journal_errors",
     "loki",
     "plane",
