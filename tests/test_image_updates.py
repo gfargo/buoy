@@ -149,9 +149,7 @@ class TestStatusComparison:
         with patch.object(
             checker,
             "_docker_image_refs",
-            new=AsyncMock(
-                return_value=[{"container": "myapp", "image": "myapp@sha256:abc123"}]
-            ),
+            new=AsyncMock(return_value=[{"container": "myapp", "image": "myapp@sha256:abc123"}]),
         ):
             result = await checker.check_all()
 

@@ -27,12 +27,14 @@ if TYPE_CHECKING:
 # Validate image ref components (no shell metacharacters)
 _IMAGE_REF_RE = re.compile(r"^[a-zA-Z0-9][\w.\-/:@]*$")
 
-_OCI_ACCEPT = ",".join([
-    "application/vnd.oci.image.index.v1+json",
-    "application/vnd.docker.distribution.manifest.list.v2+json",
-    "application/vnd.docker.distribution.manifest.v2+json",
-    "application/vnd.oci.image.manifest.v1+json",
-])
+_OCI_ACCEPT = ",".join(
+    [
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+    ]
+)
 
 
 def _valid_ref(ref: str) -> bool:
@@ -106,10 +108,7 @@ async def _local_digest(image: str) -> str | None:
 
 def _docker_hub_token(repo: str) -> str | None:
     """Fetch an anonymous bearer token for Docker Hub."""
-    url = (
-        f"https://auth.docker.io/token?service=registry.docker.io"
-        f"&scope=repository:{repo}:pull"
-    )
+    url = f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull"
     try:
         with urllib.request.urlopen(url, timeout=10) as r:  # noqa: S310
             return json.loads(r.read())["token"]
@@ -121,7 +120,7 @@ def _ghcr_token(repo: str) -> str | None:
     """Fetch an anonymous bearer token for GHCR."""
     url = f"https://ghcr.io/token?scope=repository:{repo}:pull"
     try:
-        with urllib.request.urlopen(url, timeout=10)  as r:  # noqa: S310
+        with urllib.request.urlopen(url, timeout=10) as r:  # noqa: S310
             return json.loads(r.read())["token"]
     except Exception:
         return None
@@ -175,9 +174,7 @@ class ImageUpdateChecker:
 
     async def _docker_image_refs(self) -> list[dict]:
         """List running containers with their image refs."""
-        code, out = await _run(
-            "docker", "ps", "--format", "{{.Names}}\t{{.Image}}"
-        )
+        code, out = await _run("docker", "ps", "--format", "{{.Names}}\t{{.Image}}")
         if code != 0 or not out:
             return []
         refs = []
@@ -214,8 +211,7 @@ class ImageUpdateChecker:
 
         remote_digests = await asyncio.gather(
             *[
-                _remote_digest(image_to_ref[img])
-                if image_to_ref[img] is not None else _noop()
+                _remote_digest(image_to_ref[img]) if image_to_ref[img] is not None else _noop()
                 for img in unique_images
             ],
             return_exceptions=True,

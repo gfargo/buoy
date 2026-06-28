@@ -549,12 +549,16 @@ async def on_startup():
     if _config.features.image_updates:
         if _config.features.demo_mode:
             from buoy.demo import DemoImageUpdateChecker
+
             _image_checker = DemoImageUpdateChecker(_config)
         else:
             from buoy.collectors.image_updates import ImageUpdateChecker
+
             _image_checker = ImageUpdateChecker(_config)
         asyncio.create_task(_image_update_loop(_image_checker))
-        print(f"[buoy] Image update checker enabled (interval: {_config.refresh.image_updates_interval}s)")
+        print(
+            f"[buoy] Image update checker enabled (interval: {_config.refresh.image_updates_interval}s)"
+        )
 
     # Initialize plugin manager
     from buoy.plugins.loader import PluginManager
