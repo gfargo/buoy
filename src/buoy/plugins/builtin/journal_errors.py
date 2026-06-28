@@ -41,8 +41,12 @@ class JournalErrorsPlugin(Plugin):
         try:
             proc = await asyncio.create_subprocess_exec(
                 "nsenter",
-                "-t", "1", "-m", "--",
-                "bash", "-c",
+                "-t",
+                "1",
+                "-m",
+                "--",
+                "bash",
+                "-c",
                 f"journalctl --priority=err --since '{since}' --no-pager -q 2>/dev/null"
                 f" | tail -{max_entries}",
                 stdout=asyncio.subprocess.PIPE,
@@ -52,20 +56,20 @@ class JournalErrorsPlugin(Plugin):
             if not stdout:
                 return []
 
-            pattern = re.compile(
-                r"^(\w{3}\s+\d+\s+[\d:]+)\s+\S+\s+(\S+?)(?:\[\d+\])?:\s*(.*)$"
-            )
+            pattern = re.compile(r"^(\w{3}\s+\d+\s+[\d:]+)\s+\S+\s+(\S+?)(?:\[\d+\])?:\s*(.*)$")
             entries = []
             for line in stdout.decode().strip().split("\n"):
                 if not line:
                     continue
                 match = pattern.match(line)
                 if match:
-                    entries.append({
-                        "time": match.group(1),
-                        "unit": match.group(2),
-                        "message": match.group(3)[:200],
-                    })
+                    entries.append(
+                        {
+                            "time": match.group(1),
+                            "unit": match.group(2),
+                            "message": match.group(3)[:200],
+                        }
+                    )
                 else:
                     entries.append({"time": "", "unit": "", "message": line[:200]})
             return entries
