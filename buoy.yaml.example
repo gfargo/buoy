@@ -181,3 +181,8 @@ plugins:
       api_key: ""            # Portainer API key (or BUOY_PLUGINS_BUILTIN_PORTAINER_API_KEY)
       endpoint_id: 1         # Portainer endpoint/environment ID
       verify_ssl: true       # Set false for self-signed certs (insecure)
+
+    # SMART disk health (SATA + NVMe) — requires privileged + pid: host
+    smart_disk:
+      enabled: false
+      drives: []   # empty = auto-detect via smartctl --scan
