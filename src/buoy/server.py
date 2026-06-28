@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import re
 from pathlib import Path
@@ -81,6 +82,11 @@ async def api_config(request: Request) -> JSONResponse:
             },
         }
     )
+
+
+async def api_config_debug(request: Request) -> JSONResponse:
+    """Auth-protected endpoint returning the full loaded config with secrets redacted."""
+    return JSONResponse(_redact_secrets(dataclasses.asdict(_config)))
 
 
 async def api_deploy_info(request: Request) -> JSONResponse:
@@ -571,6 +577,25 @@ async def on_startup():
 
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 
+_SECRET_KEY_FRAGMENTS = {"token", "password", "secret", "key"}
+
+
+def _redact_secrets(obj):
+    """Recursively replace secret-bearing string values with a redaction marker.
+
+    Only string values are redacted (booleans/ints with "key" in the name are left alone).
+    """
+    if isinstance(obj, dict):
+        return {
+            k: "***REDACTED***"
+            if isinstance(v, str) and v and any(frag in k.lower() for frag in _SECRET_KEY_FRAGMENTS)
+            else _redact_secrets(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_redact_secrets(item) for item in obj]
+    return obj
+
 
 def _resolve_static_dir() -> Path:
     """Resolve the static files directory.
@@ -648,6 +673,7 @@ def create_app(config: BuoyConfig) -> Starlette:
         Route("/", index),
         Route("/api/health", api_health),
         Route("/api/config", api_config),
+        Route("/api/config/debug", api_config_debug),
         Route("/api/deploy-info", api_deploy_info),
         Route("/api/stats", api_stats),
         Route("/api/stats/detail", api_stats_detail),
