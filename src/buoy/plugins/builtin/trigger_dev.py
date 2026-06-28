@@ -43,11 +43,7 @@ class TriggerDevPlugin(Plugin):
             return PanelData(status="disabled", summary="Not configured")
 
         try:
-            api_url = (
-                f"{url}/api/v1/runs"
-                f"?page[size]={_MAX_RUNS}"
-                f"&filter[projectRef]={project_ref}"
-            )
+            api_url = f"{url}/api/v1/runs?page[size]={_MAX_RUNS}&filter[projectRef]={project_ref}"
             req = urllib.request.Request(
                 api_url,
                 headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
@@ -73,9 +69,7 @@ class TriggerDevPlugin(Plugin):
                 if status in _FAILED_STATUSES:
                     finished_raw = run.get("finishedAt") or run.get("updatedAt") or ""
                     try:
-                        finished = datetime.fromisoformat(
-                            finished_raw.replace("Z", "+00:00")
-                        )
+                        finished = datetime.fromisoformat(finished_raw.replace("Z", "+00:00"))
                     except (ValueError, AttributeError):
                         finished = None
 

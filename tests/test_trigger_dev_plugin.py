@@ -106,11 +106,14 @@ class TestTriggerDevPlugin:
     @pytest.mark.asyncio
     async def test_queue_backing_up_error(self):
         plugin = self._make_plugin(
-            {"url": "https://api.trigger.dev", "api_key": "tr_test", "project_ref": "p", "queue_warn_threshold": 2}
+            {
+                "url": "https://api.trigger.dev",
+                "api_key": "tr_test",
+                "project_ref": "p",
+                "queue_warn_threshold": 2,
+            }
         )
-        payload = {
-            "data": [_make_run(f"task-{i}", "QUEUED") for i in range(3)]
-        }
+        payload = {"data": [_make_run(f"task-{i}", "QUEUED") for i in range(3)]}
         with patch("urllib.request.urlopen", return_value=_mock_urlopen(payload)):
             result = await plugin.collect()
 
