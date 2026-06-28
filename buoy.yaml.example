@@ -137,3 +137,9 @@ plugins:
       enabled: false
       status_file: /var/snapraid/snapraid.status   # path to saved status file
       sync_max_age_hours: 24                        # warn if last sync older than this
+
+    # Tailscale peer status (direct/relay, online/offline, exit node)
+    # No config needed — auto-detects tailscale via nsenter into host.
+    # Requires privileged + pid: host container.
+    tailscale:
+      enabled: false
