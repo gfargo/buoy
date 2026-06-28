@@ -218,6 +218,55 @@ footer { padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
 
+/* ── WS Status Banner ────────────────────────────────── */
+
+#ws-status {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9998;
+  text-align: center;
+  font-size: 0.65rem;
+  font-family: inherit;
+  padding: 0.35rem 1rem;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  opacity: 0;
+  transform: translateY(-100%);
+  pointer-events: none;
+  cursor: default;
+}
+.ws-status-reconnecting {
+  opacity: 1;
+  transform: translateY(0);
+  background: var(--amber-dim, #7a5a20);
+  color: var(--amber, #e8a838);
+  border-bottom: 1px solid var(--amber, #e8a838);
+  pointer-events: none;
+}
+.ws-status-connected {
+  opacity: 1;
+  transform: translateY(0);
+  background: var(--green-dim, #1a6838);
+  color: var(--green, #38e878);
+  border-bottom: 1px solid var(--green, #38e878);
+  pointer-events: none;
+}
+.ws-status-offline {
+  opacity: 1;
+  transform: translateY(0);
+  background: var(--red, #e84848);
+  color: #fff;
+  border-bottom: 1px solid var(--red, #e84848);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.ws-status-hidden {
+  opacity: 0;
+  transform: translateY(-100%);
+  pointer-events: none;
+}
+
 /* ── Responsive ──────────────────────────────────────── */
 
 @media (max-width: 768px) {
