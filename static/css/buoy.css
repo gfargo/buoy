@@ -124,6 +124,12 @@ header .uptime span { color: var(--green); }
 .ctr .dot-sm { width: 4px; height: 4px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
 .ctr .ctr-name { font-size: 0.6rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* Update status badges on container cards */
+.ctr-update-badge { font-size: 0.5rem; margin-left: auto; padding: 0.1rem 0.3rem; border-radius: 2px; border: 1px solid; flex-shrink: 0; }
+.ctr-update-badge.up-to-date { color: var(--green); border-color: var(--green); background: var(--green-dim); }
+.ctr-update-badge.update-available { color: var(--amber); border-color: var(--amber); background: var(--amber-dim); }
+.ctr-update-badge.unknown { color: var(--text-dim); border-color: var(--border); background: var(--surface); }
+
 /* ── Container Inspect Panel ─────────────────────────── */
 
 .ctr-inspect { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-top: 0.75rem; animation: fadeIn 0.2s ease-out; }

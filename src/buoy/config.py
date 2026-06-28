@@ -79,6 +79,7 @@ class FeaturesConfig:
     demo_mode: bool = False
     night_mode: str = "auto"  # auto | always | never
     keyboard_shortcuts: bool = True
+    image_updates: bool = False  # Docker image update checker (off by default)
 
 
 @dataclass
@@ -87,6 +88,7 @@ class RefreshConfig:
     services_interval: int = 30
     fleet_interval: int = 15
     plugins_interval: int = 60
+    image_updates_interval: int = 21600  # 6 hours
 
 
 @dataclass
@@ -168,6 +170,8 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_DEMO_MODE": ("features", "demo_mode"),
         "BUOY_FEATURES_WEBSOCKET": ("features", "websocket"),
         "BUOY_FEATURES_HISTORY": ("features", "history"),
+        "BUOY_FEATURES_IMAGE_UPDATES": ("features", "image_updates"),
+        "BUOY_REFRESH_IMAGE_UPDATES_INTERVAL": ("refresh", "image_updates_interval"),
     }
 
     for env_key, path in env_map.items():
@@ -180,9 +184,9 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             raw[section] = {}
 
         # Type coercion
-        if key in ("listen_port", "stats_interval", "fleet_interval"):
+        if key in ("listen_port", "stats_interval", "fleet_interval", "image_updates_interval"):
             raw[section][key] = int(value)
-        elif key in ("enabled", "websocket", "history", "demo_mode"):
+        elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates"):
             raw[section][key] = value.lower() in ("true", "1", "yes")
         else:
             raw[section][key] = value
@@ -276,6 +280,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         demo_mode=bool(features_raw.get("demo_mode", False)),
         night_mode=features_raw.get("night_mode", "auto"),
         keyboard_shortcuts=bool(features_raw.get("keyboard_shortcuts", True)),
+        image_updates=bool(features_raw.get("image_updates", False)),
     )
 
     refresh = RefreshConfig(
@@ -283,6 +288,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         services_interval=int(refresh_raw.get("services_interval", 30)),
         fleet_interval=int(refresh_raw.get("fleet_interval", 15)),
         plugins_interval=int(refresh_raw.get("plugins_interval", 60)),
+        image_updates_interval=int(refresh_raw.get("image_updates_interval", 21600)),
     )
 
     plugins = PluginsConfig(
