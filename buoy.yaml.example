@@ -131,3 +131,10 @@ plugins:
     actual_budget:
       enabled: false
       url: ""
+
+    # Internet speed tests — runs in background every interval_hours.
+    # Enable on the node closest to your router only (avoid duplicate tests).
+    speedtest:
+      enabled: false
+      interval_hours: 6    # How often to run a test (avoid ISP throttle detection)
+      server_id: ""        # Optional: lock to a specific Speedtest.net server ID
