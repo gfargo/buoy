@@ -127,29 +127,13 @@ plugins:
       workspace: ""
       project: ""
 
-    # Actual Budget monthly summary
-    # Requires: actual-http-api sidecar (https://github.com/jhonderson/actual-http-api)
+    # Actual Budget monthly summary (pending)
     actual_budget:
       enabled: false
-      url: ""                # e.g., http://actual-http-api:5007
-      api_key: ""            # API key set on the HTTP adapter (not the Actual password)
-      budget_sync_id: ""     # Actual budget file sync ID
+      url: ""
 
-    # Internet speed tests — runs in background every interval_hours.
-    # Enable on the node closest to your router only (avoid duplicate tests).
-    speedtest:
+    # SnapRAID parity status
+    snapraid:
       enabled: false
-      interval_hours: 6    # How often to run a test (avoid ISP throttle detection)
-      server_id: ""        # Optional: lock to a specific Speedtest.net server ID
-
-    # System journal priority-error count (last 24h)
-    # Requires: privileged + pid: host deployment (see README)
-    journal_errors:
-      enabled: false
-      since: "24 hours ago"
-      max_entries: 20
-
-    # Systemd service health (tailscaled, caddy, docker, etc.)
-    systemd_health:
-      enabled: false
-      units: []              # e.g., ["tailscaled", "caddy", "docker"]
+      status_file: /var/snapraid/snapraid.status   # path to saved status file
+      sync_max_age_hours: 24                        # warn if last sync older than this
