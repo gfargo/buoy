@@ -155,6 +155,47 @@ class DockerCollector:
             return {"success": True, "container": name}
         return {"success": False, "error": stderr or "restart failed"}
 
+    async def list_container_states(self) -> list[dict]:
+        """Return name/status/restart_count for all containers (running + stopped)."""
+        # Get all container IDs (including stopped)
+        code, stdout, _ = await self._run("ps", "-aq", "--no-trunc")
+        if code != 0 or not stdout:
+            return []
+
+        ids = [i for i in stdout.split("\n") if i.strip()]
+        if not ids:
+            return []
+
+        # Batch inspect: one call for all IDs
+        inspect_code, inspect_out, _ = await self._run(
+            "inspect",
+            "--format",
+            '{"name":"{{.Name}}","status":"{{.State.Status}}","restart_count":{{.RestartCount}}}',
+            *ids,
+        )
+        if inspect_code != 0 or not inspect_out:
+            return []
+
+        states = []
+        for line in inspect_out.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                name = obj.get("name", "").lstrip("/")
+                if name:
+                    states.append(
+                        {
+                            "name": name,
+                            "status": obj.get("status", "unknown"),
+                            "restart_count": int(obj.get("restart_count", 0)),
+                        }
+                    )
+            except (json.JSONDecodeError, ValueError):
+                continue
+        return states
+
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     @staticmethod

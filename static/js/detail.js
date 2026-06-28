@@ -131,13 +131,72 @@ function renderContainersDetail() {
   if (containers.length) {
     html += `<div class="container-grid">`;
     containers.forEach(c => {
-      html += `<div class="ctr" onclick="window._buoyInspectContainer('${c.name}')"><div class="dot-sm"></div><div class="ctr-name">${c.name}</div></div>`;
+      html += `<div class="ctr" onclick="window._buoyInspectContainer('${c.name}')"><div class="dot-sm"></div><div class="ctr-name">${c.name}</div><div class="ctr-uptime" data-ctr="${c.name}"></div></div>`;
     });
     html += `</div>`;
     html += `<div id="container-inspect-panel"></div>`;
+
+    // Fire off history fetches after the DOM settles
+    setTimeout(() => {
+      document.querySelectorAll('.ctr-uptime[data-ctr]').forEach(el => {
+        loadContainerHistory(el.dataset.ctr, el);
+      });
+    }, 0);
   } else {
     html += `<div style="color:var(--text-dim);font-size:0.7rem">No containers running</div>`;
   }
+  return html;
+}
+
+/**
+ * Fetch 24h history for a container and render an uptime bar into el.
+ */
+async function loadContainerHistory(name, el) {
+  try {
+    const r = await fetch(`/api/container/${encodeURIComponent(name)}/history?hours=24`);
+    if (!r.ok) return; // history disabled or not found — leave empty
+    const d = await r.json();
+    el.innerHTML = renderUptimeBar(d.samples || [], d.hours || 24);
+  } catch (_) {
+    // silently skip — history may not be enabled
+  }
+}
+
+/**
+ * Render a segmented uptime bar from container history samples.
+ * Green = running, red = stopped/exited, grey = no data.
+ * Red tick marks appear where restart_count increased.
+ */
+function renderUptimeBar(samples, hours) {
+  const BUCKETS = 48; // one segment per 30min over 24h
+  const bucketMs = (hours * 3600 * 1000) / BUCKETS;
+  const now = Date.now();
+  const start = now - hours * 3600 * 1000;
+
+  // Build bucket array: null = no data, 'running' | other = status
+  const buckets = new Array(BUCKETS).fill(null);
+  const restartTicks = new Set();
+
+  let prevRestart = null;
+  for (const s of samples) {
+    const idx = Math.floor((s.ts * 1000 - start) / bucketMs);
+    if (idx >= 0 && idx < BUCKETS) {
+      buckets[idx] = s.status;
+    }
+    if (prevRestart !== null && s.restart_count > prevRestart && idx >= 0 && idx < BUCKETS) {
+      restartTicks.add(idx);
+    }
+    prevRestart = s.restart_count;
+  }
+
+  let html = '<div class="ctr-uptime-bar" title="24h uptime history">';
+  for (let i = 0; i < BUCKETS; i++) {
+    const status = buckets[i];
+    const cls = status === null ? 'seg-nodata' : status === 'running' ? 'seg-up' : 'seg-down';
+    const tick = restartTicks.has(i) ? ' seg-restart' : '';
+    html += `<div class="ctr-uptime-seg ${cls}${tick}"></div>`;
+  }
+  html += '</div>';
   return html;
 }
 

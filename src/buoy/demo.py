@@ -164,6 +164,16 @@ class DemoDockerCollector:
     async def restart_container(self, name: str) -> dict:
         return {"success": True, "container": name}
 
+    async def list_container_states(self) -> list[dict]:
+        """Return synthetic states for demo containers."""
+        states = []
+        for c in _DEMO_CONTAINERS:
+            n = c["name"]
+            # Most containers running; give a couple a restart count for realism
+            restart_count = 2 if n in ("redis", "nginx-proxy") else 0
+            states.append({"name": n, "status": "running", "restart_count": restart_count})
+        return states
+
 
 class DemoDiskCollector:
     """Mock disk collector with realistic mount data."""

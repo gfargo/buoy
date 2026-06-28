@@ -219,3 +219,131 @@ class TestMetricStoreQuery:
         assert len(results) == 1
         assert results[0][1] == 42
         store.close()
+
+
+class TestContainerStates:
+    """Test container state recording and querying."""
+
+    def test_record_and_query_round_trip(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        states = [
+            {"name": "grafana", "status": "running", "restart_count": 0},
+            {"name": "redis", "status": "exited", "restart_count": 2},
+        ]
+        store.record_container_states(states)
+
+        grafana = store.query_container_history("grafana", 3600)
+        assert len(grafana) == 1
+        _, status, rc = grafana[0]
+        assert status == "running"
+        assert rc == 0
+
+        redis = store.query_container_history("redis", 3600)
+        assert len(redis) == 1
+        _, status, rc = redis[0]
+        assert status == "exited"
+        assert rc == 2
+        store.close()
+
+    def test_query_filters_by_name(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        store.record_container_states([
+            {"name": "alpha", "status": "running", "restart_count": 0},
+            {"name": "beta", "status": "running", "restart_count": 1},
+        ])
+
+        alpha = store.query_container_history("alpha", 3600)
+        assert len(alpha) == 1
+        beta = store.query_container_history("beta", 3600)
+        assert len(beta) == 1
+        gamma = store.query_container_history("gamma", 3600)
+        assert gamma == []
+        store.close()
+
+    def test_query_filters_by_period(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        old_ts = int(time.time()) - 7200
+        store._conn.execute(
+            "INSERT INTO container_states (ts, name, status, restart_count) VALUES (?, ?, ?, ?)",
+            (old_ts, "myapp", "running", 0),
+        )
+        store._conn.commit()
+        store.record_container_states([{"name": "myapp", "status": "running", "restart_count": 0}])
+
+        results = store.query_container_history("myapp", 3600)
+        assert len(results) == 1  # only the recent one
+        store.close()
+
+    def test_prune_removes_old_container_states(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        old_ts = int(time.time()) - RETENTION_SECONDS - 3600
+        store._conn.execute(
+            "INSERT INTO container_states (ts, name, status, restart_count) VALUES (?, ?, ?, ?)",
+            (old_ts, "myapp", "running", 0),
+        )
+        store._conn.commit()
+        store.record_container_states([{"name": "myapp", "status": "running", "restart_count": 0}])
+
+        store.prune()
+
+        cursor = store._conn.execute("SELECT COUNT(*) FROM container_states")
+        assert cursor.fetchone()[0] == 1  # only the recent one
+        store.close()
+
+    def test_record_empty_list_is_noop(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        store.record_container_states([])
+
+        cursor = store._conn.execute("SELECT COUNT(*) FROM container_states")
+        assert cursor.fetchone()[0] == 0
+        store.close()
+
+    def test_record_without_open_is_noop(self):
+        config = _make_config()
+        store = MetricStore(config)
+        store.record_container_states([{"name": "x", "status": "running", "restart_count": 0}])
+
+    def test_query_without_open_returns_empty(self):
+        config = _make_config()
+        store = MetricStore(config)
+        assert store.query_container_history("x", 3600) == []
+
+    def test_results_ordered_ascending(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        now = int(time.time())
+        for offset, status in [(300, "running"), (200, "exited"), (100, "running")]:
+            store._conn.execute(
+                "INSERT INTO container_states (ts, name, status, restart_count) VALUES (?, ?, ?, ?)",
+                (now - offset, "app", status, 0),
+            )
+        store._conn.commit()
+
+        results = store.query_container_history("app", 3600)
+        assert len(results) == 3
+        timestamps = [r[0] for r in results]
+        assert timestamps == sorted(timestamps)
+        store.close()

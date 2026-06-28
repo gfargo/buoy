@@ -76,9 +76,54 @@ class MetricStore:
         cutoff = int(time.time()) - RETENTION_SECONDS
         try:
             self._conn.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
+            self._conn.execute("DELETE FROM container_states WHERE ts < ?", (cutoff,))
             self._conn.commit()
         except sqlite3.Error:
             pass
+
+    def record_container_states(self, states: list[dict]):
+        """Batch-insert container state samples.
+
+        Each dict must have: name (str), status (str), restart_count (int).
+        """
+        if not self._conn or not states:
+            return
+
+        ts = int(time.time())
+        try:
+            self._conn.executemany(
+                "INSERT INTO container_states (ts, name, status, restart_count) VALUES (?, ?, ?, ?)",
+                [(ts, s["name"], s["status"], s["restart_count"]) for s in states],
+            )
+            self._conn.commit()
+        except sqlite3.Error:
+            pass
+
+    def query_container_history(
+        self, name: str, period_seconds: int
+    ) -> list[tuple[int, str, int]]:
+        """Return time-ordered (ts, status, restart_count) samples for a container.
+
+        Args:
+            name: Container name (exact match).
+            period_seconds: How far back to look.
+
+        Returns:
+            List of (timestamp, status, restart_count) tuples ascending by time.
+        """
+        if not self._conn:
+            return []
+
+        cutoff = int(time.time()) - period_seconds
+        try:
+            cursor = self._conn.execute(
+                "SELECT ts, status, restart_count FROM container_states "
+                "WHERE name = ? AND ts >= ? ORDER BY ts ASC",
+                (name, cutoff),
+            )
+            return list(cursor)
+        except sqlite3.Error:
+            return []
 
     def query(self, metric: str, period_seconds: int) -> list[tuple[int, float]]:
         """Query historical data for a specific metric.
@@ -148,5 +193,16 @@ class MetricStore:
         """)
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_metrics_collector_ts ON metrics(collector, ts)
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS container_states (
+                ts INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                restart_count INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cstates_name_ts ON container_states(name, ts)
         """)
         self._conn.commit()
