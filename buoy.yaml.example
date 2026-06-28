@@ -127,6 +127,14 @@ plugins:
       workspace: ""
       project: ""
 
+    # Trigger.dev task run status
+    trigger_dev:
+      enabled: false
+      api_key: ""            # Secret key (tr_dev_* / tr_prod_*)
+      url: ""                # Self-hosted only; omit for cloud (api.trigger.dev)
+      project_ref: ""        # Optional — used for deep-links in the panel
+      queue_threshold: 50    # Queue depth above this triggers error status
+
     # Actual Budget monthly summary (pending)
     actual_budget:
       enabled: false

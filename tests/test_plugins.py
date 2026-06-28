@@ -729,3 +729,125 @@ class TestPrometheusExporterPlugin:
         plugin = self._make_plugin()
         assert plugin.manifest.id == "prometheus_exporter"
         assert plugin.manifest.refresh_interval == 9999  # Pulled on demand
+
+
+# =============================================================================
+# Trigger.dev plugin
+# =============================================================================
+
+
+class TestTriggerDevPlugin:
+    """Tests for the Trigger.dev task run status plugin."""
+
+    def _make_plugin(self, **cfg):
+        from buoy.plugins.builtin.trigger_dev import TriggerDevPlugin
+
+        plugin = TriggerDevPlugin()
+        plugin.configure({"api_key": "tr_dev_test", "url": "http://trigger.local", **cfg})
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_no_api_key_returns_disabled(self):
+        from buoy.plugins.builtin.trigger_dev import TriggerDevPlugin
+
+        plugin = TriggerDevPlugin()
+        plugin.configure({})
+        result = await plugin.collect()
+        assert result.status == "disabled"
+        assert "Not configured" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_failures_present_warn(self):
+        plugin = self._make_plugin()
+
+        call_count = [0]
+        failed_resp = json.dumps(
+            {
+                "data": [
+                    {"id": "run_1", "taskIdentifier": "send-email", "createdAt": "2026-06-28T01:00:00Z"},
+                    {"id": "run_2", "taskIdentifier": "process-payment", "createdAt": "2026-06-28T00:00:00Z"},
+                ]
+            }
+        ).encode()
+        queued_resp = json.dumps({"data": []}).encode()
+
+        def mock_urlopen(req, timeout=None):
+            cm = MagicMock()
+            if call_count[0] == 0:
+                cm.__enter__ = lambda s: MagicMock(read=lambda: failed_resp)
+            else:
+                cm.__enter__ = lambda s: MagicMock(read=lambda: queued_resp)
+            cm.__exit__ = lambda s, *a: None
+            call_count[0] += 1
+            return cm
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            result = await plugin.collect()
+
+        assert result.status == "warn"
+        assert "2 failed" in result.summary
+        assert result.detail["last_failed_task"] == "send-email"
+        assert result.detail["failed_count"] == 2
+        assert len(result.detail["recent_failures"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_no_failures_ok(self):
+        plugin = self._make_plugin()
+
+        empty = json.dumps({"data": []}).encode()
+
+        def mock_urlopen(req, timeout=None):
+            cm = MagicMock()
+            cm.__enter__ = lambda s: MagicMock(read=lambda: empty)
+            cm.__exit__ = lambda s, *a: None
+            return cm
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            result = await plugin.collect()
+
+        assert result.status == "ok"
+        assert "All clear" in result.summary
+        assert result.detail["failed_count"] == 0
+        assert result.detail["queue_depth"] == 0
+
+    @pytest.mark.asyncio
+    async def test_queue_backing_up_error(self):
+        plugin = self._make_plugin(queue_threshold=5)
+
+        no_failures = json.dumps({"data": []}).encode()
+        queued_resp = json.dumps({"data": [{"id": f"run_{i}"} for i in range(10)]}).encode()
+        call_count = [0]
+
+        def mock_urlopen(req, timeout=None):
+            cm = MagicMock()
+            if call_count[0] == 0:
+                cm.__enter__ = lambda s: MagicMock(read=lambda: no_failures)
+            else:
+                cm.__enter__ = lambda s: MagicMock(read=lambda: queued_resp)
+            cm.__exit__ = lambda s, *a: None
+            call_count[0] += 1
+            return cm
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            result = await plugin.collect()
+
+        assert result.status == "error"
+        assert "Queue" in result.summary
+        assert result.detail["queue_depth"] == 10
+
+    @pytest.mark.asyncio
+    async def test_unreachable_error(self):
+        plugin = self._make_plugin()
+
+        with patch("urllib.request.urlopen", side_effect=Exception("Connection refused")):
+            result = await plugin.collect()
+
+        assert result.status == "error"
+        assert "Unreachable" in result.summary
+        assert "error" in result.detail
+
+    def test_has_frontend_js(self):
+        plugin = self._make_plugin()
+        js = plugin.frontend_js()
+        assert js is not None
+        assert "render_trigger_dev" in js
