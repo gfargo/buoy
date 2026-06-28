@@ -1092,6 +1092,7 @@ ALL_BUILTIN_IDS = {
     "loki",
     "plane",
     "prometheus_exporter",
+    "smart_disk",
     "snapraid",
     "speedtest",
     "systemd_health",
