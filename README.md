@@ -133,6 +133,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Plane | Sprint/cycle progress | `api_key`, `url` |
 | Prometheus | `/metrics` endpoint | (none) |
 | SnapRAID | Parity sync age & disk health | `status_file` |
+| Jellyfin | Active streams, libraries, transcoding | `url`, `api_key` |
 
 **Custom plugins** are Python files dropped into the `/plugins` volume:
 

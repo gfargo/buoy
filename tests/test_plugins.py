@@ -1087,6 +1087,7 @@ ALL_BUILTIN_IDS = {
     "cron_health",
     "github",
     "immich",
+    "jellyfin",
     "journal_errors",
     "loki",
     "plane",

@@ -149,3 +149,9 @@ plugins:
       enabled: false
       url: ""              # e.g., http://localhost:2283
       api_key: ""          # Immich API key (admin account required for statistics)
+
+    # Jellyfin media server status (active streams, libraries, transcoding)
+    jellyfin:
+      enabled: false
+      url: ""                # e.g., http://localhost:8096
+      api_key: ""            # Jellyfin API key (Dashboard → API Keys)
