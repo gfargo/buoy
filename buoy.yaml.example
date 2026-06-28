@@ -197,6 +197,14 @@ plugins:
       password: ""             # AdGuard: Basic-auth password
       verify_ssl: true         # Set false for self-signed certs (insecure)
 
+    # Trigger.dev task run status (recent runs, 24h failures, queue depth)
+    trigger_dev:
+      enabled: false
+      url: "https://api.trigger.dev"   # or your self-hosted Trigger.dev URL
+      api_key: ""                      # Secret key (tr_prod_…, tr_dev_…)
+      project_ref: ""                  # Project reference (e.g. "proj_abc123")
+      queue_warn_threshold: 50         # Queued+executing runs before status → error
+
     # SMART disk health (SATA + NVMe) — requires privileged + pid: host
     smart_disk:
       enabled: false
