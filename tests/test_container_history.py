@@ -50,8 +50,12 @@ class TestContainerHistoryEndpoint:
     def test_valid_name_with_data_returns_correct_shape(self):
         app = create_app(_make_config())
         with TestClient(app, raise_server_exceptions=False) as client:
-            srv._metric_store.record_container_states([{"name": "myapp", "status": "running", "restart_count": 0}])
-            srv._metric_store.record_container_states([{"name": "myapp", "status": "running", "restart_count": 1}])
+            srv._metric_store.record_container_states(
+                [{"name": "myapp", "status": "running", "restart_count": 0}]
+            )
+            srv._metric_store.record_container_states(
+                [{"name": "myapp", "status": "running", "restart_count": 1}]
+            )
             r = client.get("/api/container/myapp/history?hours=24")
         assert r.status_code == 200
         body = r.json()
