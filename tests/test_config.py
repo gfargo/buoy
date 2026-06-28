@@ -30,11 +30,13 @@ class TestConfigDefaults:
         assert config.features.history is False
         assert config.features.demo_mode is False
         assert config.features.night_mode == "auto"
+        assert config.features.image_updates is False
 
     def test_default_refresh(self):
         config = _build_config({})
         assert config.refresh.stats_interval == 5
         assert config.refresh.fleet_interval == 15
+        assert config.refresh.image_updates_interval == 21600
 
 
 class TestConfigFromYAML:
@@ -124,6 +126,18 @@ class TestEnvOverrides:
         raw = {}
         result = _apply_env_overrides(raw)
         assert result["features"]["websocket"] is False
+
+    def test_image_updates_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_FEATURES_IMAGE_UPDATES", "true")
+        raw = {}
+        result = _apply_env_overrides(raw)
+        assert result["features"]["image_updates"] is True
+
+    def test_image_updates_interval_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_REFRESH_IMAGE_UPDATES_INTERVAL", "3600")
+        raw = {}
+        result = _apply_env_overrides(raw)
+        assert result["refresh"]["image_updates_interval"] == 3600
 
 
 class TestLoadConfig:

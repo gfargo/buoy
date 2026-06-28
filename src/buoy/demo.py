@@ -175,6 +175,40 @@ class DemoDockerCollector:
         return states
 
 
+_DEMO_IMAGE_STATUSES = {
+    "grafana": "update_available",
+    "prometheus": "up_to_date",
+    "nginx-proxy": "up_to_date",
+    "postgres": "up_to_date",
+    "redis": "unknown",
+    "plausible": "update_available",
+    "uptime-kuma": "up_to_date",
+    "vaultwarden": "up_to_date",
+    "immich-server": "update_available",
+    "homeassistant": "up_to_date",
+    "jellyfin": "unknown",
+    "actual-budget": "up_to_date",
+}
+
+
+class DemoImageUpdateChecker:
+    """Mock image update checker returning deterministic demo statuses."""
+
+    def __init__(self, config: BuoyConfig):
+        self.config = config
+
+    async def check_all(self) -> dict[str, dict]:
+        now = time.time()
+        return {
+            c["name"]: {
+                "status": _DEMO_IMAGE_STATUSES.get(c["name"], "unknown"),
+                "image": f"{c['name']}:latest",
+                "checked_at": now,
+            }
+            for c in _DEMO_CONTAINERS
+        }
+
+
 class DemoDiskCollector:
     """Mock disk collector with realistic mount data."""
 

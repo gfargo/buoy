@@ -28,6 +28,7 @@ _ws_clients: set[WebSocket] = set()
 _plugin_manager = None
 _metric_store = None
 _alert_engine = None
+_image_update_cache: dict = {}  # {container_name: {"status": ..., "image": ..., "checked_at": ts}}
 
 
 # ── API Handlers ───────────────────────────────────────────────────────────────
@@ -69,12 +70,14 @@ async def api_config(request: Request) -> JSONResponse:
                 "demo_mode": _config.features.demo_mode,
                 "night_mode": _config.features.night_mode,
                 "keyboard_shortcuts": _config.features.keyboard_shortcuts,
+                "image_updates": _config.features.image_updates,
             },
             "refresh": {
                 "stats_interval": _config.refresh.stats_interval,
                 "services_interval": _config.refresh.services_interval,
                 "fleet_interval": _config.refresh.fleet_interval,
                 "plugins_interval": _config.refresh.plugins_interval,
+                "image_updates_interval": _config.refresh.image_updates_interval,
             },
         }
     )
@@ -153,6 +156,13 @@ async def api_stats(request: Request) -> JSONResponse:
     docker_data = results[1] if not isinstance(results[1], Exception) else {}
     disk_data = results[2] if not isinstance(results[2], Exception) else {}
     services = results[3] if not isinstance(results[3], Exception) else []
+
+    # Decorate each container entry with update status from cache (pure dict lookup)
+    if _image_update_cache and "containers_list" in docker_data:
+        for ctr in docker_data["containers_list"]:
+            entry = _image_update_cache.get(ctr["name"])
+            if entry:
+                ctr["update_status"] = entry["status"]
 
     return JSONResponse({**system_data, **docker_data, **disk_data, "top_services": services})
 
@@ -428,6 +438,13 @@ async def _stats_loop():
 
             combined = {**system_data, **docker_data, **disk_data}
 
+            # Decorate containers with update status from cache (pure dict lookup)
+            if _image_update_cache and "containers_list" in combined:
+                for ctr in combined["containers_list"]:
+                    entry = _image_update_cache.get(ctr["name"])
+                    if entry:
+                        ctr["update_status"] = entry["status"]
+
             # Broadcast to WebSocket clients
             await broadcast_stats(combined)
 
@@ -463,6 +480,22 @@ async def _latency_loop():
                 results = await network_coll.measure_latency()
                 for r in results:
                     _metric_store.record_latency(r["name"], r["latency_ms"])
+        except Exception:
+            pass
+
+
+async def _image_update_loop(checker):
+    """Periodically check running container images against their registries."""
+    global _image_update_cache
+    # Run initial check immediately on startup
+    try:
+        _image_update_cache = await checker.check_all()
+    except Exception:
+        pass
+    while True:
+        await asyncio.sleep(_config.refresh.image_updates_interval)
+        try:
+            _image_update_cache = await checker.check_all()
         except Exception:
             pass
 
@@ -511,6 +544,21 @@ async def on_startup():
     # Start latency collection loop (only when network collector and history are both present)
     if _collectors.get("network") and _metric_store:
         asyncio.create_task(_latency_loop())
+
+    # Start image update checker (if enabled)
+    if _config.features.image_updates:
+        if _config.features.demo_mode:
+            from buoy.demo import DemoImageUpdateChecker
+
+            _image_checker = DemoImageUpdateChecker(_config)
+        else:
+            from buoy.collectors.image_updates import ImageUpdateChecker
+
+            _image_checker = ImageUpdateChecker(_config)
+        asyncio.create_task(_image_update_loop(_image_checker))
+        print(
+            f"[buoy] Image update checker enabled (interval: {_config.refresh.image_updates_interval}s)"
+        )
 
     # Initialize plugin manager
     from buoy.plugins.loader import PluginManager

@@ -131,7 +131,8 @@ function renderContainersDetail() {
   if (containers.length) {
     html += `<div class="container-grid">`;
     containers.forEach(c => {
-      html += `<div class="ctr" onclick="window._buoyInspectContainer('${c.name}')"><div class="dot-sm"></div><div class="ctr-name">${c.name}</div><div class="ctr-uptime" data-ctr="${c.name}"></div></div>`;
+      const badge = _updateBadge(c.update_status);
+      html += `<div class="ctr" onclick="window._buoyInspectContainer('${c.name}')"><div class="dot-sm"></div><div class="ctr-name">${c.name}</div><div class="ctr-uptime" data-ctr="${c.name}"></div>${badge}</div>`;
     });
     html += `</div>`;
     html += `<div id="container-inspect-panel"></div>`;
@@ -241,6 +242,10 @@ function renderContainerInspect(d, name) {
   const blockIO = res.block_io || 'N/A';
   const imageAge = d.image_age || '';
 
+  // Find update_status from the containers list (already in ws data)
+  const ctrData = (window._latestContainers || []).find(c => c.name === name);
+  const updateStatus = ctrData?.update_status;
+
   return `<div class="ctr-inspect">
     <div class="ctr-inspect-header">
       <div class="ctr-inspect-name"><div class="dot-sm" style="background:var(--${statusDot})"></div>${name}</div>
@@ -251,6 +256,7 @@ function renderContainerInspect(d, name) {
       <div class="ctr-stat"><span class="ctr-stat-label">Started</span><span class="ctr-stat-value">${started}</span></div>
       <div class="ctr-stat"><span class="ctr-stat-label">Image</span><span class="ctr-stat-value ctr-image">${image}</span></div>
       ${imageAge ? `<div class="ctr-stat"><span class="ctr-stat-label">Image Age</span><span class="ctr-stat-value">${imageAge}</span></div>` : ''}
+      ${updateStatus ? `<div class="ctr-stat"><span class="ctr-stat-label">Updates</span><span class="ctr-stat-value">${_updateBadge(updateStatus)}</span></div>` : ''}
       <div class="ctr-stat"><span class="ctr-stat-label">Restarts</span><span class="ctr-stat-value">${restarts}</span></div>
       <div class="ctr-stat"><span class="ctr-stat-label">CPU</span><span class="ctr-stat-value">${cpu}</span></div>
       <div class="ctr-stat"><span class="ctr-stat-label">Memory</span><span class="ctr-stat-value">${mem}</span></div>
@@ -262,6 +268,18 @@ function renderContainerInspect(d, name) {
       <button class="ctr-btn ctr-btn-logs" onclick="window._buoyContainerLogs('${name}')">⊞ logs</button>
     </div>
   </div>`;
+}
+
+function _updateBadge(status) {
+  if (!status || status === 'skipped') return '';
+  const map = {
+    up_to_date:       { icon: '✓', cls: 'ctr-update-badge up-to-date',       title: 'Up to date' },
+    update_available: { icon: '↑', cls: 'ctr-update-badge update-available', title: 'Update available' },
+    unknown:          { icon: '?', cls: 'ctr-update-badge unknown',           title: 'Update status unknown' },
+  };
+  const b = map[status];
+  if (!b) return '';
+  return `<span class="${b.cls}" title="${b.title}">${b.icon}</span>`;
 }
 
 /**

@@ -88,6 +88,7 @@ features:
   demo_mode: false           # Serve mock data (no Docker/host access needed)
   night_mode: auto           # auto (10pm-6am) | always | never
   keyboard_shortcuts: true   # 1-4 for gauges, Escape to close
+  image_updates: false       # Docker image update checker (badges on container cards)
 
 # ── Refresh Intervals (seconds) ───────────────────────────
 refresh:
@@ -95,6 +96,7 @@ refresh:
   services_interval: 30      # Service discovery refresh
   fleet_interval: 15         # Peer node polling
   plugins_interval: 60       # Plugin data refresh
+  image_updates_interval: 21600  # Image update check interval (6 hours)
 
 # ── Plugins ────────────────────────────────────────────────
 # Built-in plugins are disabled by default. Enable and configure below.
