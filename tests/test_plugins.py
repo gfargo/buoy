@@ -1093,6 +1093,7 @@ ALL_BUILTIN_IDS = {
     "snapraid",
     "speedtest",
     "systemd_health",
+    "tailscale",
     "uptime_kuma",
 }
 
