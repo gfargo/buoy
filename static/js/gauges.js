@@ -120,7 +120,7 @@ function formatUptime(h, m) {
   return h + 'h ' + m + 'm';
 }
 
-function renderSparkline(containerId, values, minVal, maxVal, color) {
+export function renderSparkline(containerId, values, minVal, maxVal, color) {
   const container = document.getElementById(containerId);
   if (!container || values.length < 2) return;
   const w = 120, h = 24;
