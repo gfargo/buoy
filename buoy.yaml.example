@@ -155,3 +155,13 @@ plugins:
       enabled: false
       url: ""                # e.g., http://localhost:8096
       api_key: ""            # Jellyfin API key (Dashboard → API Keys)
+
+    # Proxmox VE node + guest status
+    # Note: verify_ssl defaults to false — PVE uses self-signed certs by default
+    proxmox:
+      enabled: false
+      url: "https://proxmox.example.com:8006"
+      token_id: "user@pam!tokenid"   # PVE API token ID (user@realm!tokenid)
+      token_secret: ""               # PVE API token secret
+      node: "pve"                    # Node name (shown in PVE UI)
+      verify_ssl: false
