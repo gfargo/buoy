@@ -298,6 +298,12 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; background: 
   .gauges { grid-template-columns: repeat(2, 1fr); }
   .services { grid-template-columns: 1fr; }
   .fleet-grid { grid-template-columns: 1fr; }
+  .container-grid { grid-template-columns: 1fr; }
+  .detail-panel .detail-grid { grid-template-columns: repeat(2, 1fr); }
+  .ctr-inspect-grid { grid-template-columns: repeat(2, 1fr); }
+  .mount-row .mount-info { min-width: unset; }
+  header { flex-wrap: wrap; gap: 0.5rem; }
+  header .uptime { display: none; }
 }
 
 /* ── Reduced Motion ──────────────────────────────────── */
