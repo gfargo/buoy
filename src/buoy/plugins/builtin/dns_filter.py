@@ -22,11 +22,11 @@ class DnsFilterPlugin(Plugin):
         description="Pi-hole / AdGuard Home DNS filtering stats",
         version="1.0.0",
         config_schema={
-            "type": {"type": "string", "required": True},   # pihole | adguard
+            "type": {"type": "string", "required": True},  # pihole | adguard
             "url": {"type": "string", "required": True},
-            "api_key": {"type": "string"},       # Pi-hole: topItems token; AdGuard: base64 user:pass
-            "username": {"type": "string"},      # AdGuard Basic-auth username
-            "password": {"type": "string"},      # AdGuard Basic-auth password
+            "api_key": {"type": "string"},  # Pi-hole: topItems token; AdGuard: base64 user:pass
+            "username": {"type": "string"},  # AdGuard Basic-auth username
+            "password": {"type": "string"},  # AdGuard Basic-auth password
             "verify_ssl": {"type": "boolean"},
         },
         refresh_interval=60,
@@ -82,8 +82,7 @@ class DnsFilterPlugin(Plugin):
                 with urllib.request.urlopen(top_req, timeout=8, context=ctx) as resp:
                     top_data = json.loads(resp.read())
                 top_blocked = [
-                    {"domain": d, "count": c}
-                    for d, c in (top_data.get("top_ads") or {}).items()
+                    {"domain": d, "count": c} for d, c in (top_data.get("top_ads") or {}).items()
                 ]
             except Exception:
                 pass  # top domains are best-effort
@@ -113,8 +112,7 @@ class DnsFilterPlugin(Plugin):
         blocked = int(data.get("num_blocked_filtering", 0))
         pct = (blocked / queries * 100) if queries > 0 else 0.0
         top_blocked = [
-            {"domain": d, "count": c}
-            for d, c in (data.get("top_blocked_domains") or {}).items()
+            {"domain": d, "count": c} for d, c in (data.get("top_blocked_domains") or {}).items()
         ]
 
         return self._make_panel(queries, blocked, pct, top_blocked)
@@ -127,7 +125,12 @@ class DnsFilterPlugin(Plugin):
         return PanelData(
             status=status,
             summary=summary,
-            detail={"queries": queries, "blocked": blocked, "pct": round(pct, 1), "top_blocked": top_blocked},
+            detail={
+                "queries": queries,
+                "blocked": blocked,
+                "pct": round(pct, 1),
+                "top_blocked": top_blocked,
+            },
         )
 
     def frontend_js(self) -> str | None:
