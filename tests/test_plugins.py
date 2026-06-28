@@ -1090,6 +1090,7 @@ ALL_BUILTIN_IDS = {
     "loki",
     "plane",
     "prometheus_exporter",
+    "snapraid",
     "speedtest",
     "systemd_health",
     "uptime_kuma",

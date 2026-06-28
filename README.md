@@ -132,6 +132,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Loki | Recent error log entries | `url` |
 | Plane | Sprint/cycle progress | `api_key`, `url` |
 | Prometheus | `/metrics` endpoint | (none) |
+| SnapRAID | Parity sync age & disk health | `status_file` |
 
 **Custom plugins** are Python files dropped into the `/plugins` volume:
 
