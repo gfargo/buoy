@@ -796,10 +796,12 @@ class TestJournalErrorsPlugin:
     async def test_many_entries_error(self):
         plugin = self._make_plugin()
 
-        lines = b"\n".join(
-            f"Jun 26 14:{i:02d}:01 compass sshd[1]: error: something".encode()
-            for i in range(6)
-        ) + b"\n"
+        lines = (
+            b"\n".join(
+                f"Jun 26 14:{i:02d}:01 compass sshd[1]: error: something".encode() for i in range(6)
+            )
+            + b"\n"
+        )
 
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(lines, b""))
@@ -818,10 +820,12 @@ class TestJournalErrorsPlugin:
         plugin.configure({"max_entries": 5})
 
         # Subprocess returns 5 lines (tail -5 is baked in the command)
-        lines = b"\n".join(
-            f"Jun 26 14:{i:02d}:01 compass sshd[1]: error: something".encode()
-            for i in range(5)
-        ) + b"\n"
+        lines = (
+            b"\n".join(
+                f"Jun 26 14:{i:02d}:01 compass sshd[1]: error: something".encode() for i in range(5)
+            )
+            + b"\n"
+        )
 
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(lines, b""))
