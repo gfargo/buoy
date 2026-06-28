@@ -119,6 +119,7 @@ class PluginManager:
             "cron_health": "buoy.plugins.builtin.cron_health",
             "journal_errors": "buoy.plugins.builtin.journal_errors",
             "prometheus_exporter": "buoy.plugins.builtin.prometheus_exporter",
+            "speedtest": "buoy.plugins.builtin.speedtest",
         }
 
         for plugin_id, module_path in builtin_map.items():

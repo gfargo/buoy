@@ -732,6 +732,133 @@ class TestPrometheusExporterPlugin:
 
 
 # =============================================================================
+# Speedtest plugin
+# =============================================================================
+
+
+class TestSpeedtestPlugin:
+    """Tests for the internet speedtest tracker plugin."""
+
+    def _make_plugin(self, config=None):
+        from buoy.plugins.builtin.speedtest import SpeedtestPlugin
+
+        plugin = SpeedtestPlugin()
+        plugin.configure(config or {})
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_no_history_returns_measuring(self):
+        plugin = self._make_plugin()
+        result = await plugin.collect()
+        assert result.status == "ok"
+        assert "Measuring" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_successful_result_ok_status(self):
+        plugin = self._make_plugin()
+        plugin._history = [
+            {
+                "ts": 1000.0,
+                "download_mbps": 480.0,
+                "upload_mbps": 22.0,
+                "ping_ms": 12.0,
+                "server": "Test",
+                "ok": True,
+            }
+        ]
+        result = await plugin.collect()
+        assert result.status == "ok"
+        assert "480" in result.summary
+        assert "22" in result.summary
+        assert "12" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_baseline_drop_returns_warn(self):
+        """A >50% drop below median baseline should produce warn status."""
+        plugin = self._make_plugin()
+        # Nine entries at 400 Mbps set the baseline; latest drops to 150 (~62% drop)
+        plugin._history = [
+            {
+                "ts": float(i),
+                "download_mbps": 400.0,
+                "upload_mbps": 20.0,
+                "ping_ms": 10.0,
+                "server": "",
+                "ok": True,
+            }
+            for i in range(9)
+        ] + [
+            {
+                "ts": 9.0,
+                "download_mbps": 150.0,
+                "upload_mbps": 20.0,
+                "ping_ms": 10.0,
+                "server": "",
+                "ok": True,
+            }
+        ]
+        result = await plugin.collect()
+        assert result.status == "warn"
+
+    @pytest.mark.asyncio
+    async def test_failed_entry_returns_error(self):
+        plugin = self._make_plugin()
+        plugin._history = [
+            {
+                "ts": 1.0,
+                "download_mbps": 0.0,
+                "upload_mbps": 0.0,
+                "ping_ms": 0.0,
+                "server": "",
+                "ok": False,
+                "error": "timeout",
+            }
+        ]
+        result = await plugin.collect()
+        assert result.status == "error"
+
+    @pytest.mark.asyncio
+    async def test_run_test_parses_json(self):
+        plugin = self._make_plugin()
+        speedtest_output = json.dumps(
+            {
+                "download": 480_000_000,
+                "upload": 22_000_000,
+                "ping": 12.5,
+                "server": {"name": "Test Server"},
+            }
+        ).encode()
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(speedtest_output, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            entry = await plugin._run_test()
+
+        assert entry["ok"] is True
+        assert abs(entry["download_mbps"] - 480.0) < 0.1
+        assert abs(entry["upload_mbps"] - 22.0) < 0.1
+        assert entry["ping_ms"] == 12.5
+        assert entry["server"] == "Test Server"
+
+    @pytest.mark.asyncio
+    async def test_run_test_binary_missing(self):
+        plugin = self._make_plugin()
+        with patch(
+            "asyncio.create_subprocess_exec", side_effect=FileNotFoundError("speedtest-cli")
+        ):
+            entry = await plugin._run_test()
+        assert entry["ok"] is False
+        assert "not found" in entry.get("error", "")
+
+    def test_has_frontend_js(self):
+        plugin = self._make_plugin()
+        js = plugin.frontend_js()
+        assert js is not None
+        assert "render_speedtest" in js
+
+
+# =============================================================================
 # Journal Errors plugin
 # =============================================================================
 
