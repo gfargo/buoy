@@ -60,7 +60,13 @@ class SnapraidPlugin(Plugin):
         # Fallback: run snapraid status via nsenter
         try:
             proc = await asyncio.create_subprocess_exec(
-                "nsenter", "-t", "1", "-m", "--", "snapraid", "status",
+                "nsenter",
+                "-t",
+                "1",
+                "-m",
+                "--",
+                "snapraid",
+                "status",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -136,7 +142,9 @@ def _parse_status(text: str) -> dict:
 
     return {
         "unsynced_count": unsynced_count,
-        "last_sync_age_hours": round(last_sync_age_hours, 1) if last_sync_age_hours is not None else None,
+        "last_sync_age_hours": round(last_sync_age_hours, 1)
+        if last_sync_age_hours is not None
+        else None,
         "disk_errors": disk_errors,
         "scrub_pct": scrub_pct,
     }
