@@ -165,3 +165,11 @@ plugins:
       token_secret: ""               # PVE API token secret
       node: "pve"                    # Node name (shown in PVE UI)
       verify_ssl: false
+
+    # WireGuard peer handshake freshness + transfer stats
+    # For non-Tailscale setups (raw WireGuard, Firezone, etc.)
+    # Requires: privileged + pid: host deployment (see README)
+    wireguard:
+      enabled: false
+      interface: wg0          # WireGuard interface name
+      stale_seconds: 180      # Seconds before a peer handshake is considered stale
