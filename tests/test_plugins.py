@@ -778,10 +778,24 @@ class TestSpeedtestPlugin:
         plugin = self._make_plugin()
         # Nine entries at 400 Mbps set the baseline; latest drops to 150 (~62% drop)
         plugin._history = [
-            {"ts": float(i), "download_mbps": 400.0, "upload_mbps": 20.0, "ping_ms": 10.0, "server": "", "ok": True}
+            {
+                "ts": float(i),
+                "download_mbps": 400.0,
+                "upload_mbps": 20.0,
+                "ping_ms": 10.0,
+                "server": "",
+                "ok": True,
+            }
             for i in range(9)
         ] + [
-            {"ts": 9.0, "download_mbps": 150.0, "upload_mbps": 20.0, "ping_ms": 10.0, "server": "", "ok": True}
+            {
+                "ts": 9.0,
+                "download_mbps": 150.0,
+                "upload_mbps": 20.0,
+                "ping_ms": 10.0,
+                "server": "",
+                "ok": True,
+            }
         ]
         result = await plugin.collect()
         assert result.status == "warn"
@@ -790,7 +804,15 @@ class TestSpeedtestPlugin:
     async def test_failed_entry_returns_error(self):
         plugin = self._make_plugin()
         plugin._history = [
-            {"ts": 1.0, "download_mbps": 0.0, "upload_mbps": 0.0, "ping_ms": 0.0, "server": "", "ok": False, "error": "timeout"}
+            {
+                "ts": 1.0,
+                "download_mbps": 0.0,
+                "upload_mbps": 0.0,
+                "ping_ms": 0.0,
+                "server": "",
+                "ok": False,
+                "error": "timeout",
+            }
         ]
         result = await plugin.collect()
         assert result.status == "error"
@@ -822,7 +844,9 @@ class TestSpeedtestPlugin:
     @pytest.mark.asyncio
     async def test_run_test_binary_missing(self):
         plugin = self._make_plugin()
-        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError("speedtest-cli")):
+        with patch(
+            "asyncio.create_subprocess_exec", side_effect=FileNotFoundError("speedtest-cli")
+        ):
             entry = await plugin._run_test()
         assert entry["ok"] is False
         assert "not found" in entry.get("error", "")

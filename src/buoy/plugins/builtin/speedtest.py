@@ -123,9 +123,25 @@ class SpeedtestPlugin(Plugin):
                 "ok": True,
             }
         except FileNotFoundError:
-            return {"ts": ts, "download_mbps": 0.0, "upload_mbps": 0.0, "ping_ms": 0.0, "server": "", "ok": False, "error": "speedtest-cli not found"}
+            return {
+                "ts": ts,
+                "download_mbps": 0.0,
+                "upload_mbps": 0.0,
+                "ping_ms": 0.0,
+                "server": "",
+                "ok": False,
+                "error": "speedtest-cli not found",
+            }
         except Exception as exc:
-            return {"ts": ts, "download_mbps": 0.0, "upload_mbps": 0.0, "ping_ms": 0.0, "server": "", "ok": False, "error": str(exc)}
+            return {
+                "ts": ts,
+                "download_mbps": 0.0,
+                "upload_mbps": 0.0,
+                "ping_ms": 0.0,
+                "server": "",
+                "ok": False,
+                "error": str(exc),
+            }
 
     # ── Status & baseline ──────────────────────────────────────────────────────
 
