@@ -134,6 +134,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Prometheus | `/metrics` endpoint | (none) |
 | SnapRAID | Parity sync age & disk health | `status_file` |
 | Jellyfin | Active streams, libraries, transcoding | `url`, `api_key` |
+| Portainer | Remote container stats | `url`, `api_key`, `endpoint_id` |
 
 **Custom plugins** are Python files dropped into the `/plugins` volume:
 
