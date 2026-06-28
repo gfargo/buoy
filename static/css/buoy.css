@@ -203,7 +203,25 @@ header .uptime span { color: var(--green); }
 
 /* ── Footer ──────────────────────────────────────────── */
 
-footer { padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.6rem; color: var(--text-dim); display: flex; gap: 2rem; flex-wrap: wrap; animation: fadeIn 0.6s ease-out 0.5s both; }
+footer { padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.6rem; color: var(--text-dim); display: flex; gap: 2rem; flex-wrap: wrap; align-items: center; animation: fadeIn 0.6s ease-out 0.5s both; }
+
+/* ── Keyboard shortcut help button ───────────────────── */
+
+.kb-help-btn { margin-left: auto; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: inherit; font-size: 0.65rem; padding: 0.15rem 0.5rem; border-radius: 3px; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+.kb-help-btn:hover { border-color: var(--cyan-dim); color: var(--cyan); }
+
+/* ── Keyboard shortcut help overlay ─────────────────── */
+
+#kb-help-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 2000; animation: fadeIn 0.15s ease-out; }
+.kb-help-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; min-width: 280px; position: relative; }
+.kb-help-title { font-family: 'Outfit', sans-serif; font-weight: 600; font-size: 0.85rem; color: var(--text-bright); margin-bottom: 1rem; }
+.kb-help-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.kb-row { display: flex; align-items: baseline; gap: 0.75rem; }
+.kb-row dt { list-style: none; }
+.kb-row dd { font-size: 0.7rem; color: var(--text-dim); }
+kbd { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 0.1rem 0.4rem; color: var(--cyan); min-width: 2.5rem; display: inline-block; text-align: center; }
+.kb-help-close { position: absolute; top: 0.75rem; right: 0.75rem; background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.75rem; padding: 0.25rem; line-height: 1; }
+.kb-help-close:hover { color: var(--text-bright); }
 
 /* ── Animations ──────────────────────────────────────── */
 
