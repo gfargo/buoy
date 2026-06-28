@@ -140,3 +140,10 @@ plugins:
       api_key: ""             # Pi-hole: topItems auth token; AdGuard: pre-encoded Basic auth (optional)
       username: ""            # AdGuard Home username (alternative to api_key)
       password: ""            # AdGuard Home password
+
+    # System journal priority-error count (last 24h)
+    # Requires: privileged + pid: host deployment (see README)
+    journal_errors:
+      enabled: false
+      since: "24 hours ago"
+      max_entries: 20

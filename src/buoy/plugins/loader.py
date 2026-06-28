@@ -117,6 +117,7 @@ class PluginManager:
             "plane": "buoy.plugins.builtin.plane",
             "backup_status": "buoy.plugins.builtin.backup_status",
             "cron_health": "buoy.plugins.builtin.cron_health",
+            "journal_errors": "buoy.plugins.builtin.journal_errors",
             "prometheus_exporter": "buoy.plugins.builtin.prometheus_exporter",
             "dns_filter": "buoy.plugins.builtin.dns_filter",
         }

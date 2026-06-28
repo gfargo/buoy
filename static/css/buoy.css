@@ -76,6 +76,13 @@ header .uptime span { color: var(--green); }
 .sparkline svg { width: 100%; height: 100%; display: block; }
 .sparkline polyline { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
+/* Fleet node compact latency sparkline */
+.fn-latency-wrap { font-size: 0.55rem; color: var(--text-dim); margin-left: 0.25rem; }
+.fn-latency-spark { margin-top: 0.25rem; height: 16px; }
+.fn-latency-spark:empty { display: none; }
+.fn-latency-spark svg { width: 100%; height: 100%; display: block; }
+.fn-latency-spark polyline { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
 /* ── Detail Panel ────────────────────────────────────── */
 
 .detail-panel {
@@ -203,13 +210,80 @@ header .uptime span { color: var(--green); }
 
 /* ── Footer ──────────────────────────────────────────── */
 
-footer { padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.6rem; color: var(--text-dim); display: flex; gap: 2rem; flex-wrap: wrap; animation: fadeIn 0.6s ease-out 0.5s both; }
+footer { padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.6rem; color: var(--text-dim); display: flex; gap: 2rem; flex-wrap: wrap; align-items: center; animation: fadeIn 0.6s ease-out 0.5s both; }
+
+/* ── Keyboard shortcut help button ───────────────────── */
+
+.kb-help-btn { margin-left: auto; background: none; border: 1px solid var(--border); color: var(--text-dim); font-family: inherit; font-size: 0.65rem; padding: 0.15rem 0.5rem; border-radius: 3px; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+.kb-help-btn:hover { border-color: var(--cyan-dim); color: var(--cyan); }
+
+/* ── Keyboard shortcut help overlay ─────────────────── */
+
+#kb-help-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 2000; animation: fadeIn 0.15s ease-out; }
+.kb-help-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; min-width: 280px; position: relative; }
+.kb-help-title { font-family: 'Outfit', sans-serif; font-weight: 600; font-size: 0.85rem; color: var(--text-bright); margin-bottom: 1rem; }
+.kb-help-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.kb-row { display: flex; align-items: baseline; gap: 0.75rem; }
+.kb-row dt { list-style: none; }
+.kb-row dd { font-size: 0.7rem; color: var(--text-dim); }
+kbd { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 0.1rem 0.4rem; color: var(--cyan); min-width: 2.5rem; display: inline-block; text-align: center; }
+.kb-help-close { position: absolute; top: 0.75rem; right: 0.75rem; background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.75rem; padding: 0.25rem; line-height: 1; }
+.kb-help-close:hover { color: var(--text-bright); }
 
 /* ── Animations ──────────────────────────────────────── */
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+/* ── WS Status Banner ────────────────────────────────── */
+
+#ws-status {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9998;
+  text-align: center;
+  font-size: 0.65rem;
+  font-family: inherit;
+  padding: 0.35rem 1rem;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  opacity: 0;
+  transform: translateY(-100%);
+  pointer-events: none;
+  cursor: default;
+}
+.ws-status-reconnecting {
+  opacity: 1;
+  transform: translateY(0);
+  background: var(--amber-dim, #7a5a20);
+  color: var(--amber, #e8a838);
+  border-bottom: 1px solid var(--amber, #e8a838);
+  pointer-events: none;
+}
+.ws-status-connected {
+  opacity: 1;
+  transform: translateY(0);
+  background: var(--green-dim, #1a6838);
+  color: var(--green, #38e878);
+  border-bottom: 1px solid var(--green, #38e878);
+  pointer-events: none;
+}
+.ws-status-offline {
+  opacity: 1;
+  transform: translateY(0);
+  background: var(--red, #e84848);
+  color: #fff;
+  border-bottom: 1px solid var(--red, #e84848);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.ws-status-hidden {
+  opacity: 0;
+  transform: translateY(-100%);
+  pointer-events: none;
+}
 
 /* ── Responsive ──────────────────────────────────────── */
 
@@ -224,6 +298,12 @@ footer { padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.
   .gauges { grid-template-columns: repeat(2, 1fr); }
   .services { grid-template-columns: 1fr; }
   .fleet-grid { grid-template-columns: 1fr; }
+  .container-grid { grid-template-columns: 1fr; }
+  .detail-panel .detail-grid { grid-template-columns: repeat(2, 1fr); }
+  .ctr-inspect-grid { grid-template-columns: repeat(2, 1fr); }
+  .mount-row .mount-info { min-width: unset; }
+  header { flex-wrap: wrap; gap: 0.5rem; }
+  header .uptime { display: none; }
 }
 
 /* ── Reduced Motion ──────────────────────────────────── */
