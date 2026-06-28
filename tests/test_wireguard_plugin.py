@@ -5,8 +5,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from buoy.plugins.protocol import PanelData
-
 
 class TestWireGuardPlugin:
     """Tests for the WireGuard tunnel status plugin."""
