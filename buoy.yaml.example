@@ -173,3 +173,11 @@ plugins:
       enabled: false
       interface: wg0          # WireGuard interface name
       stale_seconds: 180      # Seconds before a peer handshake is considered stale
+
+    # Portainer remote container stats
+    portainer:
+      enabled: false
+      url: ""                # e.g., https://portainer.example.com
+      api_key: ""            # Portainer API key (or BUOY_PLUGINS_BUILTIN_PORTAINER_API_KEY)
+      endpoint_id: 1         # Portainer endpoint/environment ID
+      verify_ssl: true       # Set false for self-signed certs (insecure)
