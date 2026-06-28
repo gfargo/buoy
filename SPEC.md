@@ -361,6 +361,7 @@ class GitHubPlugin(Plugin):
 | `cron_health` | Recent cron job runs | (none — reads journald) |
 | `backup_status` | Backup health + age | `backup_dir` |
 | `prometheus_exporter` | Exposes `/metrics` in Prometheus text format | (none — re-uses collector data) |
+| `systemd_health` | Systemd unit health via `systemctl is-active` | `units` (list of unit names) |
 
 ### 4.4 Frontend Plugin Rendering
 
