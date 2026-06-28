@@ -115,6 +115,7 @@ class PluginManager:
             "uptime_kuma": "buoy.plugins.builtin.uptime_kuma",
             "loki": "buoy.plugins.builtin.loki",
             "plane": "buoy.plugins.builtin.plane",
+            "actual_budget": "buoy.plugins.builtin.actual_budget",
             "backup_status": "buoy.plugins.builtin.backup_status",
             "cron_health": "buoy.plugins.builtin.cron_health",
             "journal_errors": "buoy.plugins.builtin.journal_errors",
