@@ -50,7 +50,11 @@ class SmartDiskPlugin(Plugin):
             summary = f"{failed[0]['device']}: SMART FAILED"
         elif reallocated:
             status = "warn"
-            summary = "1 drive: reallocated sectors" if len(reallocated) == 1 else f"{len(reallocated)} drives: reallocated sectors"
+            summary = (
+                "1 drive: reallocated sectors"
+                if len(reallocated) == 1
+                else f"{len(reallocated)} drives: reallocated sectors"
+            )
         else:
             n = len(results)
             summary = f"{n} drive{'s' if n != 1 else ''} OK"
@@ -167,6 +171,7 @@ function render_smart_disk(data) {
 
 
 # ── Parsing helpers ────────────────────────────────────────────────────────────
+
 
 def _kv_int(output: str, key: str) -> int | None:
     """Parse 'Key:  value [unit]' NVMe format → int (first numeric token after key)."""
