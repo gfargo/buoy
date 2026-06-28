@@ -1085,6 +1085,7 @@ ALL_BUILTIN_IDS = {
     "actual_budget",
     "backup_status",
     "cron_health",
+    "dns_filter",
     "github",
     "immich",
     "jellyfin",

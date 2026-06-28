@@ -184,6 +184,19 @@ plugins:
       endpoint_id: 1         # Portainer endpoint/environment ID
       verify_ssl: true       # Set false for self-signed certs (insecure)
 
+    # Pi-hole / AdGuard Home DNS filtering stats
+    # type: pihole  → queries {url}/admin/api.php?summaryRaw (Pi-hole v5, no auth for summary)
+    # type: adguard → queries {url}/control/stats with HTTP Basic auth
+    dns_filter:
+      enabled: false
+      type: pihole             # pihole | adguard
+      url: ""                  # e.g., http://192.168.1.1 or http://adguard:3000
+      api_key: ""              # Pi-hole: API token for top-domains (optional)
+                               # AdGuard: "username:password" for Basic auth (optional)
+      username: ""             # AdGuard: Basic-auth username (alternative to api_key)
+      password: ""             # AdGuard: Basic-auth password
+      verify_ssl: true         # Set false for self-signed certs (insecure)
+
     # SMART disk health (SATA + NVMe) — requires privileged + pid: host
     smart_disk:
       enabled: false
