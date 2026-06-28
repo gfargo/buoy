@@ -856,3 +856,114 @@ class TestSpeedtestPlugin:
         js = plugin.frontend_js()
         assert js is not None
         assert "render_speedtest" in js
+
+
+# =============================================================================
+# Journal Errors plugin
+# =============================================================================
+
+
+class TestJournalErrorsPlugin:
+    """Tests for the system journal error count plugin."""
+
+    def _make_plugin(self):
+        from buoy.plugins.builtin.journal_errors import JournalErrorsPlugin
+
+        plugin = JournalErrorsPlugin()
+        plugin.configure({})
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_no_errors_status_ok(self):
+        plugin = self._make_plugin()
+
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError("nsenter")):
+            result = await plugin.collect()
+
+        assert result.status == "ok"
+        assert "0 errors" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_empty_output(self):
+        plugin = self._make_plugin()
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await plugin.collect()
+
+        assert result.status == "ok"
+        assert "0 errors" in result.summary
+        assert result.detail["entries"] == []
+
+    @pytest.mark.asyncio
+    async def test_parses_entries_warn(self):
+        plugin = self._make_plugin()
+
+        journal_output = (
+            b"Jun 26 14:05:01 compass kernel: oom-kill event: constraint=CONSTRAINT_NONE\n"
+            b"Jun 26 14:06:01 compass systemd[1]: Failed to start foo.service\n"
+            b"Jun 26 14:07:01 compass sshd[9999]: error: PAM auth failed for root\n"
+        )
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(journal_output, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await plugin.collect()
+
+        assert result.status == "warn"
+        assert "3 errors" in result.summary
+        assert len(result.detail["entries"]) == 3
+        assert result.detail["entries"][0]["unit"] == "kernel"
+        assert "oom-kill" in result.detail["entries"][0]["message"]
+
+    @pytest.mark.asyncio
+    async def test_many_entries_error(self):
+        plugin = self._make_plugin()
+
+        lines = (
+            b"\n".join(
+                f"Jun 26 14:{i:02d}:01 compass sshd[1]: error: something".encode() for i in range(6)
+            )
+            + b"\n"
+        )
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(lines, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await plugin.collect()
+
+        assert result.status == "error"
+        assert "6 errors" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_respects_max_entries(self):
+        from buoy.plugins.builtin.journal_errors import JournalErrorsPlugin
+
+        plugin = JournalErrorsPlugin()
+        plugin.configure({"max_entries": 5})
+
+        # Subprocess returns 5 lines (tail -5 is baked in the command)
+        lines = (
+            b"\n".join(
+                f"Jun 26 14:{i:02d}:01 compass sshd[1]: error: something".encode() for i in range(5)
+            )
+            + b"\n"
+        )
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(lines, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await plugin.collect()
+
+        assert len(result.detail["entries"]) <= 5
+
+    def test_has_frontend_js(self):
+        plugin = self._make_plugin()
+        js = plugin.frontend_js()
+        assert js is not None
+        assert "render_journal_errors" in js

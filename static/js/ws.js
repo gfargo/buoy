@@ -6,10 +6,51 @@ let ws = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_DELAY = 30000;
 let onMessageCallback = null;
+let firstFailureTime = null;
+let reconnectTimer = null;
 
 export function connectWebSocket(onMessage) {
   onMessageCallback = onMessage;
   _connect();
+}
+
+function _ensureStatusEl() {
+  let el = document.getElementById('ws-status');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'ws-status';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function _setStatus(state) {
+  const el = _ensureStatusEl();
+  // Clear any pending auto-hide
+  clearTimeout(el._hideTimer);
+
+  if (state === 'connected') {
+    el.textContent = '✓ Connected';
+    el.className = 'ws-status-connected';
+    el._hideTimer = setTimeout(() => { el.className = 'ws-status-hidden'; }, 2000);
+  } else if (state === 'offline') {
+    el.textContent = 'Offline — click to retry';
+    el.className = 'ws-status-offline';
+    el.onclick = () => {
+      if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      reconnectAttempts = 0;
+      firstFailureTime = null;
+      if (ws && ws.readyState !== WebSocket.CLOSED) ws.close();
+      _connect();
+    };
+  } else {
+    // reconnecting
+    el.textContent = '⚠ Connection lost — reconnecting...';
+    el.className = 'ws-status-reconnecting';
+    el.onclick = null;
+  }
 }
 
 function _connect() {
@@ -19,12 +60,14 @@ function _connect() {
   try {
     ws = new WebSocket(url);
   } catch (e) {
-    _scheduleReconnect();
+    _onFailure();
     return;
   }
 
   ws.onopen = () => {
     reconnectAttempts = 0;
+    firstFailureTime = null;
+    _setStatus('connected');
     // Subscribe to stats channel
     ws.send(JSON.stringify({ type: 'subscribe', channels: ['stats'] }));
   };
@@ -42,7 +85,7 @@ function _connect() {
   };
 
   ws.onclose = () => {
-    _scheduleReconnect();
+    _onFailure();
   };
 
   ws.onerror = () => {
@@ -50,10 +93,17 @@ function _connect() {
   };
 }
 
+function _onFailure() {
+  if (firstFailureTime === null) firstFailureTime = Date.now();
+  const elapsed = Date.now() - firstFailureTime;
+  _setStatus(elapsed >= 60000 ? 'offline' : 'reconnecting');
+  _scheduleReconnect();
+}
+
 function _scheduleReconnect() {
   reconnectAttempts++;
   const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY);
-  setTimeout(_connect, delay);
+  reconnectTimer = setTimeout(_connect, delay);
 }
 
 export function sendMessage(msg) {

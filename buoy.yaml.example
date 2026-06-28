@@ -138,3 +138,10 @@ plugins:
       enabled: false
       interval_hours: 6    # How often to run a test (avoid ISP throttle detection)
       server_id: ""        # Optional: lock to a specific Speedtest.net server ID
+
+    # System journal priority-error count (last 24h)
+    # Requires: privileged + pid: host deployment (see README)
+    journal_errors:
+      enabled: false
+      since: "24 hours ago"
+      max_entries: 20

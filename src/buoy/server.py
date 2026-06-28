@@ -285,6 +285,25 @@ async def api_metrics(request: Request) -> Response:
     return Response(body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
+async def api_fleet_latency_history(request: Request) -> JSONResponse:
+    """Per-peer latency history (if history enabled)."""
+    if not _config.features.history or not _metric_store:
+        return JSONResponse({"error": "history feature not enabled"}, status_code=404)
+
+    peer = request.path_params["peer"]
+    allowed = {p.name for p in _config.network.peers}
+    if peer not in allowed:
+        return JSONResponse({"error": "unknown peer"}, status_code=404)
+
+    try:
+        hours = max(1, min(6, int(request.query_params.get("hours", "6"))))
+    except (ValueError, TypeError):
+        hours = 6
+
+    data = _metric_store.query_latency(peer, hours * 3600)
+    return JSONResponse({"peer": peer, "hours": hours, "data": data})
+
+
 async def api_history(request: Request) -> JSONResponse:
     """24h time-series for a metric (if history enabled)."""
     metric = request.path_params.get("metric", "cpu")
@@ -399,6 +418,20 @@ async def _stats_loop():
             pass
 
 
+async def _latency_loop():
+    """Periodically measure and store per-peer latency."""
+    while True:
+        await asyncio.sleep(_config.refresh.fleet_interval)
+        try:
+            network_coll = _collectors.get("network")
+            if network_coll and _metric_store:
+                results = await network_coll.measure_latency()
+                for r in results:
+                    _metric_store.record_latency(r["name"], r["latency_ms"])
+        except Exception:
+            pass
+
+
 # ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 
@@ -439,6 +472,10 @@ async def on_startup():
     # Start WebSocket broadcast loop
     if _config.features.websocket:
         asyncio.create_task(_stats_loop())
+
+    # Start latency collection loop (only when network collector and history are both present)
+    if _collectors.get("network") and _metric_store:
+        asyncio.create_task(_latency_loop())
 
     # Initialize plugin manager
     from buoy.plugins.loader import PluginManager
@@ -533,6 +570,7 @@ def create_app(config: BuoyConfig) -> Starlette:
         Route("/api/stats/detail", api_stats_detail),
         Route("/api/services", api_services),
         Route("/api/fleet", api_fleet),
+        Route("/api/fleet/{peer}/latency-history", api_fleet_latency_history),
         Route("/api/plugins", api_plugins),
         Route("/api/plugins/js", api_plugin_js),
         Route("/api/history/{metric}", api_history),

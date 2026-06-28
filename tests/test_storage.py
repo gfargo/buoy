@@ -219,3 +219,102 @@ class TestMetricStoreQuery:
         assert len(results) == 1
         assert results[0][1] == 42
         store.close()
+
+
+class TestMetricStoreLatency:
+    """Tests for record_latency / query_latency methods."""
+
+    def test_record_latency_stores_online_reading(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        store.record_latency("harbor", 12.5)
+
+        cursor = store._conn.execute("SELECT COUNT(*) FROM metrics WHERE collector='latency'")
+        assert cursor.fetchone()[0] == 1
+        store.close()
+
+    def test_record_latency_skips_offline_sentinel(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        store.record_latency("harbor", -1)
+        store.record_latency("harbor", 0)
+
+        cursor = store._conn.execute("SELECT COUNT(*) FROM metrics WHERE collector='latency'")
+        assert cursor.fetchone()[0] == 0
+        store.close()
+
+    def test_query_latency_returns_only_named_peer(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        store.record_latency("harbor", 10.0)
+        store.record_latency("bastion", 200.0)
+        results = store.query_latency("harbor", 3600)
+
+        assert len(results) == 1
+        assert results[0][1] == 10.0
+        store.close()
+
+    def test_query_latency_filters_by_period(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        import json as _json
+
+        old_ts = int(time.time()) - 7200
+        store._conn.execute(
+            "INSERT INTO metrics (ts, collector, data) VALUES (?, ?, ?)",
+            (old_ts, "latency", _json.dumps({"peer": "harbor", "latency_ms": 99.0})),
+        )
+        store.record_latency("harbor", 5.0)
+        store._conn.commit()
+
+        results = store.query_latency("harbor", 3600)
+        assert len(results) == 1
+        assert results[0][1] == 5.0
+        store.close()
+
+    def test_query_latency_ascending_order(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        store.record_latency("harbor", 30.0)
+        store.record_latency("harbor", 20.0)
+        store.record_latency("harbor", 10.0)
+        results = store.query_latency("harbor", 3600)
+
+        assert len(results) == 3
+        assert results[0][0] <= results[1][0] <= results[2][0]
+        store.close()
+
+    def test_query_latency_without_open_returns_empty(self):
+        config = _make_config()
+        store = MetricStore(config)
+        assert store.query_latency("harbor", 3600) == []
+
+    def test_query_latency_does_not_affect_query_stats(self, tmp_path, monkeypatch):
+        """record_latency rows must not appear in query('cpu', ...) results."""
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        store.record("stats", {"cpu": 42})
+        store.record_latency("harbor", 15.0)
+
+        results = store.query("cpu", 3600)
+        assert len(results) == 1
+        assert results[0][1] == 42
+        store.close()
