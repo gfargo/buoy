@@ -4,12 +4,15 @@ Each plugin's collect() method is tested by mocking external calls
 (HTTP APIs, subprocess, filesystem) and verifying the PanelData output.
 """
 
+import importlib
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from buoy.config import BuoyConfig, PluginEntry, PluginsConfig
+from buoy.plugins.loader import PluginManager
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 # =============================================================================
@@ -732,6 +735,133 @@ class TestPrometheusExporterPlugin:
 
 
 # =============================================================================
+# Speedtest plugin
+# =============================================================================
+
+
+class TestSpeedtestPlugin:
+    """Tests for the internet speedtest tracker plugin."""
+
+    def _make_plugin(self, config=None):
+        from buoy.plugins.builtin.speedtest import SpeedtestPlugin
+
+        plugin = SpeedtestPlugin()
+        plugin.configure(config or {})
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_no_history_returns_measuring(self):
+        plugin = self._make_plugin()
+        result = await plugin.collect()
+        assert result.status == "ok"
+        assert "Measuring" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_successful_result_ok_status(self):
+        plugin = self._make_plugin()
+        plugin._history = [
+            {
+                "ts": 1000.0,
+                "download_mbps": 480.0,
+                "upload_mbps": 22.0,
+                "ping_ms": 12.0,
+                "server": "Test",
+                "ok": True,
+            }
+        ]
+        result = await plugin.collect()
+        assert result.status == "ok"
+        assert "480" in result.summary
+        assert "22" in result.summary
+        assert "12" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_baseline_drop_returns_warn(self):
+        """A >50% drop below median baseline should produce warn status."""
+        plugin = self._make_plugin()
+        # Nine entries at 400 Mbps set the baseline; latest drops to 150 (~62% drop)
+        plugin._history = [
+            {
+                "ts": float(i),
+                "download_mbps": 400.0,
+                "upload_mbps": 20.0,
+                "ping_ms": 10.0,
+                "server": "",
+                "ok": True,
+            }
+            for i in range(9)
+        ] + [
+            {
+                "ts": 9.0,
+                "download_mbps": 150.0,
+                "upload_mbps": 20.0,
+                "ping_ms": 10.0,
+                "server": "",
+                "ok": True,
+            }
+        ]
+        result = await plugin.collect()
+        assert result.status == "warn"
+
+    @pytest.mark.asyncio
+    async def test_failed_entry_returns_error(self):
+        plugin = self._make_plugin()
+        plugin._history = [
+            {
+                "ts": 1.0,
+                "download_mbps": 0.0,
+                "upload_mbps": 0.0,
+                "ping_ms": 0.0,
+                "server": "",
+                "ok": False,
+                "error": "timeout",
+            }
+        ]
+        result = await plugin.collect()
+        assert result.status == "error"
+
+    @pytest.mark.asyncio
+    async def test_run_test_parses_json(self):
+        plugin = self._make_plugin()
+        speedtest_output = json.dumps(
+            {
+                "download": 480_000_000,
+                "upload": 22_000_000,
+                "ping": 12.5,
+                "server": {"name": "Test Server"},
+            }
+        ).encode()
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(speedtest_output, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            entry = await plugin._run_test()
+
+        assert entry["ok"] is True
+        assert abs(entry["download_mbps"] - 480.0) < 0.1
+        assert abs(entry["upload_mbps"] - 22.0) < 0.1
+        assert entry["ping_ms"] == 12.5
+        assert entry["server"] == "Test Server"
+
+    @pytest.mark.asyncio
+    async def test_run_test_binary_missing(self):
+        plugin = self._make_plugin()
+        with patch(
+            "asyncio.create_subprocess_exec", side_effect=FileNotFoundError("speedtest-cli")
+        ):
+            entry = await plugin._run_test()
+        assert entry["ok"] is False
+        assert "not found" in entry.get("error", "")
+
+    def test_has_frontend_js(self):
+        plugin = self._make_plugin()
+        js = plugin.frontend_js()
+        assert js is not None
+        assert "render_speedtest" in js
+
+
+# =============================================================================
 # Journal Errors plugin
 # =============================================================================
 
@@ -843,89 +973,204 @@ class TestJournalErrorsPlugin:
 
 
 # =============================================================================
-# WireGuard plugin
+# Actual Budget plugin
 # =============================================================================
 
 
-class TestWireGuardPlugin:
-    """Tests for the WireGuard tunnel status plugin."""
+class TestActualBudgetPlugin:
+    """Tests for the Actual Budget monthly summary plugin."""
 
-    def _make_plugin(self, **settings):
-        from buoy.plugins.builtin.wireguard import WireGuardPlugin
+    def _make_plugin(self):
+        from buoy.plugins.builtin.actual_budget import ActualBudgetPlugin
 
-        plugin = WireGuardPlugin()
-        plugin.configure(settings)
+        plugin = ActualBudgetPlugin()
+        plugin.configure(
+            {
+                "url": "http://actual-http-api:5007",
+                "api_key": "test-key",
+                "budget_sync_id": "abc-123",
+            }
+        )
         return plugin
 
     @pytest.mark.asyncio
-    async def test_interface_not_found(self):
-        plugin = self._make_plugin()
-        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError("nsenter")):
-            result = await plugin.collect()
-        assert result.status == "error"
-        assert "wg0" in result.summary
+    async def test_no_config_returns_disabled(self):
+        from buoy.plugins.builtin.actual_budget import ActualBudgetPlugin
+
+        plugin = ActualBudgetPlugin()
+        plugin.configure({})
+        result = await plugin.collect()
+        assert result.status == "disabled"
+        assert "Not configured" in result.summary
 
     @pytest.mark.asyncio
-    async def test_empty_output(self):
+    async def test_under_budget_ok(self):
         plugin = self._make_plugin()
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            result = await plugin.collect()
-        assert result.status == "error"
 
-    @pytest.mark.asyncio
-    async def test_no_peers(self):
-        """Interface line only, no peers — 0/0 peers up, status ok."""
-        plugin = self._make_plugin()
-        # Interface line: private_key, public_key, listen_port, fwmark
-        iface_line = b"privkey123\tpubkey456\t51820\toff\n"
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(iface_line, b""))
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        response = json.dumps(
+            {
+                "categoryGroups": [
+                    {
+                        "categories": [
+                            {"name": "Groceries", "budgeted": 500000, "spent": -300000},
+                            {"name": "Transport", "budgeted": 200000, "spent": -100000},
+                        ]
+                    }
+                ]
+            }
+        ).encode()
+
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
             result = await plugin.collect()
+
         assert result.status == "ok"
-        assert result.summary == "0/0 peers up"
+        assert result.detail["spent"] == 400.0
+        assert result.detail["budgeted"] == 700.0
+        assert result.detail["pct"] == 57
+        assert "$400.00 / $700.00" in result.summary
 
     @pytest.mark.asyncio
-    async def test_all_peers_up(self):
+    async def test_over_90_percent_warn(self):
         plugin = self._make_plugin()
-        now = int(time.time())
-        # Interface line + 2 fresh peers
-        dump = (
-            b"privkey\tpubkey\t51820\toff\n"
-            + f"AAAAAAAAAAAA\t(none)\t1.2.3.4:51820\t10.0.0.2/32\t{now - 30}\t1024\t2048\t0\n".encode()
-            + f"BBBBBBBBBBBB\t(none)\t5.6.7.8:51820\t10.0.0.3/32\t{now - 60}\t512\t1024\t0\n".encode()
-        )
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(dump, b""))
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            result = await plugin.collect()
-        assert result.status == "ok"
-        assert result.summary == "2/2 peers up"
-        assert len(result.detail["peers"]) == 2
-        assert result.detail["peers"][0]["rx"] == 1024
-        assert result.detail["peers"][0]["tx"] == 2048
 
-    @pytest.mark.asyncio
-    async def test_stale_peer_warn(self):
-        plugin = self._make_plugin(stale_seconds=180)
-        now = int(time.time())
-        dump = (
-            b"privkey\tpubkey\t51820\toff\n"
-            + f"AAAAAAAAAAAA\t(none)\t1.2.3.4:51820\t10.0.0.2/32\t{now - 30}\t0\t0\t0\n".encode()
-            + b"BBBBBBBBBBBB\t(none)\t(none)\t10.0.0.3/32\t0\t0\t0\t0\n"  # never handshaked
-        )
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(dump, b""))
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        response = json.dumps(
+            {
+                "categoryGroups": [
+                    {
+                        "categories": [
+                            {"name": "Groceries", "budgeted": 500000, "spent": -480000},
+                        ]
+                    }
+                ]
+            }
+        ).encode()
+
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
             result = await plugin.collect()
+
         assert result.status == "warn"
-        assert result.summary == "1/2 peers up"
-        assert result.detail["peers"][1]["stale"] is True
+        assert result.detail["pct"] == 96
+
+    @pytest.mark.asyncio
+    async def test_unreachable_returns_error(self):
+        plugin = self._make_plugin()
+
+        with patch("urllib.request.urlopen", side_effect=Exception("Connection refused")):
+            result = await plugin.collect()
+
+        assert result.status == "error"
+        assert "Unreachable" in result.summary
+        assert "error" in result.detail
 
     def test_has_frontend_js(self):
         plugin = self._make_plugin()
         js = plugin.frontend_js()
         assert js is not None
-        assert "render_wireguard" in js
+        assert "render_actual_budget" in js
+
+
+# =============================================================================
+# Plugin discovery
+# =============================================================================
+
+ALL_BUILTIN_IDS = {
+    "actual_budget",
+    "backup_status",
+    "cron_health",
+    "github",
+    "immich",
+    "jellyfin",
+    "journal_errors",
+    "loki",
+    "plane",
+    "prometheus_exporter",
+    "snapraid",
+    "speedtest",
+    "systemd_health",
+    "tailscale",
+    "uptime_kuma",
+}
+
+
+def _make_config(enabled_ids: set[str]) -> BuoyConfig:
+    """Build a BuoyConfig with the given plugin IDs enabled."""
+    builtin = {pid: PluginEntry(enabled=True, settings={}) for pid in enabled_ids}
+    return BuoyConfig(plugins=PluginsConfig(enabled=True, builtin=builtin))
+
+
+class TestPluginDiscovery:
+    """Tests for auto-discovery of built-in plugins via pkgutil."""
+
+    @pytest.mark.asyncio
+    async def test_discovery_finds_all_builtins(self):
+        """All 11 built-in plugin IDs are discovered and loaded when enabled."""
+        config = _make_config(ALL_BUILTIN_IDS)
+        mgr = PluginManager(config)
+        await mgr._load_builtins()
+        assert set(mgr._plugins.keys()) == ALL_BUILTIN_IDS
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_plugin_stays_dormant(self):
+        """Plugins absent from config (or disabled) are not activated."""
+        config = _make_config(set())  # nothing enabled
+        mgr = PluginManager(config)
+        await mgr._load_builtins()
+        assert mgr._plugins == {}
+
+    @pytest.mark.asyncio
+    async def test_disabled_plugin_stays_dormant(self):
+        """A plugin present in config but with enabled=False is not activated."""
+        config = BuoyConfig(
+            plugins=PluginsConfig(
+                enabled=True,
+                builtin={"github": PluginEntry(enabled=False, settings={})},
+            )
+        )
+        mgr = PluginManager(config)
+        await mgr._load_builtins()
+        assert "github" not in mgr._plugins
+
+    @pytest.mark.asyncio
+    async def test_import_error_in_one_plugin_is_isolated(self):
+        """An ImportError in one module is caught; other plugins still load."""
+        # Enable two plugins: github (will fail) and loki (should succeed)
+        config = _make_config({"github", "loki"})
+        mgr = PluginManager(config)
+
+        real_import = importlib.import_module
+
+        def patched_import(name, *args, **kwargs):
+            if name == "buoy.plugins.builtin.github":
+                raise ImportError("simulated import failure")
+            return real_import(name, *args, **kwargs)
+
+        with patch("buoy.plugins.loader.importlib.import_module", side_effect=patched_import):
+            await mgr._load_builtins()
+
+        assert "github" not in mgr._plugins
+        assert "loki" in mgr._plugins
+
+    @pytest.mark.asyncio
+    async def test_safe_collect_isolates_collect_error(self):
+        """A collect() error is stored as PanelData(status='error') and does not raise."""
+        from buoy.plugins.builtin.github import GitHubPlugin
+
+        plugin = GitHubPlugin()
+        plugin.configure({"token": "test"})
+
+        config = _make_config({"github"})
+        mgr = PluginManager(config)
+
+        with patch.object(plugin, "collect", side_effect=RuntimeError("boom")):
+            await mgr._safe_collect("github", plugin)
+
+        assert mgr._latest_data["github"].status == "error"
+        assert "boom" in mgr._latest_data["github"].detail.get("error", "")

@@ -14,6 +14,7 @@ import asyncio
 import importlib
 import importlib.util
 import inspect
+import pkgutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -109,33 +110,35 @@ class PluginManager:
     # ── Discovery ──────────────────────────────────────────────────────────────
 
     async def _load_builtins(self):
-        """Load built-in plugins that are enabled in config."""
-        builtin_map = {
-            "github": "buoy.plugins.builtin.github",
-            "uptime_kuma": "buoy.plugins.builtin.uptime_kuma",
-            "loki": "buoy.plugins.builtin.loki",
-            "plane": "buoy.plugins.builtin.plane",
-            "backup_status": "buoy.plugins.builtin.backup_status",
-            "cron_health": "buoy.plugins.builtin.cron_health",
-            "journal_errors": "buoy.plugins.builtin.journal_errors",
-            "prometheus_exporter": "buoy.plugins.builtin.prometheus_exporter",
-            "wireguard": "buoy.plugins.builtin.wireguard",
-        }
+        """Load built-in plugins that are enabled in config.
 
-        for plugin_id, module_path in builtin_map.items():
-            entry = self.config.plugins.builtin.get(plugin_id)
-            if not entry or not entry.enabled:
+        Discovers modules from the fixed in-repo buoy.plugins.builtin package only —
+        never from a config/env/volume/user-writable path.
+        """
+        import buoy.plugins.builtin as _builtin_pkg
+
+        for _, module_path, _ispkg in pkgutil.iter_modules(
+            _builtin_pkg.__path__, _builtin_pkg.__name__ + "."
+        ):
+            # Skip private/dunder helper modules
+            module_name = module_path.rsplit(".", 1)[-1]
+            if module_name.startswith("_"):
                 continue
 
             try:
                 module = importlib.import_module(module_path)
                 plugin_class = self._find_plugin_class(module)
-                if plugin_class:
-                    instance = plugin_class()
-                    instance.configure(entry.settings)
-                    self._plugins[plugin_id] = instance
+                if plugin_class is None:
+                    continue
+                plugin_id = plugin_class.manifest.id
+                entry = self.config.plugins.builtin.get(plugin_id)
+                if not entry or not entry.enabled:
+                    continue
+                instance = plugin_class()
+                instance.configure(entry.settings)
+                self._plugins[plugin_id] = instance
             except Exception as e:
-                print(f"[buoy:plugins] Failed to load builtin '{plugin_id}': {e}")
+                print(f"[buoy:plugins] Failed to load builtin '{module_path}': {e}")
 
     async def _load_user_plugins(self):
         """Load user plugins from the plugins directory."""

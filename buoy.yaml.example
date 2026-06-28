@@ -132,12 +132,39 @@ plugins:
       enabled: false
       url: ""
 
-    # System journal priority-error count (last 24h)
-    # Requires: privileged + pid: host deployment (see README)
-    journal_errors:
+    # SnapRAID parity status
+    snapraid:
       enabled: false
-      since: "24 hours ago"
-      max_entries: 20
+      status_file: /var/snapraid/snapraid.status   # path to saved status file
+      sync_max_age_hours: 24                        # warn if last sync older than this
+
+    # Tailscale peer status (direct/relay, online/offline, exit node)
+    # No config needed — auto-detects tailscale via nsenter into host.
+    # Requires privileged + pid: host container.
+    tailscale:
+      enabled: false
+
+    # Immich photo library stats
+    immich:
+      enabled: false
+      url: ""              # e.g., http://localhost:2283
+      api_key: ""          # Immich API key (admin account required for statistics)
+
+    # Jellyfin media server status (active streams, libraries, transcoding)
+    jellyfin:
+      enabled: false
+      url: ""                # e.g., http://localhost:8096
+      api_key: ""            # Jellyfin API key (Dashboard → API Keys)
+
+    # Proxmox VE node + guest status
+    # Note: verify_ssl defaults to false — PVE uses self-signed certs by default
+    proxmox:
+      enabled: false
+      url: "https://proxmox.example.com:8006"
+      token_id: "user@pam!tokenid"   # PVE API token ID (user@realm!tokenid)
+      token_secret: ""               # PVE API token secret
+      node: "pve"                    # Node name (shown in PVE UI)
+      verify_ssl: false
 
     # WireGuard peer handshake freshness + transfer stats
     # For non-Tailscale setups (raw WireGuard, Firezone, etc.)
