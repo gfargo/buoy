@@ -89,7 +89,10 @@ async def api_deploy_info(request: Request) -> JSONResponse:
     # Container creation time (image build date)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "stat", "-c", "%W", "/proc/1",
+            "stat",
+            "-c",
+            "%W",
+            "/proc/1",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -98,17 +101,23 @@ async def api_deploy_info(request: Request) -> JSONResponse:
             import datetime
 
             boot_ts = int(stdout.strip())
-            info["container_started"] = (
-                datetime.datetime.fromtimestamp(boot_ts, tz=datetime.UTC).isoformat()
-            )
+            info["container_started"] = datetime.datetime.fromtimestamp(
+                boot_ts, tz=datetime.UTC
+            ).isoformat()
     except Exception:
         pass
 
     # Git HEAD from host strut repo (optional, best-effort)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "nsenter", "-t", "1", "-m", "--",
-            "bash", "-c", "cd ~/strut 2>/dev/null && git log -1 --format='%h %s' 2>/dev/null",
+            "nsenter",
+            "-t",
+            "1",
+            "-m",
+            "--",
+            "bash",
+            "-c",
+            "cd ~/strut 2>/dev/null && git log -1 --format='%h %s' 2>/dev/null",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )

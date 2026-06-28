@@ -99,9 +99,7 @@ class MetricStore:
         except sqlite3.Error:
             pass
 
-    def query_container_history(
-        self, name: str, period_seconds: int
-    ) -> list[tuple[int, str, int]]:
+    def query_container_history(self, name: str, period_seconds: int) -> list[tuple[int, str, int]]:
         """Return time-ordered (ts, status, restart_count) samples for a container.
 
         Args:

@@ -255,10 +255,12 @@ class TestContainerStates:
         store = MetricStore(config)
         store.open()
 
-        store.record_container_states([
-            {"name": "alpha", "status": "running", "restart_count": 0},
-            {"name": "beta", "status": "running", "restart_count": 1},
-        ])
+        store.record_container_states(
+            [
+                {"name": "alpha", "status": "running", "restart_count": 0},
+                {"name": "beta", "status": "running", "restart_count": 1},
+            ]
+        )
 
         alpha = store.query_container_history("alpha", 3600)
         assert len(alpha) == 1
