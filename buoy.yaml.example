@@ -148,3 +148,8 @@ plugins:
       enabled: false
       since: "24 hours ago"
       max_entries: 20
+
+    # Systemd service health (tailscaled, caddy, docker, etc.)
+    systemd_health:
+      enabled: false
+      units: []              # e.g., ["tailscaled", "caddy", "docker"]

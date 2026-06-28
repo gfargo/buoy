@@ -1091,6 +1091,7 @@ ALL_BUILTIN_IDS = {
     "plane",
     "prometheus_exporter",
     "speedtest",
+    "systemd_health",
     "uptime_kuma",
 }
 
@@ -1106,7 +1107,7 @@ class TestPluginDiscovery:
 
     @pytest.mark.asyncio
     async def test_discovery_finds_all_builtins(self):
-        """All 10 built-in plugin IDs are discovered and loaded when enabled."""
+        """All 11 built-in plugin IDs are discovered and loaded when enabled."""
         config = _make_config(ALL_BUILTIN_IDS)
         mgr = PluginManager(config)
         await mgr._load_builtins()
