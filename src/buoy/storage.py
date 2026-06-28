@@ -123,6 +123,47 @@ class MetricStore:
         except sqlite3.Error:
             return []
 
+    def record_latency(self, peer: str, latency_ms: float):
+        """Store a latency measurement for a peer.
+
+        Only persists online readings (latency_ms > 0); skips self (0) and offline (-1).
+        """
+        if latency_ms <= 0:
+            return
+        self.record("latency", {"peer": peer, "latency_ms": latency_ms})
+
+    def query_latency(self, peer: str, period_seconds: int) -> list[tuple[int, float]]:
+        """Query latency history for a specific peer.
+
+        Args:
+            peer: Peer name to filter by.
+            period_seconds: How far back to look.
+
+        Returns:
+            List of (timestamp, latency_ms) tuples, ordered ascending.
+        """
+        if not self._conn:
+            return []
+
+        cutoff = int(time.time()) - period_seconds
+        try:
+            cursor = self._conn.execute(
+                "SELECT ts, data FROM metrics "
+                "WHERE collector = 'latency' AND ts >= ? ORDER BY ts ASC",
+                (cutoff,),
+            )
+            results = []
+            for ts, data_json in cursor:
+                try:
+                    data = json.loads(data_json)
+                    if data.get("peer") == peer:
+                        results.append((ts, data["latency_ms"]))
+                except (json.JSONDecodeError, KeyError):
+                    continue
+            return results
+        except sqlite3.Error:
+            return []
+
     def query(self, metric: str, period_seconds: int) -> list[tuple[int, float]]:
         """Query historical data for a specific metric.
 

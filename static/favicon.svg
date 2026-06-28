@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Background -->
+  <rect width="32" height="32" rx="6" fill="#0a0c0f"/>
+  <!-- Buoy body (round float) -->
+  <ellipse cx="16" cy="20" rx="8" ry="6" fill="#e8a838"/>
+  <!-- Buoy stripe -->
+  <rect x="8" y="19" width="16" height="3" fill="#12151a"/>
+  <!-- Buoy top beacon/mast -->
+  <rect x="15" y="8" width="2" height="8" fill="#c8cdd5"/>
+  <!-- Beacon light -->
+  <circle cx="16" cy="7" r="2.5" fill="#38e878"/>
+  <!-- Water wave -->
+  <path d="M4 26 Q8 24 12 26 Q16 28 20 26 Q24 24 28 26" stroke="#38c8e8" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+</svg>

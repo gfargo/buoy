@@ -131,3 +131,10 @@ plugins:
     actual_budget:
       enabled: false
       url: ""
+
+    # System journal priority-error count (last 24h)
+    # Requires: privileged + pid: host deployment (see README)
+    journal_errors:
+      enabled: false
+      since: "24 hours ago"
+      max_entries: 20

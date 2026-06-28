@@ -76,20 +76,68 @@ function applyNightMode(mode) {
   }
 }
 
+const SHORTCUTS = [
+  { key: 'r', desc: 'Force refresh stats' },
+  { key: 't', desc: 'Toggle light/dark theme' },
+  { key: 'f', desc: 'Focus fleet section' },
+  { key: '1–4', desc: 'Open gauge detail panel' },
+  { key: 'Esc', desc: 'Close detail panel / help' },
+  { key: '?', desc: 'Show this help' },
+];
+
+function showShortcutHelp() {
+  let overlay = document.getElementById('kb-help-overlay');
+  if (overlay) { overlay.remove(); return; }
+  overlay = document.createElement('div');
+  overlay.id = 'kb-help-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', 'Keyboard shortcuts');
+  overlay.innerHTML = `
+    <div class="kb-help-box">
+      <div class="kb-help-title">Keyboard Shortcuts</div>
+      <dl class="kb-help-list">
+        ${SHORTCUTS.map(s => `<div class="kb-row"><dt><kbd>${s.key}</kbd></dt><dd>${s.desc}</dd></div>`).join('')}
+      </dl>
+      <button class="kb-help-close" aria-label="Close">✕</button>
+    </div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('.kb-help-close').addEventListener('click', () => overlay.remove());
+  document.body.appendChild(overlay);
+  overlay.querySelector('.kb-help-close').focus();
+}
+
 function initKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     switch (e.key) {
+      case 'r': refreshStats(); break;
+      case 't': {
+        const sheet = document.getElementById('theme-stylesheet');
+        const isLight = sheet.href.includes('light.css');
+        sheet.href = isLight ? '/static/css/themes/terminal.css' : '/static/css/themes/light.css';
+        break;
+      }
+      case 'f':
+        document.querySelector('[aria-label="Network fleet"]')?.scrollIntoView({ behavior: 'smooth' });
+        break;
       case '1': document.querySelector('.gauge[data-detail="cpu"]')?.click(); break;
       case '2': document.querySelector('.gauge[data-detail="memory"]')?.click(); break;
       case '3': document.querySelector('.gauge[data-detail="disk"]')?.click(); break;
       case '4': document.querySelector('.gauge[data-detail="containers"]')?.click(); break;
-      case 'Escape':
+      case 'Escape': {
+        const helpOverlay = document.getElementById('kb-help-overlay');
+        if (helpOverlay) { helpOverlay.remove(); break; }
         document.getElementById('detail-panel')?.classList.remove('open');
         document.querySelectorAll('.gauge.expanded').forEach(g => g.classList.remove('expanded'));
         break;
+      }
+      case '?': showShortcutHelp(); break;
     }
   });
+
+  // Wire up the footer ? button
+  document.getElementById('kb-help-btn')?.addEventListener('click', showShortcutHelp);
 }
 
 async function init() {
