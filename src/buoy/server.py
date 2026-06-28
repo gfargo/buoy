@@ -201,6 +201,31 @@ async def api_fleet(request: Request) -> JSONResponse:
     return JSONResponse(data)
 
 
+async def api_container_history(request: Request) -> JSONResponse:
+    """24h up/down history for a single container (if history enabled)."""
+    name = request.path_params["name"]
+    if not _validate_container_name(name):
+        return JSONResponse({"error": "invalid container name"}, status_code=400)
+
+    if not _config.features.history or not _metric_store:
+        return JSONResponse({"error": "history feature not enabled"}, status_code=404)
+
+    hours_str = request.query_params.get("hours", "24")
+    try:
+        hours = max(1, min(int(hours_str), 24))
+    except (ValueError, TypeError):
+        hours = 24
+
+    samples = _metric_store.query_container_history(name, hours * 3600)
+    return JSONResponse(
+        {
+            "container": name,
+            "hours": hours,
+            "samples": [{"ts": ts, "status": st, "restart_count": rc} for ts, st, rc in samples],
+        }
+    )
+
+
 async def api_container_detail(request: Request) -> JSONResponse:
     """Container inspect + resource usage."""
     name = request.path_params["name"]
@@ -381,8 +406,10 @@ async def broadcast_alert(alert_data: dict):
 
 async def _stats_loop():
     """Periodically collect, broadcast, store, and evaluate alerts."""
+    _cycle = 0
     while True:
         await asyncio.sleep(_config.refresh.stats_interval)
+        _cycle += 1
         try:
             system_coll = _collectors.get("system")
             docker_coll = _collectors.get("docker")
@@ -407,6 +434,14 @@ async def _stats_loop():
             # Store in history (if enabled)
             if _metric_store:
                 _metric_store.record("stats", combined)
+                # Sample container states every ~30s (every 6th cycle at 5s interval)
+                if docker_coll and _cycle % 6 == 0:
+                    try:
+                        states = await docker_coll.list_container_states()
+                        if states:
+                            _metric_store.record_container_states(states)
+                    except Exception:
+                        pass
                 # Prune every 100 cycles (~500s at 5s interval)
                 if int(asyncio.get_event_loop().time()) % 500 < _config.refresh.stats_interval:
                     _metric_store.prune()
@@ -574,6 +609,7 @@ def create_app(config: BuoyConfig) -> Starlette:
         Route("/api/plugins", api_plugins),
         Route("/api/plugins/js", api_plugin_js),
         Route("/api/history/{metric}", api_history),
+        Route("/api/container/{name}/history", api_container_history),
         Route("/api/container/{name}", api_container_detail),
         Route("/api/container/{name}/logs", api_container_logs),
         Route("/api/container/{name}/restart", api_container_restart, methods=["POST"]),

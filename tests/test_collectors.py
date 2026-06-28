@@ -274,3 +274,133 @@ class TestNetworkLatency:
         results = await coll.measure_latency()
 
         assert results == [{"name": "compass", "latency_ms": 0, "online": True}]
+
+
+class TestDockerListContainerStates:
+    """Tests for DockerCollector.list_container_states()."""
+
+    def _make_proc(self, returncode, stdout):
+        from unittest.mock import AsyncMock, MagicMock
+
+        proc = MagicMock()
+        proc.returncode = returncode
+        proc.communicate = AsyncMock(return_value=(stdout.encode(), b""))
+        return proc
+
+    @pytest.mark.asyncio
+    async def test_parses_running_and_stopped_containers(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+
+        ps_proc = self._make_proc(0, "abc123\ndef456\n")
+        inspect_lines = (
+            '{"name":"/grafana","status":"running","restart_count":0}\n'
+            '{"name":"/redis","status":"exited","restart_count":3}\n'
+        )
+        inspect_proc = self._make_proc(0, inspect_lines)
+
+        call_count = 0
+
+        async def fake_exec(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return ps_proc if call_count == 1 else inspect_proc
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=fake_exec)):
+            result = await coll.list_container_states()
+
+        assert len(result) == 2
+        names = {r["name"] for r in result}
+        assert names == {"grafana", "redis"}
+
+        grafana = next(r for r in result if r["name"] == "grafana")
+        assert grafana["status"] == "running"
+        assert grafana["restart_count"] == 0
+
+        redis = next(r for r in result if r["name"] == "redis")
+        assert redis["status"] == "exited"
+        assert redis["restart_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_strips_leading_slash_from_name(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+
+        ps_proc = self._make_proc(0, "abc123\n")
+        inspect_proc = self._make_proc(
+            0, '{"name":"/my-container","status":"running","restart_count":0}\n'
+        )
+
+        call_count = 0
+
+        async def fake_exec(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return ps_proc if call_count == 1 else inspect_proc
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=fake_exec)):
+            result = await coll.list_container_states()
+
+        assert result[0]["name"] == "my-container"
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_containers(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        ps_proc = self._make_proc(0, "")
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=ps_proc)):
+            result = await coll.list_container_states()
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_ps_failure(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        ps_proc = self._make_proc(1, "")
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=ps_proc)):
+            result = await coll.list_container_states()
+
+        assert result == []
+
+
+class TestDemoDockerListContainerStates:
+    """Tests for DemoDockerCollector.list_container_states()."""
+
+    @pytest.mark.asyncio
+    async def test_returns_states_for_all_demo_containers(self):
+        config = _make_config()
+        coll = DemoDockerCollector(config)
+        states = await coll.list_container_states()
+        assert len(states) > 0
+        for s in states:
+            assert "name" in s
+            assert "status" in s
+            assert "restart_count" in s
+            assert isinstance(s["restart_count"], int)
+
+    @pytest.mark.asyncio
+    async def test_all_demo_containers_are_running(self):
+        config = _make_config()
+        coll = DemoDockerCollector(config)
+        states = await coll.list_container_states()
+        for s in states:
+            assert s["status"] == "running"
