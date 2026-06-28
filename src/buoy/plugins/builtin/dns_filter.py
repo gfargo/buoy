@@ -62,8 +62,7 @@ class DnsFilterPlugin(Plugin):
                 with urllib.request.urlopen(urllib.request.Request(top_url), timeout=8) as resp:
                     top_data = json.loads(resp.read())
                 top_blocked = [
-                    {"domain": d, "count": c}
-                    for d, c in (top_data.get("top_ads") or {}).items()
+                    {"domain": d, "count": c} for d, c in (top_data.get("top_ads") or {}).items()
                 ]
             except Exception:
                 pass  # top_blocked stays empty — non-fatal
@@ -72,8 +71,12 @@ class DnsFilterPlugin(Plugin):
             return PanelData(
                 status="error",
                 summary="Filtering disabled",
-                detail={"queries_today": queries_today, "blocked_today": blocked_today,
-                        "blocked_pct": round(blocked_pct, 1), "top_blocked": top_blocked},
+                detail={
+                    "queries_today": queries_today,
+                    "blocked_today": blocked_today,
+                    "blocked_pct": round(blocked_pct, 1),
+                    "top_blocked": top_blocked,
+                },
             )
 
         status = "warn" if blocked_pct > 25 else "ok"
@@ -81,8 +84,12 @@ class DnsFilterPlugin(Plugin):
         return PanelData(
             status=status,
             summary=summary,
-            detail={"queries_today": queries_today, "blocked_today": blocked_today,
-                    "blocked_pct": round(blocked_pct, 1), "top_blocked": top_blocked},
+            detail={
+                "queries_today": queries_today,
+                "blocked_today": blocked_today,
+                "blocked_pct": round(blocked_pct, 1),
+                "top_blocked": top_blocked,
+            },
         )
 
     async def _collect_adguard(self, url: str) -> PanelData:
@@ -119,8 +126,12 @@ class DnsFilterPlugin(Plugin):
         return PanelData(
             status=status,
             summary=summary,
-            detail={"queries_today": queries_today, "blocked_today": blocked_today,
-                    "blocked_pct": round(blocked_pct, 1), "top_blocked": top_blocked},
+            detail={
+                "queries_today": queries_today,
+                "blocked_today": blocked_today,
+                "blocked_pct": round(blocked_pct, 1),
+                "top_blocked": top_blocked,
+            },
         )
 
     def frontend_js(self) -> str | None:

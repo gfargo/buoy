@@ -782,8 +782,9 @@ class TestDnsFilterPlugin:
 
     @pytest.mark.asyncio
     async def test_adguard_success(self):
-        plugin = self._make_plugin(url="http://adguard:3000", type="adguard",
-                                   username="admin", password="secret")
+        plugin = self._make_plugin(
+            url="http://adguard:3000", type="adguard", username="admin", password="secret"
+        )
         payload = {
             "num_dns_queries": 5000,
             "num_blocked_filtering": 500,
