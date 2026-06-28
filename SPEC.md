@@ -360,6 +360,7 @@ class GitHubPlugin(Plugin):
 | `cert_expiry` | TLS certificate days remaining | (none — reads host certs) |
 | `cron_health` | Recent cron job runs | (none — reads journald) |
 | `backup_status` | Backup health + age | `backup_dir` |
+| `immich` | Photo/video counts and storage usage | `url`, `api_key` |
 | `prometheus_exporter` | Exposes `/metrics` in Prometheus text format | (none — re-uses collector data) |
 | `systemd_health` | Systemd unit health via `systemctl is-active` | `units` (list of unit names) |
 
