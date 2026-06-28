@@ -212,8 +212,8 @@ async def api_container_history(request: Request) -> JSONResponse:
 
     hours_str = request.query_params.get("hours", "24")
     try:
-        hours = min(int(hours_str), 24)
-    except ValueError:
+        hours = max(1, min(int(hours_str), 24))
+    except (ValueError, TypeError):
         hours = 24
 
     samples = _metric_store.query_container_history(name, hours * 3600)
