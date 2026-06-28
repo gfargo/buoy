@@ -64,11 +64,13 @@ class ActualBudgetPlugin(Plugin):
                     total_budgeted += budgeted
                     total_spent += spent
                     if budgeted or spent:
-                        categories.append({
-                            "name": cat.get("name", ""),
-                            "spent": round(spent / 1000, 2),
-                            "budgeted": round(budgeted / 1000, 2),
-                        })
+                        categories.append(
+                            {
+                                "name": cat.get("name", ""),
+                                "spent": round(spent / 1000, 2),
+                                "budgeted": round(budgeted / 1000, 2),
+                            }
+                        )
 
             spent_dollars = round(total_spent / 1000, 2)
             budgeted_dollars = round(total_budgeted / 1000, 2)
