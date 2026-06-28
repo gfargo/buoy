@@ -24,11 +24,17 @@ class TailscalePlugin(Plugin):
     async def collect(self) -> PanelData:
         data = await self._tailscale_status()
         if data is None:
-            return PanelData(status="error", summary="Tailscale not running", detail={"error": "unavailable"})
+            return PanelData(
+                status="error", summary="Tailscale not running", detail={"error": "unavailable"}
+            )
 
         backend_state = data.get("BackendState", "")
         if backend_state and backend_state != "Running":
-            return PanelData(status="error", summary=f"Tailscale: {backend_state}", detail={"backend_state": backend_state})
+            return PanelData(
+                status="error",
+                summary=f"Tailscale: {backend_state}",
+                detail={"backend_state": backend_state},
+            )
 
         peers_raw = data.get("Peer", {}) or {}
         peers = []
@@ -42,13 +48,15 @@ class TailscalePlugin(Plugin):
             if online:
                 last_seen = ""
             name = peer.get("HostName") or peer.get("DNSName", "").split(".")[0] or "unknown"
-            peers.append({
-                "name": name,
-                "online": online,
-                "conn_type": conn_type,
-                "last_seen": last_seen,
-                "exit_node": bool(peer.get("ExitNode", False)),
-            })
+            peers.append(
+                {
+                    "name": name,
+                    "online": online,
+                    "conn_type": conn_type,
+                    "last_seen": last_seen,
+                    "exit_node": bool(peer.get("ExitNode", False)),
+                }
+            )
 
         total = len(peers)
         online_count = sum(1 for p in peers if p["online"])
@@ -76,8 +84,15 @@ class TailscalePlugin(Plugin):
         """Run tailscale status --json via nsenter. Returns parsed dict or None."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "nsenter", "-t", "1", "-m", "-n", "--",
-                "tailscale", "status", "--json",
+                "nsenter",
+                "-t",
+                "1",
+                "-m",
+                "-n",
+                "--",
+                "tailscale",
+                "status",
+                "--json",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
