@@ -4,12 +4,15 @@ Each plugin's collect() method is tested by mocking external calls
 (HTTP APIs, subprocess, filesystem) and verifying the PanelData output.
 """
 
+import importlib
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from buoy.config import BuoyConfig, PluginEntry, PluginsConfig
+from buoy.plugins.loader import PluginManager
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 # =============================================================================
@@ -1072,3 +1075,97 @@ class TestActualBudgetPlugin:
         js = plugin.frontend_js()
         assert js is not None
         assert "render_actual_budget" in js
+
+
+# =============================================================================
+# Plugin discovery
+# =============================================================================
+
+ALL_BUILTIN_IDS = {
+    "actual_budget",
+    "backup_status",
+    "cron_health",
+    "github",
+    "journal_errors",
+    "loki",
+    "plane",
+    "prometheus_exporter",
+    "speedtest",
+    "uptime_kuma",
+}
+
+
+def _make_config(enabled_ids: set[str]) -> BuoyConfig:
+    """Build a BuoyConfig with the given plugin IDs enabled."""
+    builtin = {pid: PluginEntry(enabled=True, settings={}) for pid in enabled_ids}
+    return BuoyConfig(plugins=PluginsConfig(enabled=True, builtin=builtin))
+
+
+class TestPluginDiscovery:
+    """Tests for auto-discovery of built-in plugins via pkgutil."""
+
+    @pytest.mark.asyncio
+    async def test_discovery_finds_all_builtins(self):
+        """All 10 built-in plugin IDs are discovered and loaded when enabled."""
+        config = _make_config(ALL_BUILTIN_IDS)
+        mgr = PluginManager(config)
+        await mgr._load_builtins()
+        assert set(mgr._plugins.keys()) == ALL_BUILTIN_IDS
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_plugin_stays_dormant(self):
+        """Plugins absent from config (or disabled) are not activated."""
+        config = _make_config(set())  # nothing enabled
+        mgr = PluginManager(config)
+        await mgr._load_builtins()
+        assert mgr._plugins == {}
+
+    @pytest.mark.asyncio
+    async def test_disabled_plugin_stays_dormant(self):
+        """A plugin present in config but with enabled=False is not activated."""
+        config = BuoyConfig(
+            plugins=PluginsConfig(
+                enabled=True,
+                builtin={"github": PluginEntry(enabled=False, settings={})},
+            )
+        )
+        mgr = PluginManager(config)
+        await mgr._load_builtins()
+        assert "github" not in mgr._plugins
+
+    @pytest.mark.asyncio
+    async def test_import_error_in_one_plugin_is_isolated(self):
+        """An ImportError in one module is caught; other plugins still load."""
+        # Enable two plugins: github (will fail) and loki (should succeed)
+        config = _make_config({"github", "loki"})
+        mgr = PluginManager(config)
+
+        real_import = importlib.import_module
+
+        def patched_import(name, *args, **kwargs):
+            if name == "buoy.plugins.builtin.github":
+                raise ImportError("simulated import failure")
+            return real_import(name, *args, **kwargs)
+
+        with patch("buoy.plugins.loader.importlib.import_module", side_effect=patched_import):
+            await mgr._load_builtins()
+
+        assert "github" not in mgr._plugins
+        assert "loki" in mgr._plugins
+
+    @pytest.mark.asyncio
+    async def test_safe_collect_isolates_collect_error(self):
+        """A collect() error is stored as PanelData(status='error') and does not raise."""
+        from buoy.plugins.builtin.github import GitHubPlugin
+
+        plugin = GitHubPlugin()
+        plugin.configure({"token": "test"})
+
+        config = _make_config({"github"})
+        mgr = PluginManager(config)
+
+        with patch.object(plugin, "collect", side_effect=RuntimeError("boom")):
+            await mgr._safe_collect("github", plugin)
+
+        assert mgr._latest_data["github"].status == "error"
+        assert "boom" in mgr._latest_data["github"].detail.get("error", "")
