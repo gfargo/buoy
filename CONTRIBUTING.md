@@ -15,6 +15,9 @@ pip install -e ".[dev]"
 # Run in demo mode (no Docker socket needed)
 python -m buoy --demo
 
+# Run with hot-reload + debug logging (auto-restarts on Python file changes)
+python -m buoy --dev --demo
+
 # Open http://localhost:8090
 ```
 

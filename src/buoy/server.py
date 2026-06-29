@@ -703,3 +703,14 @@ def create_app(config: BuoyConfig) -> Starlette:
     )
 
     return app
+
+
+def _factory() -> Starlette:
+    """Zero-argument factory for uvicorn reload mode (``python -m buoy --dev``)."""
+    import os
+
+    from buoy.config import load_config
+
+    path = os.environ.get("BUOY_CONFIG") or None
+    demo = os.environ.get("BUOY_DEMO") == "1"
+    return create_app(load_config(path=path, demo=demo))
