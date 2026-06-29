@@ -209,3 +209,11 @@ plugins:
     smart_disk:
       enabled: false
       drives: []   # empty = auto-detect via smartctl --scan
+
+    # TLS certificate expiry (reads cert files from a mounted dir, read-only)
+    # Requires the cert directory mounted: - /etc/caddy/certs:/etc/caddy/certs:ro
+    cert_expiry:
+      enabled: false
+      cert_dir: /etc/caddy/certs   # directory scanned for *.crt / *.pem files
+      warn_days: 30                # amber at or under this many days remaining
+      critical_days: 7             # red at or under this many days remaining
