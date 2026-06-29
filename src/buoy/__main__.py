@@ -29,20 +29,39 @@ def main():
         default=None,
         help="Listen port (overrides config, default: 8090)",
     )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Enable hot-reload and debug logging for local development",
+    )
 
     args = parser.parse_args()
 
     from buoy.config import load_config
-    from buoy.server import create_app
 
     config = load_config(path=args.config, demo=args.demo)
-
     port = args.port or config.network.listen_port
-    app = create_app(config)
 
     import uvicorn
 
-    uvicorn.run(app, host=args.host, port=port, log_level="info")
+    if args.dev:
+        import os
+
+        os.environ["BUOY_CONFIG"] = args.config or ""
+        os.environ["BUOY_DEMO"] = "1" if args.demo else "0"
+        uvicorn.run(
+            "buoy.server:_factory",
+            factory=True,
+            host=args.host,
+            port=port,
+            reload=True,
+            log_level="debug",
+        )
+    else:
+        from buoy.server import create_app
+
+        app = create_app(config)
+        uvicorn.run(app, host=args.host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
