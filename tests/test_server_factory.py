@@ -1,8 +1,5 @@
 """Tests for the buoy.server._factory() reload-mode entry point."""
 
-import os
-
-import pytest
 from starlette.applications import Starlette
 
 
