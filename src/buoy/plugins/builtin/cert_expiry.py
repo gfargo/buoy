@@ -51,9 +51,7 @@ class CertExpiryPlugin(Plugin):
         if not cert_dir.is_dir():
             return PanelData(status="disabled", summary="Not configured")
 
-        cert_files = [
-            p for p in cert_dir.iterdir() if p.suffix in {".crt", ".pem"} and p.is_file()
-        ]
+        cert_files = [p for p in cert_dir.iterdir() if p.suffix in {".crt", ".pem"} and p.is_file()]
         if not cert_files:
             return PanelData(status="disabled", summary="Not configured")
 
