@@ -47,8 +47,8 @@ def main():
     if args.dev:
         import os
 
-        os.environ.setdefault("BUOY_CONFIG", args.config or "")
-        os.environ.setdefault("BUOY_DEMO", "1" if args.demo else "0")
+        os.environ["BUOY_CONFIG"] = args.config or ""
+        os.environ["BUOY_DEMO"] = "1" if args.demo else "0"
         uvicorn.run(
             "buoy.server:_factory",
             factory=True,
