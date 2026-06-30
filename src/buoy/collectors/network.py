@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import TYPE_CHECKING
 
 import httpx
@@ -18,7 +19,7 @@ class NetworkCollector:
         self.config = config
 
     async def collect(self) -> dict:
-        """Poll all peers and return fleet status."""
+        """Poll all peers and return fleet status including latency."""
         peers = self.config.network.peers
         if not peers:
             return {"peers": []}
@@ -37,27 +38,38 @@ class NetworkCollector:
         return {"peers": peer_data}
 
     async def _poll_peer(self, name: str, url: str, tier: str) -> dict:
-        """Fetch /api/stats from a peer node."""
+        """Fetch /api/stats from a peer node, measuring server-side round-trip latency."""
         if name == self.config.node.name:
-            return {"name": name, "tier": tier, "online": True, "self": True}
+            return {
+                "name": name,
+                "url": url,
+                "tier": tier,
+                "online": True,
+                "self": True,
+                "latency_ms": 0,
+            }
 
         try:
             async with httpx.AsyncClient(timeout=4.0, verify=False) as client:
+                t0 = time.monotonic()
                 r = await client.get(f"{url}/api/stats")
+                latency_ms = round((time.monotonic() - t0) * 1000)
                 if r.status_code == 200:
                     data = r.json()
                     return {
                         "name": name,
+                        "url": url,
                         "tier": tier,
                         "online": True,
                         "data": data,
+                        "latency_ms": latency_ms,
                     }
-                return {"name": name, "tier": tier, "online": False}
+                return {"name": name, "url": url, "tier": tier, "online": False, "latency_ms": -1}
         except Exception:
-            return {"name": name, "tier": tier, "online": False}
+            return {"name": name, "url": url, "tier": tier, "online": False, "latency_ms": -1}
 
     async def measure_latency(self) -> list[dict]:
-        """Measure HTTP round-trip latency to each peer."""
+        """Measure HTTP round-trip latency to each peer via /api/health."""
         peers = self.config.network.peers
         results = []
 
@@ -68,8 +80,6 @@ class NetworkCollector:
 
             try:
                 async with httpx.AsyncClient(timeout=4.0, verify=False) as client:
-                    import time
-
                     start = time.monotonic()
                     r = await client.get(f"{peer.url}/api/health")
                     elapsed = (time.monotonic() - start) * 1000
