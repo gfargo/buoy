@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 # Endpoints that require authentication when auth is enabled
 PROTECTED_PATHS = {
     "/api/container/",  # prefix match — covers /restart, /logs, detail
+    "/api/config/debug",
 }
 
 # Rate limiting: track requests per IP for protected endpoints
