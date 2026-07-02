@@ -154,6 +154,10 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
     """Apply BUOY_ prefixed environment variables as config overrides.
 
     Mapping: BUOY_NODE_NAME → node.name, BUOY_NETWORK_LISTEN_PORT → network.listen_port
+
+    Plugin secrets: BUOY_PLUGINS_BUILTIN_<PLUGIN>_<KEY> → plugins.builtin.<plugin>.<key>
+    e.g. BUOY_PLUGINS_BUILTIN_PLANE_API_KEY → plugins.builtin.plane.api_key
+    The plugin must have an entry under plugins.builtin in YAML (for plugin id resolution).
     """
     env_map = {
         "BUOY_NODE_NAME": ("node", "name"),
@@ -190,6 +194,107 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             raw[section][key] = value.lower() in ("true", "1", "yes")
         else:
             raw[section][key] = value
+
+    raw = _apply_plugin_env_overrides(raw)
+
+    return raw
+
+
+_PLUGIN_ENV_PREFIX = "BUOY_PLUGINS_BUILTIN_"
+
+
+def _apply_plugin_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
+    """Apply BUOY_PLUGINS_BUILTIN_<PLUGIN>_<KEY> env vars to plugins.builtin.<plugin>.<key>.
+
+    Resolution strategy:
+    - Strip the prefix, lowercase the remainder.
+    - Match against known plugin ids (from YAML + a hardcoded set of builtin ids)
+      using longest-id-first to handle ids/keys that both contain underscores.
+    - The leftover after "<id>_" is the setting key (lowercased, underscores preserved).
+    - Type coercion: if the key already exists in the plugin dict, coerce to that type;
+      otherwise store as a string.
+    - Unresolved env vars (no matching plugin id) emit a warning to stderr.
+    """
+    # Collect known plugin ids: YAML-declared ids take priority; supplement with
+    # a static list of builtin ids so purely env-driven plugins work too.
+    _builtin_ids = {
+        "github",
+        "uptime_kuma",
+        "loki",
+        "plane",
+        "actual_budget",
+        "snapraid",
+        "tailscale",
+        "immich",
+        "jellyfin",
+        "proxmox",
+        "wireguard",
+        "portainer",
+        "dns_filter",
+        "trigger_dev",
+        "smart_disk",
+        "cert_expiry",
+    }
+
+    builtin_raw: dict[str, Any] = raw.get("plugins", {}).get("builtin", {})
+    # All known ids = union of YAML-declared + static builtin set
+    known_ids: set[str] = set(builtin_raw.keys()) | _builtin_ids
+    # Sort longest first so "uptime_kuma" is tried before "uptime" etc.
+    sorted_ids = sorted(known_ids, key=len, reverse=True)
+
+    for env_key, value in os.environ.items():
+        if not env_key.startswith(_PLUGIN_ENV_PREFIX):
+            continue
+
+        remainder = env_key[len(_PLUGIN_ENV_PREFIX):].lower()  # e.g. "plane_api_key"
+
+        plugin_id = None
+        setting_key = None
+        for candidate in sorted_ids:
+            if remainder == candidate:
+                # Exact match with no key portion — skip (can't determine key name)
+                break
+            if remainder.startswith(candidate + "_"):
+                plugin_id = candidate
+                setting_key = remainder[len(candidate) + 1:]
+                break
+
+        if plugin_id is None or not setting_key:
+            print(
+                f"[buoy] Warning: env var {env_key} has prefix {_PLUGIN_ENV_PREFIX} "
+                "but could not be resolved to a known plugin id — skipping.",
+                file=sys.stderr,
+            )
+            continue
+
+        # Ensure the plugin dict exists in raw
+        if "plugins" not in raw:
+            raw["plugins"] = {}
+        if "builtin" not in raw["plugins"]:
+            raw["plugins"]["builtin"] = {}
+        if plugin_id not in raw["plugins"]["builtin"]:
+            raw["plugins"]["builtin"][plugin_id] = {}
+
+        plugin_dict: dict[str, Any] = raw["plugins"]["builtin"][plugin_id]
+
+        # Type coercion: match existing value type when present
+        existing = plugin_dict.get(setting_key)
+        if isinstance(existing, bool):
+            coerced: Any = value.lower() in ("true", "1", "yes")
+        elif isinstance(existing, int):
+            try:
+                coerced = int(value)
+            except ValueError:
+                print(
+                    f"[buoy] Warning: env var {env_key} value {value!r} cannot be "
+                    f"coerced to int for {plugin_id}.{setting_key} — storing as string.",
+                    file=sys.stderr,
+                )
+                coerced = value
+        else:
+            coerced = value
+
+        plugin_dict[setting_key] = coerced
 
     return raw
 

@@ -84,6 +84,15 @@ BUOY_AUTH_TOKEN=my-secret
 BUOY_FEATURES_DEMO_MODE=true
 ```
 
+Plugin secrets can be supplied via env so your config file stays secret-free in git:
+```bash
+# Convention: BUOY_PLUGINS_BUILTIN_<PLUGIN>_<KEY>
+BUOY_PLUGINS_BUILTIN_PLANE_API_KEY=your-plane-key
+BUOY_PLUGINS_BUILTIN_GITHUB_TOKEN=ghp_xxx
+BUOY_PLUGINS_BUILTIN_PORTAINER_API_KEY=ptr_xxx
+BUOY_PLUGINS_BUILTIN_PROXMOX_TOKEN_SECRET=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
 ## Architecture
 
 ```

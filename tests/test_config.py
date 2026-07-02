@@ -2,7 +2,12 @@
 
 import yaml
 
-from buoy.config import _apply_env_overrides, _build_config, load_config
+from buoy.config import (
+    _apply_env_overrides,
+    _apply_plugin_env_overrides,
+    _build_config,
+    load_config,
+)
 
 
 class TestConfigDefaults:
@@ -168,3 +173,120 @@ class TestLoadConfig:
         config = load_config(path=str(config_file))
         assert config.node.name == "buoy"
         assert config.network.listen_port == 8090
+
+
+class TestPluginEnvOverrides:
+    """BUOY_PLUGINS_BUILTIN_<PLUGIN>_<KEY> overrides plugins.builtin.<plugin>.<key>."""
+
+    def test_override_empty_secret(self, monkeypatch):
+        """Basic case: env var sets an empty api_key from YAML."""
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_PLANE_API_KEY", "xyz")
+        raw = {"plugins": {"builtin": {"plane": {"enabled": True, "api_key": ""}}}}
+        result = _apply_env_overrides(raw)
+        assert result["plugins"]["builtin"]["plane"]["api_key"] == "xyz"
+
+    def test_override_nonempty_yaml_value(self, monkeypatch):
+        """Env var overrides a non-empty YAML value."""
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_GITHUB_TOKEN", "ghp_new")
+        raw = {"plugins": {"builtin": {"github": {"enabled": True, "token": "ghp_old"}}}}
+        result = _apply_env_overrides(raw)
+        assert result["plugins"]["builtin"]["github"]["token"] == "ghp_new"
+
+    def test_underscore_in_plugin_id_and_key(self, monkeypatch):
+        """Plugin id with underscore (uptime_kuma) + simple key (url)."""
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_UPTIME_KUMA_URL", "http://kuma:3001")
+        raw = {"plugins": {"builtin": {"uptime_kuma": {"enabled": True, "url": ""}}}}
+        result = _apply_env_overrides(raw)
+        assert result["plugins"]["builtin"]["uptime_kuma"]["url"] == "http://kuma:3001"
+
+    def test_int_coercion_for_existing_int_key(self, monkeypatch):
+        """endpoint_id is an int in YAML; env value should be coerced to int."""
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_PORTAINER_ENDPOINT_ID", "42")
+        raw = {"plugins": {"builtin": {"portainer": {"enabled": True, "endpoint_id": 1}}}}
+        result = _apply_env_overrides(raw)
+        assert result["plugins"]["builtin"]["portainer"]["endpoint_id"] == 42
+        assert isinstance(result["plugins"]["builtin"]["portainer"]["endpoint_id"], int)
+
+    def test_bool_coercion_for_existing_bool_key(self, monkeypatch):
+        """verify_ssl is bool in YAML; env value should be coerced to bool."""
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_PORTAINER_VERIFY_SSL", "false")
+        raw = {"plugins": {"builtin": {"portainer": {"enabled": True, "verify_ssl": True}}}}
+        result = _apply_env_overrides(raw)
+        assert result["plugins"]["builtin"]["portainer"]["verify_ssl"] is False
+
+    def test_key_absent_in_yaml_stored_as_string(self, monkeypatch):
+        """Key not present in YAML dict defaults to string storage."""
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_LOKI_TOKEN", "secret-token")
+        raw = {"plugins": {"builtin": {"loki": {"enabled": True, "url": "http://loki:3100"}}}}
+        result = _apply_env_overrides(raw)
+        assert result["plugins"]["builtin"]["loki"]["token"] == "secret-token"
+
+    def test_plugin_not_in_yaml_creates_entry(self, monkeypatch):
+        """Plugin id known from builtin set but absent in YAML gets an entry created."""
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_JELLYFIN_API_KEY", "jf_key")
+        raw = {}  # no plugins section at all
+        result = _apply_env_overrides(raw)
+        assert result["plugins"]["builtin"]["jellyfin"]["api_key"] == "jf_key"
+
+    def test_unresolvable_env_var_skipped(self, monkeypatch, capsys):
+        """Env var that can't be mapped to a plugin id emits a warning and is skipped."""
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_UNKNOWNXXX_SECRET", "val")
+        raw = {}
+        result = _apply_env_overrides(raw)
+        # The unknown plugin should not be injected
+        assert "unknownxxx" not in result.get("plugins", {}).get("builtin", {})
+        captured = capsys.readouterr()
+        assert "Warning" in captured.err
+
+    def test_proxmox_token_secret_underscore_key(self, monkeypatch):
+        """token_secret (underscore in key) resolves correctly for proxmox."""
+        monkeypatch.setenv(
+            "BUOY_PLUGINS_BUILTIN_PROXMOX_TOKEN_SECRET",
+            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        )
+        raw = {
+            "plugins": {
+                "builtin": {
+                    "proxmox": {
+                        "enabled": True,
+                        "token_id": "user@pam!tok",
+                        "token_secret": "",
+                    }
+                }
+            }
+        }
+        result = _apply_env_overrides(raw)
+        assert (
+            result["plugins"]["builtin"]["proxmox"]["token_secret"]
+            == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        )
+
+    def test_end_to_end_build_config(self, monkeypatch):
+        """Full pipeline: env var flows through _build_config into PluginEntry.settings."""
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_PLANE_API_KEY", "live-key")
+        raw = {
+            "plugins": {
+                "builtin": {
+                    "plane": {"enabled": True, "api_key": "", "url": "https://plane.example.com"}
+                }
+            }
+        }
+        raw = _apply_env_overrides(raw)
+        config = _build_config(raw)
+        assert config.plugins.builtin["plane"].settings["api_key"] == "live-key"
+
+    def test_direct_apply_plugin_env_overrides(self, monkeypatch):
+        """_apply_plugin_env_overrides can be called directly."""
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_IMMICH_API_KEY", "immich-secret")
+        raw = {"plugins": {"builtin": {"immich": {"enabled": True, "api_key": ""}}}}
+        result = _apply_plugin_env_overrides(raw)
+        assert result["plugins"]["builtin"]["immich"]["api_key"] == "immich-secret"
+
+    def test_existing_env_overrides_unaffected(self, monkeypatch):
+        """Standard BUOY_NODE_NAME env override still works alongside plugin overrides."""
+        monkeypatch.setenv("BUOY_NODE_NAME", "test-node")
+        monkeypatch.setenv("BUOY_PLUGINS_BUILTIN_GITHUB_TOKEN", "tok")
+        raw = {"plugins": {"builtin": {"github": {"enabled": True, "token": ""}}}}
+        result = _apply_env_overrides(raw)
+        assert result["node"]["name"] == "test-node"
+        assert result["plugins"]["builtin"]["github"]["token"] == "tok"
