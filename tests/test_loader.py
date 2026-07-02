@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig
-from buoy.plugins.loader import PluginManager
+from buoy.plugins.loader import PluginManager, resolve_plugin_env
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 # =============================================================================
@@ -379,3 +379,136 @@ class TestPluginManagerStop:
 
         # Should not raise
         await mgr.stop()
+
+
+# =============================================================================
+# resolve_plugin_env unit tests
+# =============================================================================
+
+
+class TestResolvePluginEnv:
+    """Unit tests for the resolve_plugin_env helper."""
+
+    def test_fills_empty_yaml_value(self, monkeypatch):
+        monkeypatch.setenv("BUOY_PLUGIN_PLANE_API_KEY", "tok-123")
+        schema = {"api_key": {"type": "string", "required": True}}
+        result = resolve_plugin_env("plane", schema, {"api_key": ""})
+        assert result["api_key"] == "tok-123"
+
+    def test_underscore_plugin_id(self, monkeypatch):
+        """trigger_dev → TRIGGER_DEV in env var name."""
+        monkeypatch.setenv("BUOY_PLUGIN_TRIGGER_DEV_API_KEY", "tr_live_xxx")
+        schema = {"api_key": {"type": "string"}}
+        result = resolve_plugin_env("trigger_dev", schema, {})
+        assert result["api_key"] == "tr_live_xxx"
+
+    def test_underscore_key(self, monkeypatch):
+        """token_secret → TOKEN_SECRET in env var name."""
+        monkeypatch.setenv("BUOY_PLUGIN_PROXMOX_TOKEN_SECRET", "pve-secret")
+        schema = {"token_secret": {"type": "string"}}
+        result = resolve_plugin_env("proxmox", schema, {})
+        assert result["token_secret"] == "pve-secret"
+
+    def test_env_absent_settings_unchanged(self):
+        schema = {"api_key": {"type": "string"}}
+        original = {"api_key": "from-yaml", "url": "http://example.com"}
+        result = resolve_plugin_env("plane", schema, original)
+        assert result == original
+
+    def test_env_overrides_nonempty_yaml(self, monkeypatch):
+        """Env present wins even when YAML has a non-empty value."""
+        monkeypatch.setenv("BUOY_PLUGIN_PLANE_API_KEY", "env-key")
+        schema = {"api_key": {"type": "string"}}
+        result = resolve_plugin_env("plane", schema, {"api_key": "yaml-key"})
+        assert result["api_key"] == "env-key"
+
+    def test_env_hint_in_schema_honoured(self, monkeypatch):
+        """Per-key 'env' hint (e.g. BUOY_GITHUB_TOKEN) is also checked."""
+        monkeypatch.setenv("BUOY_GITHUB_TOKEN", "ghp_legacy")
+        schema = {"token": {"type": "string", "env": "BUOY_GITHUB_TOKEN"}}
+        result = resolve_plugin_env("github", schema, {"token": ""})
+        assert result["token"] == "ghp_legacy"
+
+    def test_canonical_takes_priority_over_hint(self, monkeypatch):
+        """Canonical form wins when both canonical and hint env vars are set."""
+        monkeypatch.setenv("BUOY_PLUGIN_GITHUB_TOKEN", "canonical-tok")
+        monkeypatch.setenv("BUOY_GITHUB_TOKEN", "hint-tok")
+        schema = {"token": {"type": "string", "env": "BUOY_GITHUB_TOKEN"}}
+        result = resolve_plugin_env("github", schema, {})
+        assert result["token"] == "canonical-tok"
+
+    def test_plugin_absent_from_yaml_creates_entry(self, monkeypatch):
+        """Env var populates a key even when the settings dict was empty."""
+        monkeypatch.setenv("BUOY_PLUGIN_GITHUB_TOKEN", "ghp_new")
+        schema = {"token": {"type": "string"}}
+        result = resolve_plugin_env("github", schema, {})
+        assert result["token"] == "ghp_new"
+
+    def test_returns_copy_not_mutating_original(self, monkeypatch):
+        """resolve_plugin_env returns a new dict; the input is not mutated."""
+        monkeypatch.setenv("BUOY_PLUGIN_PLANE_API_KEY", "env-key")
+        schema = {"api_key": {"type": "string"}}
+        original = {"api_key": ""}
+        result = resolve_plugin_env("plane", schema, original)
+        assert original["api_key"] == ""
+        assert result["api_key"] == "env-key"
+
+    def test_key_not_in_schema_not_injected(self, monkeypatch):
+        """Keys absent from schema are never injected, even if a matching env var exists."""
+        monkeypatch.setenv("BUOY_PLUGIN_PLANE_MYSTERY_KEY", "val")
+        schema = {"api_key": {"type": "string"}}
+        result = resolve_plugin_env("plane", schema, {})
+        assert "mystery_key" not in result
+
+
+# =============================================================================
+# Integration: env vars injected at load time
+# =============================================================================
+
+
+class TestPluginEnvInjection:
+    """Integration tests: env vars reach plugin.config via _load_builtins."""
+
+    @pytest.mark.asyncio
+    async def test_env_var_fills_plane_api_key(self, monkeypatch):
+        monkeypatch.setenv("BUOY_PLUGIN_PLANE_API_KEY", "live-key-xyz")
+        config = _make_config(
+            builtin={
+                "plane": PluginEntry(
+                    enabled=True,
+                    settings={
+                        "api_key": "",
+                        "url": "https://plane.example.com",
+                        "workspace": "w",
+                        "project": "p",
+                    },
+                )
+            }
+        )
+        mgr = PluginManager(config)
+        with patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock):
+            await mgr.start()
+
+        assert "plane" in mgr.plugins
+        assert mgr.plugins["plane"].config["api_key"] == "live-key-xyz"
+
+    @pytest.mark.asyncio
+    async def test_yaml_value_preserved_when_no_env(self):
+        config = _make_config(
+            builtin={
+                "plane": PluginEntry(
+                    enabled=True,
+                    settings={
+                        "api_key": "yaml-key",
+                        "url": "https://plane.example.com",
+                        "workspace": "w",
+                        "project": "p",
+                    },
+                )
+            }
+        )
+        mgr = PluginManager(config)
+        with patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock):
+            await mgr.start()
+
+        assert mgr.plugins["plane"].config["api_key"] == "yaml-key"

@@ -14,15 +14,43 @@ import asyncio
 import importlib
 import importlib.util
 import inspect
+import os
 import pkgutil
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from buoy.plugins.protocol import PanelData, Plugin
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+
+def resolve_plugin_env(
+    plugin_id: str, schema: dict[str, Any], settings: dict[str, Any]
+) -> dict[str, Any]:
+    """Return settings merged with BUOY_PLUGIN_<ID>_<KEY> env overrides.
+
+    Iterates declared schema keys (not env var names) to avoid underscore-splitting
+    ambiguity (e.g. trigger_dev/api_key → BUOY_PLUGIN_TRIGGER_DEV_API_KEY is
+    unambiguous because both sides are known).
+
+    Precedence: canonical env var wins, then per-key 'env' hint in schema, then YAML.
+    Only string values are written; secrets are always strings so no coercion needed.
+    User plugins have no schema and are not affected (they call configure({}) directly).
+    """
+    result = dict(settings)
+    plugin_prefix = f"BUOY_PLUGIN_{plugin_id.upper()}_"
+    for key, meta in schema.items():
+        canonical = f"{plugin_prefix}{key.upper()}"
+        value = os.environ.get(canonical)
+        if value is None and isinstance(meta, dict):
+            hint = meta.get("env")
+            if hint:
+                value = os.environ.get(hint)
+        if value is not None:
+            result[key] = value
+    return result
 
 
 class PluginManager:
@@ -135,7 +163,12 @@ class PluginManager:
                 if not entry or not entry.enabled:
                     continue
                 instance = plugin_class()
-                instance.configure(entry.settings)
+                settings = resolve_plugin_env(
+                    plugin_id,
+                    plugin_class.manifest.config_schema,
+                    entry.settings,
+                )
+                instance.configure(settings)
                 self._plugins[plugin_id] = instance
             except Exception as e:
                 print(f"[buoy:plugins] Failed to load builtin '{module_path}': {e}")
