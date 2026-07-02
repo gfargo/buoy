@@ -101,6 +101,15 @@ refresh:
 # ── Plugins ────────────────────────────────────────────────
 # Built-in plugins are disabled by default. Enable and configure below.
 # Custom plugins go in the /plugins volume mount.
+#
+# Plugin secrets can be supplied via environment variables so YAML files can be
+# committed with empty secret fields. Convention: BUOY_PLUGIN_<ID>_<KEY>
+# (uppercased, underscores preserved). Examples:
+#   BUOY_PLUGIN_PLANE_API_KEY        → plugins.builtin.plane.api_key
+#   BUOY_PLUGIN_GITHUB_TOKEN         → plugins.builtin.github.token
+#   BUOY_PLUGIN_TRIGGER_DEV_API_KEY  → plugins.builtin.trigger_dev.api_key
+#   BUOY_PLUGIN_PROXMOX_TOKEN_SECRET → plugins.builtin.proxmox.token_secret
+# Env present always wins over the YAML value.
 plugins:
   enabled: true
   directory: /plugins        # Mount point for user plugins
@@ -109,7 +118,7 @@ plugins:
     # GitHub notifications + open PRs
     github:
       enabled: false
-      token: ""              # Or BUOY_GITHUB_TOKEN env var
+      token: ""              # Or BUOY_PLUGIN_GITHUB_TOKEN (or legacy BUOY_GITHUB_TOKEN)
 
     # UptimeKuma service health badges
     uptime_kuma:
@@ -124,7 +133,7 @@ plugins:
     # Plane sprint/cycle progress
     plane:
       enabled: false
-      api_key: ""
+      api_key: ""            # Or BUOY_PLUGIN_PLANE_API_KEY env var
       url: ""
       workspace: ""
       project: ""
@@ -180,7 +189,7 @@ plugins:
     portainer:
       enabled: false
       url: ""                # e.g., https://portainer.example.com
-      api_key: ""            # Portainer API key (or BUOY_PLUGINS_BUILTIN_PORTAINER_API_KEY)
+      api_key: ""            # Or BUOY_PLUGIN_PORTAINER_API_KEY env var
       endpoint_id: 1         # Portainer endpoint/environment ID
       verify_ssl: true       # Set false for self-signed certs (insecure)
 
