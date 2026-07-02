@@ -26,7 +26,9 @@ if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
 
-def resolve_plugin_env(plugin_id: str, schema: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+def resolve_plugin_env(
+    plugin_id: str, schema: dict[str, Any], settings: dict[str, Any]
+) -> dict[str, Any]:
     """Return settings merged with BUOY_PLUGIN_<ID>_<KEY> env overrides.
 
     Iterates declared schema keys (not env var names) to avoid underscore-splitting
