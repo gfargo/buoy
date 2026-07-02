@@ -246,7 +246,7 @@ def _apply_plugin_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         if not env_key.startswith(_PLUGIN_ENV_PREFIX):
             continue
 
-        remainder = env_key[len(_PLUGIN_ENV_PREFIX):].lower()  # e.g. "plane_api_key"
+        remainder = env_key[len(_PLUGIN_ENV_PREFIX) :].lower()  # e.g. "plane_api_key"
 
         plugin_id = None
         setting_key = None
@@ -256,7 +256,7 @@ def _apply_plugin_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
                 break
             if remainder.startswith(candidate + "_"):
                 plugin_id = candidate
-                setting_key = remainder[len(candidate) + 1:]
+                setting_key = remainder[len(candidate) + 1 :]
                 break
 
         if plugin_id is None or not setting_key:
