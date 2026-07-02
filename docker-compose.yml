@@ -11,6 +11,8 @@ services:
       - buoy-data:/data
       # Optional: mount a plugins directory for custom plugins
       # - ./plugins:/plugins:ro
+      # Optional: mount TLS certs (read-only) for the cert_expiry plugin
+      # - /etc/caddy/certs:/etc/caddy/certs:ro
     environment:
       - BUOY_AUTH_TOKEN=${BUOY_AUTH_TOKEN:-}
     # Required for full host metrics (temp, disk mounts, NVMe SMART)

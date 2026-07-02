@@ -136,6 +136,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Jellyfin | Active streams, libraries, transcoding | `url`, `api_key` |
 | Portainer | Remote container stats | `url`, `api_key`, `endpoint_id` |
 | Smart Disk | SMART health for SATA + NVMe drives | (none) |
+| Cert Expiry | TLS certificate days remaining | (none) |
 
 **Custom plugins** are Python files dropped into the `/plugins` volume:
 
