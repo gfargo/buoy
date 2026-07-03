@@ -61,7 +61,7 @@ export async function refreshFleet(config) {
     const alerts = d.alerts || [];
     const worst = alerts.some(a => a.level === 'crit') ? 'crit' : alerts.length ? 'warn' : '';
     const alertBadge = worst
-      ? `<span class="fn-alert-badge fn-alert-${worst}" title="${alerts.map(a => a.metric + ' ' + a.level).join(', ')}">&#9888; ${alerts.length}</span>`
+title="${alerts.map(a => (a.metric + ' ' + a.level).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')).join(', ')}"
       : '';
     return `<div class="fleet-node${worst ? ' alert-' + worst : ''}" data-peer="${n.name}">
       <div class="fn-dot"></div>
