@@ -57,9 +57,15 @@ export async function refreshFleet(config) {
         ).join('')}</div>`
       : '';
     const peerKey = encodeURIComponent(n.name);
-    return `<div class="fleet-node" data-peer="${n.name}">
+    // Derive alert severity from structured fields only (never inject peer message strings)
+    const alerts = d.alerts || [];
+    const worst = alerts.some(a => a.level === 'crit') ? 'crit' : alerts.length ? 'warn' : '';
+    const alertBadge = worst
+      ? `<span class="fn-alert-badge fn-alert-${worst}" title="${alerts.map(a => a.metric + ' ' + a.level).join(', ')}">&#9888; ${alerts.length}</span>`
+      : '';
+    return `<div class="fleet-node${worst ? ' alert-' + worst : ''}" data-peer="${n.name}">
       <div class="fn-dot"></div>
-      <a class="fn-name fn-name-link" href="${n.url}">${n.name} <span style="font-weight:300;font-size:0.6rem;color:var(--text-dim)">${n.tier || ''}</span></a>
+      <a class="fn-name fn-name-link" href="${n.url}">${n.name} <span style="font-weight:300;font-size:0.6rem;color:var(--text-dim)">${n.tier || ''}</span></a>${alertBadge}
       <div class="fn-stats">
         <span>CPU <span class="fn-val">${d.cpu || 0}%</span></span>
         <span>MEM <span class="fn-val">${memPct}%</span></span>

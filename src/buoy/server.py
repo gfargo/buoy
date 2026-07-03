@@ -170,7 +170,10 @@ async def api_stats(request: Request) -> JSONResponse:
             if entry:
                 ctr["update_status"] = entry["status"]
 
-    return JSONResponse({**system_data, **docker_data, **disk_data, "top_services": services})
+    alerts = [a.to_dict() for a in _alert_engine.active_alerts] if _alert_engine else []
+    return JSONResponse(
+        {**system_data, **docker_data, **disk_data, "top_services": services, "alerts": alerts}
+    )
 
 
 async def api_stats_detail(request: Request) -> JSONResponse:
