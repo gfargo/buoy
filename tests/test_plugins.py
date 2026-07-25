@@ -749,14 +749,14 @@ class TestPrometheusExporterPlugin:
         # The raw unescaped double-quote must NOT appear inside a label value
         # (every label value is delimited by " so a bare " would break parsing)
         # We check that the escaped sequences ARE present instead.
-        assert '\\"' in output          # escaped double-quote
-        assert "\\\\" in output         # escaped backslash (two chars: \\)
-        assert "\\n" in output          # escaped newline literal
+        assert '\\"' in output  # escaped double-quote
+        assert "\\\\" in output  # escaped backslash (two chars: \\)
+        assert "\\n" in output  # escaped newline literal
 
         # And no raw newline should appear inside a label value position
         for line in output.splitlines():
             if "{" in line and "}" in line:
-                label_value_region = line[line.index("{"):line.index("}") + 1]
+                label_value_region = line[line.index("{") : line.index("}") + 1]
                 assert "\n" not in label_value_region
 
     def test_format_metrics_uptime_uses_uptime_s(self):
