@@ -2,9 +2,12 @@
 
 import dataclasses
 
+from starlette.testclient import TestClient
+
+import buoy.server as server_module
 from buoy.auth import PROTECTED_PATHS, AuthMiddleware
 from buoy.config import _build_config
-from buoy.server import _redact_secrets
+from buoy.server import _redact_secrets, create_app
 
 
 class FakeAuthConfig:
@@ -133,3 +136,79 @@ class TestConfigDebugProtectedPath:
 
     def test_config_debug_in_protected_paths_set(self):
         assert "/api/config/debug" in PROTECTED_PATHS
+
+
+# ── Helpers for handler-level tests ───────────────────────────────────────────
+
+
+def _make_test_client(token: str, auth_enabled: bool = False) -> TestClient:
+    """Create a TestClient with a minimal config wired into the server module."""
+    config = _build_config(
+        {"auth": {"enabled": auth_enabled, "type": "token", "token": token}}
+    )
+    # Patch the module-level _config so the handler can read it without startup
+    server_module._config = config
+    app = create_app(config)
+    # Override _config again after create_app (which also sets it)
+    server_module._config = config
+    return TestClient(app, raise_server_exceptions=False)
+
+
+class TestConfigDebugHandlerAuth:
+    """Test that api_config_debug enforces auth independently of auth.enabled.
+
+    SEC-4: the endpoint must be inaccessible on a default install where
+    auth.enabled=False and no token is configured.
+    """
+
+    def test_no_token_configured_returns_403(self):
+        """Default install: auth.enabled=False, no token → 403."""
+        config = _build_config({})  # all defaults: auth.enabled=False, token=""
+        server_module._config = config
+        app = create_app(config)
+        server_module._config = config
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/api/config/debug")
+        assert resp.status_code == 403
+
+    def test_token_configured_no_header_returns_401(self):
+        """Token set but no Authorization header → 401."""
+        client = _make_test_client(token="my-secret")
+        resp = client.get("/api/config/debug")
+        assert resp.status_code == 401
+        assert resp.headers.get("WWW-Authenticate") is not None
+
+    def test_token_configured_wrong_token_returns_401(self):
+        """Token set, wrong token provided → 401."""
+        client = _make_test_client(token="my-secret")
+        resp = client.get("/api/config/debug", headers={"Authorization": "Bearer wrong"})
+        assert resp.status_code == 401
+
+    def test_token_configured_correct_token_returns_200(self):
+        """Token set and correct token provided → 200."""
+        client = _make_test_client(token="my-secret")
+        resp = client.get("/api/config/debug", headers={"Authorization": "Bearer my-secret"})
+        assert resp.status_code == 200
+        data = resp.json()
+        # All top-level keys should be present
+        for k in {"node", "network", "services", "theme", "auth", "features", "refresh", "plugins"}:
+            assert k in data, f"Missing top-level key: {k}"
+
+    def test_token_configured_correct_token_secrets_redacted(self):
+        """Secrets are redacted in the 200 response."""
+        client = _make_test_client(token="my-secret")
+        resp = client.get("/api/config/debug", headers={"Authorization": "Bearer my-secret"})
+        assert resp.status_code == 200
+        data = resp.json()
+        # The token itself should be redacted
+        assert data["auth"]["token"] == "***REDACTED***"
+
+    def test_auth_enabled_false_with_token_still_requires_auth(self):
+        """auth.enabled=False but token configured → endpoint still enforces the token."""
+        client = _make_test_client(token="my-secret", auth_enabled=False)
+        # No header → 401
+        resp = client.get("/api/config/debug")
+        assert resp.status_code == 401
+        # Correct header → 200
+        resp = client.get("/api/config/debug", headers={"Authorization": "Bearer my-secret"})
+        assert resp.status_code == 200

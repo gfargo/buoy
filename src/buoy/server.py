@@ -85,7 +85,41 @@ async def api_config(request: Request) -> JSONResponse:
 
 
 async def api_config_debug(request: Request) -> JSONResponse:
-    """Auth-protected endpoint returning the full loaded config with secrets redacted."""
+    """Auth-protected endpoint returning the full loaded config with secrets redacted.
+
+    This endpoint is gated independently of ``auth.enabled`` so it cannot be
+    accessed on a default (unauthenticated) install.
+
+    Access rules:
+    - If ``auth.token`` is set, require ``Authorization: Bearer <token>``.
+    - Otherwise the endpoint is disabled (403) — callers must configure a token.
+    """
+    import hmac
+
+    token = _config.auth.token
+    if not token:
+        # No token configured → refuse; don't expose topology to anonymous callers.
+        return JSONResponse(
+            {"error": "debug endpoint requires auth.token to be configured"},
+            status_code=403,
+        )
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(
+            {"error": "authentication required"},
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer realm="buoy"'},
+        )
+
+    provided = auth_header[7:]
+    if not hmac.compare_digest(provided, token):
+        return JSONResponse(
+            {"error": "authentication required"},
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer realm="buoy"'},
+        )
+
     return JSONResponse(_redact_secrets(dataclasses.asdict(_config)))
 
 
