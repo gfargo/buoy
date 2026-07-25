@@ -95,6 +95,12 @@ class TestDemoDockerCollector:
         assert data["name"] == "grafana"
         assert data["status"] == "running"
         assert "resources" in data
+        # cpu_pct carries its own % suffix (from docker stats / demo); the
+        # frontend must NOT append another one — otherwise the UI shows "1.23%%".
+        assert data["resources"]["cpu_pct"].endswith("%"), (
+            "cpu_pct must already include the '%' suffix so the frontend can "
+            "render it directly without appending another '%'"
+        )
 
     @pytest.mark.asyncio
     async def test_get_logs(self):

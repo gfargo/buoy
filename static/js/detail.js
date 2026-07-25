@@ -236,7 +236,7 @@ function renderContainerInspect(d, name) {
   const started = d.started_at ? new Date(d.started_at).toLocaleString() : 'N/A';
   const restarts = d.restart_count ?? 0;
   const res = d.resources || {};
-  const cpu = res.cpu_pct != null ? `${res.cpu_pct}%` : 'N/A';
+  const cpu = res.cpu_pct || 'N/A';
   const mem = res.mem_usage || 'N/A';
   const netIO = res.net_io || 'N/A';
   const blockIO = res.block_io || 'N/A';
