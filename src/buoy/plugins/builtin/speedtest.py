@@ -132,14 +132,32 @@ class SpeedtestPlugin(Plugin):
         self._save_history()
 
     async def _run_test(self) -> dict:
-        """Run the speed-test binary with --json and return a normalised result dict."""
+        """Run the speed-test binary and return a normalised result dict.
+
+        Two CLIs are supported with different invocation styles and output schemas:
+
+        * ``speedtest`` (Ookla official) — uses ``--format=json --accept-license
+          --accept-gdpr``; emits nested objects where ``download.bandwidth`` and
+          ``upload.bandwidth`` are in **Bytes/s** and ping is at ``ping.latency``.
+
+        * ``speedtest-cli`` (legacy Python wrapper) — uses ``--json``; emits flat
+          keys where ``download`` and ``upload`` are in **bits/s** and ping is at
+          ``ping``.
+        """
         ts = time.time()
         server_id = self.config.get("server_id")
 
         binary = self._binary or "speedtest-cli"
-        cmd = [binary, "--json"]
-        if server_id:
-            cmd += ["--server", str(server_id)]
+        is_ookla = (binary == "speedtest")
+
+        if is_ookla:
+            cmd = [binary, "--format=json", "--accept-license", "--accept-gdpr"]
+            if server_id:
+                cmd += ["--server-id", str(server_id)]
+        else:
+            cmd = [binary, "--json"]
+            if server_id:
+                cmd += ["--server", str(server_id)]
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -149,13 +167,26 @@ class SpeedtestPlugin(Plugin):
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
             data = json.loads(stdout.decode())
+
+            if is_ookla:
+                # Ookla CLI: nested schema, bandwidth in Bytes/s (÷ 125_000 → Mbps)
+                download_mbps = data["download"]["bandwidth"] / 125_000
+                upload_mbps = data["upload"]["bandwidth"] / 125_000
+                ping_ms = data["ping"]["latency"]
+                server_name = data.get("server", {}).get("name", "")
+            else:
+                # Legacy speedtest-cli: flat schema, speeds in bits/s (÷ 1e6 → Mbps)
+                download_mbps = data["download"] / 1e6
+                upload_mbps = data["upload"] / 1e6
+                ping_ms = data["ping"]
+                server_name = data.get("server", {}).get("name", "")
+
             return {
                 "ts": ts,
-                # speedtest-cli reports bits/s; convert to Mbps
-                "download_mbps": data["download"] / 1e6,
-                "upload_mbps": data["upload"] / 1e6,
-                "ping_ms": data["ping"],
-                "server": data.get("server", {}).get("name", ""),
+                "download_mbps": download_mbps,
+                "upload_mbps": upload_mbps,
+                "ping_ms": ping_ms,
+                "server": server_name,
                 "ok": True,
             }
         except FileNotFoundError:
