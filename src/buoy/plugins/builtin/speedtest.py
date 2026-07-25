@@ -1,13 +1,21 @@
 """Speedtest plugin — periodic internet speed tests with trend tracking.
 
-Runs speedtest-cli in a background task (not in collect()) because a speed test
-can exceed the 30-second collect() timeout enforced by the loader.
+Runs a speed-test binary in a background task (not in collect()) because a speed
+test can exceed the 30-second collect() timeout enforced by the loader.
+
+The plugin probes for a usable CLI at startup (in priority order):
+  1. ``speedtest`` — official Ookla CLI (recommended; actively maintained)
+  2. ``speedtest-cli`` — legacy Python CLI (install via ``pip install buoy[speedtest]``)
+
+If neither binary is found the plugin marks itself unavailable and returns a
+descriptive status rather than failing silently or blocking the boot sequence.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import statistics
 import time
 from pathlib import Path
@@ -16,6 +24,18 @@ from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 _HISTORY_PATHS = [Path("/data/speedtest_history.json"), Path("speedtest_history.json")]
 _MAX_HISTORY = 100
+
+# Candidates tried in order.  The official Ookla CLI is preferred because
+# speedtest-cli has been effectively unmaintained since 2021.
+_CLI_CANDIDATES = ["speedtest", "speedtest-cli"]
+
+
+def _find_speedtest_binary() -> str | None:
+    """Return the first available speed-test binary, or None."""
+    for candidate in _CLI_CANDIDATES:
+        if shutil.which(candidate):
+            return candidate
+    return None
 
 
 class SpeedtestPlugin(Plugin):
@@ -38,10 +58,13 @@ class SpeedtestPlugin(Plugin):
         super().__init__()
         self._history: list[dict] = []
         self._task: asyncio.Task | None = None
+        self._binary: str | None = None  # resolved at setup() time
 
     async def setup(self) -> None:
+        self._binary = _find_speedtest_binary()
         self._load_history()
-        self._task = asyncio.create_task(self._loop())
+        if self._binary is not None:
+            self._task = asyncio.create_task(self._loop())
 
     async def teardown(self) -> None:
         if self._task:
@@ -49,6 +72,18 @@ class SpeedtestPlugin(Plugin):
 
     async def collect(self) -> PanelData:
         """Return latest cached result instantly; never blocks on a subprocess."""
+        if self._binary is None:
+            return PanelData(
+                status="unavailable",
+                summary="No speedtest binary found",
+                detail={
+                    "hint": (
+                        "Install the official Ookla CLI ('speedtest') or the legacy "
+                        "Python wrapper ('pip install buoy[speedtest]') and restart Buoy."
+                    )
+                },
+            )
+
         if not self._history:
             return PanelData(status="ok", summary="Measuring…", detail={})
 
@@ -97,11 +132,12 @@ class SpeedtestPlugin(Plugin):
         self._save_history()
 
     async def _run_test(self) -> dict:
-        """Run speedtest-cli --json and return a normalised result dict."""
+        """Run the speed-test binary with --json and return a normalised result dict."""
         ts = time.time()
         server_id = self.config.get("server_id")
 
-        cmd = ["speedtest-cli", "--json"]
+        binary = self._binary or "speedtest-cli"
+        cmd = [binary, "--json"]
         if server_id:
             cmd += ["--server", str(server_id)]
 
@@ -130,7 +166,7 @@ class SpeedtestPlugin(Plugin):
                 "ping_ms": 0.0,
                 "server": "",
                 "ok": False,
-                "error": "speedtest-cli not found",
+                "error": f"{binary} not found",
             }
         except Exception as exc:
             return {

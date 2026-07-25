@@ -742,11 +742,15 @@ class TestPrometheusExporterPlugin:
 class TestSpeedtestPlugin:
     """Tests for the internet speedtest tracker plugin."""
 
-    def _make_plugin(self, config=None):
+    def _make_plugin(self, config=None, binary="speedtest-cli"):
         from buoy.plugins.builtin.speedtest import SpeedtestPlugin
 
         plugin = SpeedtestPlugin()
         plugin.configure(config or {})
+        # Simulate a binary being found so collect() doesn't short-circuit to
+        # 'unavailable'.  Tests that exercise the no-binary path set _binary=None
+        # explicitly after calling this helper.
+        plugin._binary = binary
         return plugin
 
     @pytest.mark.asyncio
@@ -859,6 +863,45 @@ class TestSpeedtestPlugin:
         js = plugin.frontend_js()
         assert js is not None
         assert "render_speedtest" in js
+
+    # ── New tests for optional-dependency behaviour ────────────────────────────
+
+    def test_find_speedtest_binary_returns_none_when_absent(self):
+        """_find_speedtest_binary returns None when neither CLI is on PATH."""
+        from buoy.plugins.builtin.speedtest import _find_speedtest_binary
+
+        with patch("shutil.which", return_value=None):
+            assert _find_speedtest_binary() is None
+
+    def test_find_speedtest_binary_prefers_official_cli(self):
+        """_find_speedtest_binary returns 'speedtest' (Ookla) before 'speedtest-cli'."""
+        from buoy.plugins.builtin.speedtest import _find_speedtest_binary
+
+        def _which(name):
+            return f"/usr/bin/{name}" if name == "speedtest" else None
+
+        with patch("shutil.which", side_effect=_which):
+            assert _find_speedtest_binary() == "speedtest"
+
+    def test_find_speedtest_binary_falls_back_to_legacy(self):
+        """_find_speedtest_binary returns 'speedtest-cli' when only that is present."""
+        from buoy.plugins.builtin.speedtest import _find_speedtest_binary
+
+        def _which(name):
+            return "/usr/local/bin/speedtest-cli" if name == "speedtest-cli" else None
+
+        with patch("shutil.which", side_effect=_which):
+            assert _find_speedtest_binary() == "speedtest-cli"
+
+    @pytest.mark.asyncio
+    async def test_collect_unavailable_when_no_binary(self):
+        """collect() returns status='unavailable' and a helpful hint when no CLI is found."""
+        plugin = self._make_plugin()
+        plugin._binary = None  # simulate no binary found at setup()
+        result = await plugin.collect()
+        assert result.status == "unavailable"
+        assert "speedtest" in result.summary.lower()
+        assert "hint" in result.detail
 
 
 # =============================================================================
