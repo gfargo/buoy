@@ -143,9 +143,7 @@ class TestConfigDebugProtectedPath:
 
 def _make_test_client(token: str, auth_enabled: bool = False) -> TestClient:
     """Create a TestClient with a minimal config wired into the server module."""
-    config = _build_config(
-        {"auth": {"enabled": auth_enabled, "type": "token", "token": token}}
-    )
+    config = _build_config({"auth": {"enabled": auth_enabled, "type": "token", "token": token}})
     # Patch the module-level _config so the handler can read it without startup
     server_module._config = config
     app = create_app(config)
