@@ -2,23 +2,111 @@
 
 Repo state audited: `main` @ `a05ad90` (after #74). Tests: **384 pass**, `ruff check` + `ruff format --check` clean, coverage **73%**.
 
-Every **BUG** and **SEC** item below was reproduced or confirmed against the code in this tree — evidence is quoted inline. Items are written to be pasted directly into GitHub issues.
+**131 numbered items.** Every **BUG** and **SEC** item was reproduced or confirmed against the code in this tree — evidence is quoted inline. Items are written to be pasted directly into GitHub issues.
 
 **Contents**
 
 | Section | Count |
 |---|---|
+| [Executive summary](#executive-summary) | — |
+| [Cross-cutting themes](#cross-cutting-themes) | — |
+| [Judgment calls & open questions](#judgment-calls--open-questions) | — |
 | [Security](#security) | 11 |
 | [Bugs — user-visible](#bugs--user-visible) | 12 |
 | [Bugs — data & lifecycle](#bugs--data--lifecycle) | 11 |
-| [Bugs — collectors & metric accuracy](#bugs--collectors--metric-accuracy) | 10 |
+| [Bugs — collectors & metric accuracy](#bugs--collectors--metric-accuracy) | 11 |
 | [Bugs — plugin system](#bugs--plugin-system) | 6 |
 | [Bugs — packaging, deploy, ops](#bugs--packaging-deploy-ops) | 10 |
 | [Features — core](#features--core) | 23 |
 | [Features — new plugins](#features--new-plugins) | 26 |
 | [Features — plugin platform](#features--plugin-platform) | 7 |
 | [Docs & project health](#docs--project-health) | 9 |
-| [Housekeeping](#housekeeping) | 4 |
+| [Housekeeping](#housekeeping) | 5 (incl. BUG-51) |
+
+### Method
+
+Nothing here is inferred from reading alone. The baseline was confirmed healthy first (`pytest -q`, `ruff check`, `ruff format --check`, `pytest --cov`), then each claim was checked by: booting the app through Starlette's `TestClient` and hitting the endpoints, calling `_build_config` / `AuthMiddleware` / `resolve_plugin_env` directly, building the wheel and listing its contents, and cross-referencing config keys, CSS custom properties, and server response keys against their frontend consumers. Scratch scripts were removed; the tree is clean apart from this file.
+
+---
+
+## Executive summary
+
+### P0 — fix before the next release
+
+| ID | Finding |
+|---|---|
+| **SEC-1** | `auth.enabled: true` with an empty token/password **fails open** — `_check_token` returns `True` when nothing is configured. Users who enable auth and forget the secret believe they're protected and aren't. |
+| **SEC-2** | `CORS allow_origins=["*"]` + `allow_methods=["*"]` over an unauthenticated `POST /api/container/{name}/restart`. Any page a user visits can restart containers on any buoy their browser can reach. |
+| **SEC-3** | Stored XSS in four render paths. Plugin summaries (Loki log lines, GitHub PR titles) and peer `top_services` go into `innerHTML` unescaped — including `href`, so `javascript:` executes. |
+| **BUG-13** | `features.history: true` records **nothing** when `websocket: false`. Silent, total data loss for anyone who turns off the socket. |
+
+### Features that ship but do not work
+
+These matter disproportionately because the docs promise them, so nobody reports them as broken — they just quietly don't happen.
+
+| ID | Advertised | Reality |
+|---|---|---|
+| **BUG-14** | "Optional webhook dispatch (Discord/Slack/generic)" — CHANGELOG 2.0.0 | `plugins.builtin.get("alerts")` returns a `PluginEntry`, so the URL is always `""`; every send raises into `except Exception: pass`. No `alerts` key exists in `buoy.yaml.example` either, so it was never configurable. |
+| **BUG-41** | `pip install` + a `buoy` console script | The wheel contains **zero** static files — no `[tool.hatch.build]`, `static/` sits outside `src/`. `/` returns 500. Only the Docker image works. |
+| **BUG-2** | `node.tier` in the README's own example | `gauges.js` reads `tierTag.dataset.tier`; nothing ever sets it. The badge always renders the hostname. |
+| **BUG-6** | `theme.custom` in `buoy.yaml.example` + SPEC §3.1 | Served by `/api/config`, read by no JS file. |
+| **BUG-3** | `node.role` ("description like 'Database Server'") | Zero references in `static/`. |
+| **BUG-36** | `refresh.plugins_interval` | Server-side no-op; the loader uses `manifest.refresh_interval`. |
+| **BUG-24** | SPEC §3.3: "validated against a JSON Schema, unknown keys warn" | No validation at all. `noed: {nmae: x}` yields a node called `buoy` with no diagnostic. |
+| **BUG-43** | `/metrics` "if prometheus_exporter plugin is enabled" (its own docstring) | Always registered, unauthenticated, and runs a full collector pass. |
+| **BUG-40** | SPEC §5.4: "Plugins return sample data" in demo mode | Collectors are stubbed, plugins are not — `--demo` makes real outbound API calls. |
+| **PP-1** | The documented plugin extension story | User plugins get `configure({})`; they cannot receive a URL, token, or threshold. |
+
+### Version drift
+
+`pyproject.toml` **2.0.2** · `buoy.__version__` **2.1.0** · `/api/health` hardcoded **2.0.0-alpha.1**. The Dockerfile comment claims hatchling reads the version from `__init__.py`, but `pyproject` pins it statically, so they drift silently. CHANGELOG lists 2.0.0 *above* 2.0.2/2.0.1, has no 2.1.0 entry despite ~30 merged PRs, and still ends with "Unreleased — Nothing yet." See **BUG-1**, **DOC-2**.
+
+### Measured gaps — quick reference
+
+| Measurement | Value | Item |
+|---|---|---|
+| Builtin plugins shipping | **22** | — |
+| …documented in README table | **10** | DOC-1 |
+| …documented in `buoy.yaml.example` | **16** | DOC-1 |
+| Subprocess timeouts that never `proc.kill()` | **17 of 17** | BUG-19 |
+| Files importing `logging` | **0** (9 `print()`, 17 `except Exception: pass`) | BUG-47 |
+| CSS custom properties referenced but undefined | **5** (used by 4 shipped plugins) | BUG-7 |
+| `system.py` test coverage | **0%** (132 statements) | BUG-50 |
+| `docker ps` invocations per `/api/stats` | **2** (SPEC §8.2 requires a 5 s cache) | BUG-9 |
+| Stats collections per refresh interval | **2** (WS push + HTTP poll) | BUG-8 |
+| Endpoints for the fully-built `/api/history` API used by the UI | **0** | FEAT-3 |
+
+---
+
+## Cross-cutting themes
+
+Several items look independent in the list but are one piece of work. Filing them as separate issues is fine; scheduling them separately is not.
+
+**1. `new Function()` + string HTML is the root of three problems.** Plugins ship JS that is `eval`'d and interpolates its own markup. That single design choice causes **SEC-3** (stored XSS), blocks **SEC-6** (no CSP is possible while `unsafe-eval` is required), and is why third-party plugins can never be safely distributed (**PP-5**). **PP-4** — a declarative panel spec rendered by trusted escaping code — is the fix for all three. Treat it as one thread, not three tickets; doing SEC-3 as spot-escaping now and PP-4 later means escaping the same data twice.
+
+**2. Auth is half-built, and the half that exists is worse than none.** **SEC-1** (fails open), **SEC-5** (rate limiting only exists when auth is on), **SEC-4** (`/api/config/debug` public when auth is off), and **SEC-9** (no frontend token support at all, so enabling auth breaks the UI) are one story: the feature was never completed end to end. Shipping SEC-1's fix alone converts a false sense of security into a locked-out dashboard. Land the frontend login overlay in the same release.
+
+**3. "Why is this panel empty?" has no answer today.** **BUG-47** (no logging), **BUG-24** (no config validation), **BUG-12**/**PP-7** (no error surfaced in the UI), **BUG-37** (failing plugins vanish rather than showing an error), **FEAT-12** (`is_available()` is dead code) and **BUG-33** (macOS shows zeros, not "unsupported") all produce the same user experience: silence. **FEAT-13** (`buoy doctor`) is the single highest-leverage item here and would deflect most support traffic.
+
+**4. Metric accuracy is systematically optimistic on non-Pi hardware.** **BUG-28** (only `thermal_zone0` — usually wrong on x86), **BUG-26** (disk I/O hardcodes `nvme0n1|sda|mmcblk0`, so every VM reports 0), **BUG-27** (only `/dev/nvme0n1`), **BUG-25** (disk gauge measures the container, the table measures the host), **BUG-29** (memory ignores `SReclaimable`/`Shmem`, overstating usage), **BUG-32** (ignores cgroup quota). The project was clearly developed against Raspberry Pi hosts; anyone on a VM or x86 box sees wrong or zero values. **BUG-50** is why none of this was caught — `system.py` has no tests.
+
+**5. Everything is priced for a Pi but paid twice.** **BUG-8** (double fetch) multiplies **BUG-9** (2× `docker ps`), **BUG-31** (100 ms CPU sample per request), and **BUG-22** (synchronous SQLite commit on the event loop). Fixing BUG-8 alone halves the cost of the other three.
+
+---
+
+## Judgment calls & open questions
+
+These are recommendations rather than findings — they need your call, not a patch.
+
+**BUG-51 is probably a bad merge, and that's the real issue.** PR #70 explicitly states it rewrote `refreshFleet()` to call `/api/fleet` once; the current `fleet.js` does the opposite. Something clobbered a merged change and no test caught it. Worth a quick `git log -p -- static/js/fleet.js` on the full history (this audit ran against a shallow clone and couldn't check) to see whether other merged work was lost the same way. If it was, that's a process issue outranking any individual bug here.
+
+**#3 may not be safe to close.** Peer latency did ship (#19 → #44 → #70), so the issue looks done — but latency only renders when `features.history` is enabled, because the sparkline reads from the metric store. Either close it and file the history-independent case separately, or re-scope #3 to that gap. **#9** and **#31** are unambiguously delivered and can be closed outright. **#10** and **#11** remain valid.
+
+**SPEC.md needs a decision, not an edit.** It still reads `Status: Planning` (dated 2026-06-24), lists 12 plugins against 22 shipping, describes a finished v1→v2 migration, and has an unchecked launch checklist that's largely done. It's also the cited reference for issues #1–#11, so deleting it orphans that context. Options: (a) extract the still-authoritative parts — threat model, plugin protocol, API contract — into `docs/architecture.md` and archive the rest, or (b) add a "historical, see docs/" banner. Option (a) is more work but the plugin protocol section is genuinely the best documentation in the repo and deserves to be live. See **DOC-6**.
+
+**Where I'd point new feature work, if it's a choice between them.** **FEAT-3** (trend charts) is the best value-per-effort item in the repo: `/api/history/{metric}` is fully implemented, tested, and consumed by nothing. It's mostly frontend work on an API that already exists. After that, the two conspicuous *absences* for this audience are **FEAT-1** (GPU — nothing at all, and Jellyfin transcoding / Frigate / Immich ML / Ollama users all want it) and **FEAT-2** (NIC throughput — `network.py` is peer polling only, there is no bandwidth metric). On plugins, **PLG-1** (UPS/NUT) and **FEAT-15** (ZFS) are the biggest gaps relative to the audience, and **PLG-26** is arguably a bug: `dns_filter` targets Pi-hole v5's `admin/api.php`, which v6 removed, so current Pi-hole users just get `error`.
+
+**Scope note on the plugin count.** 22 builtins with 6 undocumented suggests the plugin surface is growing faster than the docs and config example can absorb. The CI check proposed in **DOC-1** (assert every `manifest.id` appears in README and `buoy.yaml.example`) matters more than back-filling the six, because it stops the drift rather than resetting it.
 
 ---
 
@@ -569,6 +657,8 @@ Already filed as **#11** and still open — rich plugins (cron table, Loki error
 
 ### PP-4 — Declarative plugin rendering to replace `new Function()` + raw HTML
 Today plugins ship JS strings that are `eval`'d and interpolate their own HTML — the root cause of SEC-3 and the blocker for a CSP (SEC-6). Introduce a small declarative panel spec (rows, badges, bars, tables, sparklines) rendered by trusted, escaping frontend code, with `frontend_js()` kept as a deprecated escape hatch. Unlocks: safe third-party plugins, a strict CSP, and consistent styling.
+
+**Schedule this together with SEC-3 and SEC-6** — see [Cross-cutting themes §1](#cross-cutting-themes). Spot-escaping SEC-3 now and doing PP-4 later means escaping the same data twice and then deleting the first implementation.
 `priority: P1` · `labels: enhancement, plugins, security, frontend`
 
 ### PP-5 — Plugin distribution via entry points + `buoy plugin` CLI
@@ -652,18 +742,58 @@ Existing labels: `bug`, `enhancement`, `frontend`, `backend`, `plugins`, `needs-
 Low-risk, well-bounded picks for new contributors: BUG-1 (version), BUG-2/3 (tier/role), BUG-5 (`%%`), BUG-7 (CSS vars), BUG-11 (uptime), BUG-21 (unbounded lists), DOC-1 (plugin docs), DOC-2 (changelog), DOC-4 (repo files).
 `labels: housekeeping, good first issue`
 
+### HK-4 — Audit history for other lost merges
+BUG-51 shows a merged change (PR #70) being silently reverted by a later merge with no test to catch it. This audit ran against a **shallow clone** and could not check whether it happened elsewhere. Worth running `git log -p` over the frontend files touched by the most parallel-PR-heavy period (`static/js/fleet.js`, `detail.js`, `plugins.js`, `gauges.js` — roughly #44–#74, many of which were agent-generated and merged in bursts) to confirm nothing else was clobbered.
+
+Two findings in this audit are consistent with lost work rather than never-written work: **SEC-9** (an `authedFetch()` with token prompt was written in PR #18, which was closed unmerged in favour of PR #13, which has no auth handling) and **BUG-4** (`detail.js` reads `d.started_at`/`d.image_age`, which look like field names from an earlier backend shape). If merges are being lost, that process gap outranks any single bug in this document.
+`priority: P1` · `labels: housekeeping, ci`
+
 ---
 
 ## Suggested sequencing
 
-**Wave 1 — correctness and security (ship as 2.1.1 / 2.2.0)**
-SEC-1, SEC-2, SEC-3, SEC-4, SEC-5, SEC-8 · BUG-13, BUG-14, BUG-19, BUG-20, BUG-41, BUG-43, BUG-47 · BUG-1, BUG-2, BUG-4, BUG-7
+Grouped so that items sharing a root cause land together (see [Cross-cutting themes](#cross-cutting-themes)).
 
-**Wave 2 — trust the numbers**
-BUG-24, BUG-25, BUG-26, BUG-28, BUG-29, BUG-34, BUG-35, BUG-50 · FEAT-13 (`buoy doctor`), FEAT-14 (schema) · DOC-1, DOC-2, DOC-5
+### Wave 1 — stop the bleeding (2.1.1 / 2.2.0)
 
-**Wave 3 — the features people actually ask for**
-FEAT-1 (GPU), FEAT-2 (network throughput), FEAT-3 (trend charts), FEAT-4/5/6 (alerting that works), FEAT-7 (container actions), FEAT-10 (static services) · PLG-1, PLG-2, PLG-3, PLG-6, PLG-26
+*Security, silent data loss, and the "advertised but broken" set. Nothing here is a feature; all of it is a promise the code doesn't keep.*
 
-**Wave 4 — platform**
-PP-1, PP-2, PP-4 (declarative rendering → unlocks CSP), PP-5 · FEAT-17 (remote Docker/Podman), FEAT-19 (PWA), FEAT-22 (fleet depth), FEAT-23 (SSO) · BUG-45 (sub-path), BUG-46 (proxy headers)
+- **Auth, end to end (theme 2):** SEC-1 (fail-open), SEC-4 (public debug endpoint), SEC-5 (rate limiting), SEC-7 (non-ASCII 500), SEC-9 (frontend login overlay). Ship SEC-1 and SEC-9 in the *same* release or you convert a false sense of security into a locked-out dashboard.
+- **Plugin rendering, once (theme 1):** SEC-3 + SEC-6 + PP-4 together.
+- **Silent data loss:** BUG-13 (history needs websocket), BUG-14 (webhooks never worked), BUG-19 (orphaned subprocesses), BUG-20 (broadcast `RuntimeError`).
+- **Broken distribution:** BUG-41 (empty wheel), BUG-42 (`speedtest-cli` hard dep), BUG-43 (`/metrics` always on).
+- **Observability first (theme 3):** BUG-47 (adopt `logging`) — do this early; it makes everything after it debuggable.
+- **Trivially visible:** BUG-1 (version drift), BUG-2 (tier), BUG-3 (role), BUG-4 (Started/Image Age), BUG-5 (`%%`), BUG-7 (undefined CSS vars), BUG-11 (uptime at 24h), SEC-2 (CORS/CSRF), SEC-8 (`verify=False`).
+- **Process:** HK-4 (check for other lost merges) before building on top of `fleet.js`, plus BUG-51.
+
+### Wave 2 — make the numbers trustworthy
+
+*Theme 4 in full, plus the tooling that stops it recurring.*
+
+- **Accuracy:** BUG-25 (container vs host disk), BUG-26 (disk I/O device list), BUG-27 (multi-NVMe), BUG-28 (thermal zone), BUG-29 (memory formula), BUG-32 (cgroup quota), BUG-33 (non-Linux degradation).
+- **Cost (theme 5):** BUG-8 first (halves the rest), then BUG-9 (`docker ps` cache), BUG-31 (CPU sampling), BUG-22 (SQLite on the loop), BUG-34 (sequential peer latency).
+- **Diagnosability (theme 3):** FEAT-13 (`buoy doctor`), BUG-24 + FEAT-14 (config schema), FEAT-12 (capability reporting), PP-7 (plugin health), BUG-37.
+- **Guardrails:** BUG-50 (test `system.py`), DOC-5 (coverage floor, arm64, Docker smoke test, CSS-var check), DOC-1 (plugin doc CI check), DOC-2 (CHANGELOG).
+- **Correctness cleanup, batchable:** BUG-17 (config dict mutation), BUG-18 (lifespan + teardown), BUG-30 (empty memory process list), BUG-44 (Prometheus escaping), BUG-48 (self-host fonts).
+
+### Wave 3 — the features people actually ask for
+
+*Ordered by value-per-effort, not by size.*
+
+1. **FEAT-3 — trend charts.** The API is already built, tested, and unused. Highest return in the document.
+2. **FEAT-1 — GPU collector.** The largest outright absence for this audience.
+3. **FEAT-2 — NIC throughput.** The second largest.
+4. **Alerting that works:** FEAT-4 (configurable thresholds), FEAT-5 (real channels), FEAT-6 (history + UI), BUG-12 (render on load), BUG-15 (warn→crit escalation), BUG-16 (blocking webhook I/O).
+5. **Container workflow:** FEAT-7 (start/stop/recreate — pairs with the #63 update badges), FEAT-9 (per-container health/stats), FEAT-8 (live logs), BUG-49 (log ordering).
+6. **Service model:** FEAT-10 (static/non-Docker entries — table stakes vs Homepage/Dashy), BUG-10 (`hidden` matching), FEAT-11 (Compose grouping).
+7. **Plugins — tier 1:** PLG-26 (Pi-hole v6 — arguably a bug), PLG-1 (UPS/NUT), FEAT-15 (ZFS), PLG-2 (*arr), PLG-3 (download clients), PLG-4 (Home Assistant), PLG-5 (Plex), PLG-6 (backup repos), PLG-7 (reverse proxy), PLG-8 (Nextcloud).
+
+**Plugins — tier 2 (PLG-9 … PLG-25) are deliberately unscheduled.** They're an open backlog and the ideal `good first issue` / external-contribution surface — each is a single self-contained file following the existing builtin pattern. Do **PP-1/PP-2/PP-4** (Wave 4) before soliciting them, so contributors write against a schema-validated, escaping-by-default plugin API rather than 17 more copies of the hand-rolled HTML pattern.
+
+### Wave 4 — platform
+
+- **Plugin platform:** PP-1 (user-plugin config), PP-2 (enforce `config_schema`, fixes BUG-35), PP-5 (entry points + CLI), PP-6, BUG-36, BUG-38, BUG-39, BUG-40 (demo stubs), PP-3 (#11).
+- **Deployment reach:** FEAT-17 (remote Docker / Podman), BUG-45 (sub-path hosting), BUG-46 (proxy headers), DOC-9 (systemd / Helm / Ansible), SEC-10 (unprivileged profile).
+- **Surface:** FEAT-19 (PWA), FEAT-20 (theme polish incl. BUG-6), FEAT-21 (status page), FEAT-22 (fleet depth), FEAT-23 (SSO / forward-auth).
+- **Scale:** FEAT-18 (retention + downsampling), FEAT-16 (multi-disk gauges), BUG-21 (unbounded collections), BUG-23 (env coercion).
+- **Project:** DOC-3 (screenshots), DOC-4 (repo files), DOC-6 (SPEC decision), DOC-7 (hosted demo), DOC-8 (Grafana dashboard), SEC-11 (Dependabot/CodeQL), HK-1/HK-2/HK-3.
