@@ -29,7 +29,7 @@ class SystemCollector:
         cpu = await self._read_cpu()
         mem_used, mem_total = self._read_memory()
         temp = self._read_temperature()
-        uptime_h, uptime_m = self._read_uptime()
+        uptime_h, uptime_m, uptime_s = self._read_uptime()
         model = self._read_model()
 
         return {
@@ -42,6 +42,7 @@ class SystemCollector:
             "temp": temp,
             "uptime_h": uptime_h,
             "uptime_m": uptime_m,
+            "uptime_s": uptime_s,
         }
 
     async def collect_detail(self) -> dict:
@@ -182,14 +183,14 @@ class SystemCollector:
 
     # ── Uptime ─────────────────────────────────────────────────────────────────
 
-    def _read_uptime(self) -> tuple[int, int]:
-        """Read uptime from /proc/uptime, return (hours, minutes)."""
+    def _read_uptime(self) -> tuple[int, int, int]:
+        """Read uptime from /proc/uptime, return (hours, minutes, seconds)."""
         try:
             with open("/proc/uptime") as f:
                 seconds = int(float(f.read().split()[0]))
-            return seconds // 3600, (seconds % 3600) // 60
+            return seconds // 3600, (seconds % 3600) // 60, seconds
         except Exception:
-            return 0, 0
+            return 0, 0, 0
 
     # ── Device Model ───────────────────────────────────────────────────────────
 
@@ -246,4 +247,5 @@ class SystemCollector:
             "temp": 0,
             "uptime_h": 0,
             "uptime_m": 0,
+            "uptime_s": 0,
         }

@@ -64,6 +64,7 @@ class DemoSystemCollector:
             "disk_pct": max(20, min(85, int(_sinusoidal(45, 5, period=900)))),
             "uptime_h": uptime_sec // 3600,
             "uptime_m": (uptime_sec % 3600) // 60,
+            "uptime_s": uptime_sec,
             "nvme": {
                 "temp": max(30, min(55, int(_sinusoidal(38, 4)))),
                 "wear_pct": 2,

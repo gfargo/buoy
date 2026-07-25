@@ -728,6 +728,78 @@ class TestPrometheusExporterPlugin:
         assert "# HELP buoy_memory_used_bytes" in output
         assert "# TYPE buoy_memory_used_bytes gauge" in output
 
+    def test_format_metrics_escapes_host_label(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        # hostname with all three characters that need escaping: " \ newline
+        hostile_name = 'he said "hi"\\back\nline'
+        stats = {
+            "hostname": hostile_name,
+            "cpu": 1,
+            "mem_used": 0.0,
+            "mem_total": 1.0,
+            "temp": 0,
+            "disk_pct": 0,
+            "containers": 0,
+            "uptime_h": 0,
+            "uptime_m": 0,
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        # The raw unescaped double-quote must NOT appear inside a label value
+        # (every label value is delimited by " so a bare " would break parsing)
+        # We check that the escaped sequences ARE present instead.
+        assert '\\"' in output          # escaped double-quote
+        assert "\\\\" in output         # escaped backslash (two chars: \\)
+        assert "\\n" in output          # escaped newline literal
+
+        # And no raw newline should appear inside a label value position
+        for line in output.splitlines():
+            if "{" in line and "}" in line:
+                label_value_region = line[line.index("{"):line.index("}") + 1]
+                assert "\n" not in label_value_region
+
+    def test_format_metrics_uptime_uses_uptime_s(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        # uptime_s takes precedence; h/m would give a different (rounded) value
+        stats = {
+            "hostname": "compass",
+            "cpu": 0,
+            "mem_used": 0.0,
+            "mem_total": 1.0,
+            "temp": 0,
+            "disk_pct": 0,
+            "containers": 0,
+            "uptime_h": 120,
+            "uptime_m": 30,
+            "uptime_s": 433830,  # 120*3600 + 30*60 + 30 extra seconds
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        # Should use the exact uptime_s value, not the h/m reconstruction (433800)
+        assert 'buoy_uptime_seconds{host="compass"} 433830' in output
+        assert 'buoy_uptime_seconds{host="compass"} 433800' not in output
+
+    def test_format_metrics_uptime_fallback_without_uptime_s(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        # No uptime_s → fall back to h*3600 + m*60
+        stats = {
+            "hostname": "compass",
+            "cpu": 0,
+            "mem_used": 0.0,
+            "mem_total": 1.0,
+            "temp": 0,
+            "disk_pct": 0,
+            "containers": 0,
+            "uptime_h": 120,
+            "uptime_m": 30,
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert 'buoy_uptime_seconds{host="compass"} 433800' in output
+
     def test_manifest(self):
         plugin = self._make_plugin()
         assert plugin.manifest.id == "prometheus_exporter"
