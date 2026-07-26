@@ -344,7 +344,7 @@ class GitHubPlugin(Plugin):
 1. **Discovery:** On startup, scan `plugins/` directory + `buoy.plugins.builtin` package
 2. **Validation:** Check manifest, validate config against schema
 3. **Init:** Call `plugin.setup()` (async) — for connection pooling, auth checks
-4. **Collect loop:** Every `refresh_interval` seconds, call `plugin.collect()`
+4. **Collect loop:** Every `max(manifest.refresh_interval, refresh.plugins_interval)` seconds, call `plugin.collect()` — the global `refresh.plugins_interval` config value acts as a floor so the operator can slow down all plugins without shortening intentionally long intervals (e.g. `github` at 300 s, `cert_expiry` at 3600 s)
 5. **Shutdown:** Call `plugin.teardown()` on graceful stop
 
 ### 4.3 Built-in Plugins (ship with hub)

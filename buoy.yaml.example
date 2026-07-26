@@ -95,7 +95,7 @@ refresh:
   stats_interval: 5          # System vitals polling
   services_interval: 30      # Service discovery refresh
   fleet_interval: 15         # Peer node polling
-  plugins_interval: 60       # Plugin data refresh
+  plugins_interval: 60       # Global minimum interval for server-side plugin collection (plugins may poll less often per their own manifest)
   image_updates_interval: 21600  # Image update check interval (6 hours)
 
 # ── Plugins ────────────────────────────────────────────────

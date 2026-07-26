@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig
+from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig, RefreshConfig
 from buoy.plugins.loader import PluginManager, resolve_plugin_env
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
@@ -512,3 +512,77 @@ class TestPluginEnvInjection:
             await mgr.start()
 
         assert mgr.plugins["plane"].config["api_key"] == "yaml-key"
+
+
+# =============================================================================
+# _resolve_interval: global plugins_interval floor logic
+# =============================================================================
+
+
+def _make_config_with_refresh(plugins_interval: int):
+    """Build a minimal BuoyConfig with the given refresh.plugins_interval."""
+    config = _make_config()
+    config.refresh = RefreshConfig(plugins_interval=plugins_interval)
+    return config
+
+
+class TestResolveInterval:
+    """Unit tests for PluginManager._resolve_interval.
+
+    The effective interval = max(manifest.refresh_interval, config.refresh.plugins_interval).
+    """
+
+    def test_equal_manifest_and_config(self):
+        """manifest=60, config=60 → 60 (no change)."""
+        config = _make_config_with_refresh(plugins_interval=60)
+        mgr = PluginManager(config)
+        plugin = FakePlugin()  # manifest.refresh_interval = 60
+        assert mgr._resolve_interval(plugin) == 60
+
+    def test_config_floor_raises_interval(self):
+        """manifest=30, config=60 → 60 (config slows it down)."""
+        config = _make_config_with_refresh(plugins_interval=60)
+        mgr = PluginManager(config)
+        plugin = AnotherFakePlugin()  # manifest.refresh_interval = 30
+        assert mgr._resolve_interval(plugin) == 60
+
+    def test_long_manifest_protected_from_config(self):
+        """manifest=300 (github-style), config=60 → 300 (manifest protected)."""
+
+        class SlowApiPlugin(Plugin):
+            manifest = PluginManifest(id="slow_api", name="Slow", refresh_interval=300)
+
+            async def collect(self) -> PanelData:
+                return PanelData(status="ok", summary="ok")
+
+        config = _make_config_with_refresh(plugins_interval=60)
+        mgr = PluginManager(config)
+        assert mgr._resolve_interval(SlowApiPlugin()) == 300
+
+    def test_sentinel_interval_preserved(self):
+        """manifest=9999 (prometheus sentinel), config=60 → 9999 (sentinel untouched)."""
+
+        class SentinelPlugin(Plugin):
+            manifest = PluginManifest(id="sentinel", name="Sentinel", refresh_interval=9999)
+
+            async def collect(self) -> PanelData:
+                return PanelData(status="ok", summary="ok")
+
+        config = _make_config_with_refresh(plugins_interval=60)
+        mgr = PluginManager(config)
+        assert mgr._resolve_interval(SentinelPlugin()) == 9999
+
+    def test_large_config_slows_all_plugins(self):
+        """manifest=60, config=300 → 300 (operator deliberately slowed everything)."""
+        config = _make_config_with_refresh(plugins_interval=300)
+        mgr = PluginManager(config)
+        plugin = FakePlugin()  # manifest.refresh_interval = 60
+        assert mgr._resolve_interval(plugin) == 300
+
+    def test_default_config_preserves_manifest(self):
+        """Default RefreshConfig (plugins_interval=60) does not affect manifest=60."""
+        config = _make_config()  # no explicit refresh — uses BuoyConfig default
+        config.refresh = RefreshConfig()  # default plugins_interval=60
+        mgr = PluginManager(config)
+        plugin = FakePlugin()  # manifest.refresh_interval = 60
+        assert mgr._resolve_interval(plugin) == 60

@@ -212,9 +212,20 @@ class PluginManager:
 
     # ── Collection Loop ────────────────────────────────────────────────────────
 
+    def _resolve_interval(self, plugin: Plugin) -> int:
+        """Resolve the effective collection interval for a plugin.
+
+        Uses the greater of the plugin's manifest interval and the global
+        ``refresh.plugins_interval`` config value.  This lets the global value
+        act as a floor that slows down collection (its documented purpose)
+        without ever shortening intentionally long intervals such as the
+        github plugin (300 s) or the prometheus_exporter sentinel (9999 s).
+        """
+        return max(plugin.manifest.refresh_interval, self.config.refresh.plugins_interval)
+
     async def _collect_loop(self, plugin_id: str, plugin: Plugin):
         """Run a plugin's collect() on its configured interval, with error isolation."""
-        interval = plugin.manifest.refresh_interval
+        interval = self._resolve_interval(plugin)
         # Initial collect immediately
         await self._safe_collect(plugin_id, plugin)
 
