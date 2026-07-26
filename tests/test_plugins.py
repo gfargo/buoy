@@ -45,6 +45,13 @@ class TestPluginProtocol:
         plugin.configure({"token": "abc123", "url": "http://localhost"})
         assert plugin.config["token"] == "abc123"
 
+    def test_plugin_config_is_per_instance(self):
+        """Each Plugin instance must have its own config dict (no shared mutable default)."""
+        a, b = Plugin(), Plugin()
+        a.config["x"] = 1
+        assert b.config == {}, "mutating one instance should not affect another"
+        assert Plugin().config == {}, "fresh instance must not inherit mutations"
+
     @pytest.mark.asyncio
     async def test_base_collect_raises(self):
         plugin = Plugin()

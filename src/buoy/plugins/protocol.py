@@ -42,7 +42,15 @@ class Plugin:
     """
 
     manifest: PluginManifest = PluginManifest(id="base", name="Base Plugin")
-    config: dict[str, Any] = {}
+    config: dict[str, Any]
+
+    def __init__(self) -> None:
+        """Initialise per-instance config dict.
+
+        Subclasses that override __init__ should call super().__init__() so
+        that self.config is always bound before configure() is called.
+        """
+        self.config = {}
 
     def configure(self, config: dict[str, Any]) -> None:
         """Called with the plugin's config section from buoy.yaml."""
