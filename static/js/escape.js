@@ -17,8 +17,13 @@ export function escapeHtml(v) {
  * (javascript:, data:, etc.) is replaced with '#'.
  */
 export function safeUrl(v) {
-  const url = String(v ?? '');
-  if (/^(https?|mailto):/i.test(url)) return url;
-  if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) return url; // relative / no scheme
+  const raw = String(v ?? '');
+  // Browsers strip ASCII tab/newline/CR anywhere in a URL and trim leading/
+  // trailing C0 controls + space before parsing its scheme, so an unfiltered
+  // check can be bypassed by e.g. "java\tscript:alert(1)" or leading
+  // whitespace. Normalize the same way before testing.
+  const normalized = raw.replace(/[\t\n\r]/g, '').replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+  if (/^(https?|mailto):/i.test(normalized)) return normalized;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(normalized)) return normalized; // relative / no scheme
   return '#';
 }
