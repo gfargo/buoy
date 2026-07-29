@@ -40,6 +40,7 @@ class NetworkConfig:
     tailnet_domain: str = ""
     listen_port: int = 8090
     peers: list[PeerConfig] = field(default_factory=list)
+    allowed_origins: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -161,6 +162,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_NODE_ROLE": ("node", "role"),
         "BUOY_NETWORK_LISTEN_PORT": ("network", "listen_port"),
         "BUOY_NETWORK_TAILNET_DOMAIN": ("network", "tailnet_domain"),
+        "BUOY_NETWORK_ALLOWED_ORIGINS": ("network", "allowed_origins"),
         "BUOY_AUTH_ENABLED": ("auth", "enabled"),
         "BUOY_AUTH_TOKEN": ("auth", "token"),
         "BUOY_AUTH_TYPE": ("auth", "type"),
@@ -188,6 +190,8 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             raw[section][key] = int(value)
         elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates"):
             raw[section][key] = value.lower() in ("true", "1", "yes")
+        elif key == "allowed_origins":
+            raw[section][key] = [origin.strip() for origin in value.split(",") if origin.strip()]
         else:
             raw[section][key] = value
 
@@ -254,6 +258,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         tailnet_domain=network_raw.get("tailnet_domain", ""),
         listen_port=int(network_raw.get("listen_port", 8090)),
         peers=peers,
+        allowed_origins=list(network_raw.get("allowed_origins", [])),
     )
 
     services = ServicesConfig(

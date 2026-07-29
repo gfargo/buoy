@@ -34,6 +34,16 @@ network:
   #     url: https://watch.example.ts.net
   #     tier: "Tier 2"
 
+  # Browser CORS is same-origin only by default (no cross-origin reads at
+  # all). Only set this if another origin's browser needs to call this
+  # buoy's API directly (e.g. a fleet dashboard embedding this node's data).
+  # Never use "*" — list exact origins (scheme://host[:port], no trailing
+  # slash). Also settable via BUOY_NETWORK_ALLOWED_ORIGINS (comma-separated).
+  allowed_origins: []
+  # Example:
+  # allowed_origins:
+  #   - https://harbor.example.ts.net
+
 # ── Services ───────────────────────────────────────────────
 # Buoy auto-discovers local Docker containers and shows them as services.
 # Use 'hidden' to exclude noise, 'overrides' to customize display.

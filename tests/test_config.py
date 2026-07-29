@@ -81,6 +81,15 @@ class TestConfigFromYAML:
         assert config.auth.enabled is True
         assert config.auth.token == "secret123"
 
+    def test_network_allowed_origins(self):
+        raw = {"network": {"allowed_origins": ["https://harbor.example.ts.net"]}}
+        config = _build_config(raw)
+        assert config.network.allowed_origins == ["https://harbor.example.ts.net"]
+
+    def test_network_allowed_origins_default_empty(self):
+        config = _build_config({})
+        assert config.network.allowed_origins == []
+
     def test_plugins_builtin(self):
         raw = {
             "plugins": {
@@ -139,6 +148,25 @@ class TestEnvOverrides:
         result = _apply_env_overrides(raw)
         assert result["refresh"]["image_updates_interval"] == 3600
 
+    def test_allowed_origins_env_comma_split(self, monkeypatch):
+        monkeypatch.setenv(
+            "BUOY_NETWORK_ALLOWED_ORIGINS",
+            "https://harbor.example.ts.net, https://watch.example.ts.net",
+        )
+        raw = {}
+        result = _apply_env_overrides(raw)
+        assert result["network"]["allowed_origins"] == [
+            "https://harbor.example.ts.net",
+            "https://watch.example.ts.net",
+        ]
+
+    def test_allowed_origins_env_overrides_yaml(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_ALLOWED_ORIGINS", "https://harbor.example.ts.net")
+        raw = {"network": {"allowed_origins": ["https://old.example.ts.net"]}}
+        result = _apply_env_overrides(raw)
+        config = _build_config(result)
+        assert config.network.allowed_origins == ["https://harbor.example.ts.net"]
+
 
 class TestLoadConfig:
     """Integration test for the full load_config flow."""
@@ -168,3 +196,20 @@ class TestLoadConfig:
         config = load_config(path=str(config_file))
         assert config.node.name == "buoy"
         assert config.network.listen_port == 8090
+
+    def test_allowed_origins_from_yaml(self, tmp_path):
+        config_file = tmp_path / "buoy.yaml"
+        config_file.write_text(
+            yaml.dump({"network": {"allowed_origins": ["https://harbor.example.ts.net"]}})
+        )
+
+        config = load_config(path=str(config_file))
+        assert config.network.allowed_origins == ["https://harbor.example.ts.net"]
+
+    def test_allowed_origins_from_env(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "buoy.yaml"
+        config_file.write_text(yaml.dump({"node": {"name": "compass"}}))
+        monkeypatch.setenv("BUOY_NETWORK_ALLOWED_ORIGINS", "https://harbor.example.ts.net")
+
+        config = load_config(path=str(config_file))
+        assert config.network.allowed_origins == ["https://harbor.example.ts.net"]

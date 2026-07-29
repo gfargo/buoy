@@ -310,7 +310,11 @@ async function restartContainer(name, btn) {
   btn.classList.remove('confirm');
 
   try {
-    const r = await fetch(`/api/container/${encodeURIComponent(name)}/restart`, { method: 'POST' });
+    const r = await fetch(`/api/container/${encodeURIComponent(name)}/restart`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     btn.textContent = '✓ restarted';
     btn.classList.add('success');

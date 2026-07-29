@@ -274,7 +274,21 @@ async def api_container_logs(request: Request) -> JSONResponse:
 
 
 async def api_container_restart(request: Request) -> JSONResponse:
-    """Restart a Docker container."""
+    """Restart a Docker container.
+
+    Requires ``Content-Type: application/json``. This isn't for parsing a
+    body — it's because that content type isn't CORS-safelisted, so any
+    cross-origin caller (browser fetch or HTML form) is forced through a
+    preflight OPTIONS request. Since no CORS middleware is installed for
+    unlisted origins (see create_app), that preflight gets no
+    Access-Control-Allow-Origin back and the browser never issues the real
+    POST — closing the "simple request" gap that a same-origin-only CORS
+    policy alone leaves open on state-changing routes.
+    """
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        return JSONResponse({"error": "Content-Type must be application/json"}, status_code=415)
+
     name = request.path_params["name"]
     if not _validate_container_name(name):
         return JSONResponse({"error": "invalid container name"}, status_code=400)
@@ -695,14 +709,19 @@ def create_app(config: BuoyConfig) -> Starlette:
         Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
     ]
 
-    middleware = [
-        Middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_methods=["*"],
-            allow_headers=["*"],
-        ),
-    ]
+    # Same-origin by default (no CORS middleware = browsers block cross-origin
+    # reads). Cross-origin access is opt-in via an explicit origin allowlist
+    # (e.g. for fleet peers) — never a wildcard, per SPEC §7.2.
+    middleware = []
+    if config.network.allowed_origins:
+        middleware.append(
+            Middleware(
+                CORSMiddleware,
+                allow_origins=config.network.allowed_origins,
+                allow_methods=["GET", "POST", "OPTIONS"],
+                allow_headers=["Authorization", "Content-Type"],
+            )
+        )
 
     # Security headers middleware
     from starlette.middleware.base import BaseHTTPMiddleware
