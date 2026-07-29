@@ -288,3 +288,17 @@ class TestConfigDebugRateLimit:
             assert resp.status_code == 403
         resp = client.get("/api/config/debug")
         assert resp.status_code == 429
+
+    def test_no_double_counting_when_auth_middleware_active(self):
+        """auth.enabled=True → AuthMiddleware already rate-limits this path, so
+        the handler must not check again. All RATE_LIMIT_MAX requests should
+        succeed, not just half of them.
+        """
+        from buoy.auth import RATE_LIMIT_MAX
+
+        client = _make_test_client(token="my-secret", auth_enabled=True)
+        for _ in range(RATE_LIMIT_MAX):
+            resp = client.get("/api/config/debug", headers={"Authorization": "Bearer my-secret"})
+            assert resp.status_code == 200
+        resp = client.get("/api/config/debug", headers={"Authorization": "Bearer my-secret"})
+        assert resp.status_code == 429

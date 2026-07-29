@@ -106,15 +106,19 @@ async def api_config_debug(request: Request) -> JSONResponse:
     endpoint should additionally set ``auth.token``.
 
     Rate-limited independently of ``AuthMiddleware`` (via the same shared
-    limiter) because that middleware isn't installed when ``auth.enabled`` is
-    False, and this endpoint must not be brute-forceable in that case.
+    limiter) only when that middleware isn't installed (``auth.enabled`` is
+    False), so this endpoint can't be brute-forced in that case. When
+    ``auth.enabled`` is True, ``AuthMiddleware`` already rate-limits this path
+    (it's in ``PROTECTED_PATHS``) before the request reaches this handler, so
+    checking again here would double-count against the shared per-IP bucket.
     """
-    client_ip = request.client.host if request.client else "unknown"
-    if not check_rate_limit(client_ip):
-        return JSONResponse(
-            {"error": "rate limit exceeded", "retry_after": RATE_LIMIT_WINDOW},
-            status_code=429,
-        )
+    if not _config.auth.enabled:
+        client_ip = request.client.host if request.client else "unknown"
+        if not check_rate_limit(client_ip):
+            return JSONResponse(
+                {"error": "rate limit exceeded", "retry_after": RATE_LIMIT_WINDOW},
+                status_code=429,
+            )
 
     token = _config.auth.token
     if not token:
