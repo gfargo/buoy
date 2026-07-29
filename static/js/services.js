@@ -2,6 +2,8 @@
  * Services module — renders local service cards.
  */
 
+import { escapeHtml, safeUrl } from './escape.js';
+
 export async function refreshServices(config) {
   try {
     const r = await fetch('/api/services');
@@ -24,13 +26,13 @@ export async function refreshServices(config) {
     }
 
     localEl.innerHTML = services.map(s => {
-      const icon = s.icon ? `<span class="svc-icon">${s.icon}</span>` : `<div class="dot"></div>`;
+      const icon = s.icon ? `<span class="svc-icon">${escapeHtml(s.icon)}</span>` : `<div class="dot"></div>`;
       const displayUrl = s.url ? s.url.replace(/^https?:\/\//, '') : '';
       const href = s.url || '#';
-      return `<a class="svc" href="${href}" ${s.url ? '' : 'onclick="return false"'}>
-        <div class="svc-header">${icon}<div class="svc-name">${s.name}</div></div>
-        <div class="svc-desc">${s.desc}</div>
-        ${displayUrl ? `<div class="svc-url">${displayUrl}</div>` : ''}
+      return `<a class="svc" href="${escapeHtml(safeUrl(href))}" ${s.url ? '' : 'onclick="return false"'}>
+        <div class="svc-header">${icon}<div class="svc-name">${escapeHtml(s.name)}</div></div>
+        <div class="svc-desc">${escapeHtml(s.desc)}</div>
+        ${displayUrl ? `<div class="svc-url">${escapeHtml(displayUrl)}</div>` : ''}
       </a>`;
     }).join('');
 
