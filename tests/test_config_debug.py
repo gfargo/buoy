@@ -6,7 +6,7 @@ import pytest
 from starlette.testclient import TestClient
 
 import buoy.server as server_module
-from buoy.auth import PROTECTED_PATHS, AuthMiddleware
+from buoy.auth import PROTECTED_PATHS, AuthMiddleware, _rate_limit
 from buoy.config import _build_config
 from buoy.server import _redact_secrets, create_app
 
@@ -18,6 +18,15 @@ def _restore_server_config():
     original = server_module._config
     yield
     server_module._config = original
+
+
+@pytest.fixture(autouse=True)
+def _clear_rate_limit():
+    """The debug handler's rate limiter shares module-level state (buoy.auth._rate_limit)
+    keyed by client IP; clear it so requests in one test don't count against another."""
+    _rate_limit.clear()
+    yield
+    _rate_limit.clear()
 
 
 class FakeAuthConfig:
@@ -248,3 +257,34 @@ class TestConfigDebugHandlerAuth:
             auth=("admin", "hunter2"),
         )
         assert resp.status_code == 403
+
+
+class TestConfigDebugRateLimit:
+    """The handler enforces its own rate limit so token brute-forcing isn't
+    possible when auth.enabled=False and AuthMiddleware is never installed."""
+
+    def test_rate_limited_when_auth_middleware_not_installed(self):
+        """auth.enabled=False, token set → repeated wrong-token guesses get 429."""
+        from buoy.auth import RATE_LIMIT_MAX
+
+        client = _make_test_client(token="my-secret", auth_enabled=False)
+        for _ in range(RATE_LIMIT_MAX):
+            resp = client.get("/api/config/debug", headers={"Authorization": "Bearer wrong"})
+            assert resp.status_code == 401
+        resp = client.get("/api/config/debug", headers={"Authorization": "Bearer wrong"})
+        assert resp.status_code == 429
+
+    def test_rate_limit_checked_before_token_configured_check(self):
+        """Rate limiting applies even to the no-token-configured (403) path."""
+        from buoy.auth import RATE_LIMIT_MAX
+
+        config = _build_config({})  # auth.enabled=False, token=""
+        server_module._config = config
+        app = create_app(config)
+        server_module._config = config
+        client = TestClient(app, raise_server_exceptions=False)
+        for _ in range(RATE_LIMIT_MAX):
+            resp = client.get("/api/config/debug")
+            assert resp.status_code == 403
+        resp = client.get("/api/config/debug")
+        assert resp.status_code == 429

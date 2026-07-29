@@ -30,6 +30,29 @@ RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX = 60  # requests per window
 
 
+def check_rate_limit(client_ip: str) -> bool:
+    """Sliding-window rate limiter shared across auth-gated endpoints.
+
+    Used both by ``AuthMiddleware`` and by handlers that enforce their own
+    auth outside the middleware (e.g. ``/api/config/debug`` when
+    ``auth.enabled`` is False), so brute-force protection applies regardless
+    of whether the middleware is installed.
+    """
+    now = time.time()
+    window_start = now - RATE_LIMIT_WINDOW
+
+    if client_ip not in _rate_limit:
+        _rate_limit[client_ip] = []
+
+    _rate_limit[client_ip] = [t for t in _rate_limit[client_ip] if t > window_start]
+
+    if len(_rate_limit[client_ip]) >= RATE_LIMIT_MAX:
+        return False
+
+    _rate_limit[client_ip].append(now)
+    return True
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """Optional auth middleware — only active when auth.enabled is True."""
 
@@ -114,17 +137,4 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     def _check_rate_limit(self, client_ip: str) -> bool:
         """Simple sliding window rate limiter."""
-        now = time.time()
-        window_start = now - RATE_LIMIT_WINDOW
-
-        if client_ip not in _rate_limit:
-            _rate_limit[client_ip] = []
-
-        # Remove old entries
-        _rate_limit[client_ip] = [t for t in _rate_limit[client_ip] if t > window_start]
-
-        if len(_rate_limit[client_ip]) >= RATE_LIMIT_MAX:
-            return False
-
-        _rate_limit[client_ip].append(now)
-        return True
+        return check_rate_limit(client_ip)

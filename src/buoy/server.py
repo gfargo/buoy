@@ -19,6 +19,8 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from buoy.auth import RATE_LIMIT_WINDOW, check_rate_limit
+
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
@@ -100,7 +102,20 @@ async def api_config_debug(request: Request) -> JSONResponse:
     credentials are not accepted here because they're checked by a separate
     code path (``AuthMiddleware._check_basic``) with different semantics;
     requiring a dedicated token keeps this handler's auth self-contained.
+    Operators relying on ``auth.type == "basic"`` who also want access to this
+    endpoint should additionally set ``auth.token``.
+
+    Rate-limited independently of ``AuthMiddleware`` (via the same shared
+    limiter) because that middleware isn't installed when ``auth.enabled`` is
+    False, and this endpoint must not be brute-forceable in that case.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        return JSONResponse(
+            {"error": "rate limit exceeded", "retry_after": RATE_LIMIT_WINDOW},
+            status_code=429,
+        )
+
     token = _config.auth.token
     if not token:
         # No token configured → refuse; don't expose topology to anonymous callers.
