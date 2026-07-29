@@ -19,8 +19,6 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from buoy.auth import RATE_LIMIT_WINDOW, check_rate_limit
-
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
@@ -105,21 +103,11 @@ async def api_config_debug(request: Request) -> JSONResponse:
     Operators relying on ``auth.type == "basic"`` who also want access to this
     endpoint should additionally set ``auth.token``.
 
-    Rate-limited independently of ``AuthMiddleware`` (via the same shared
-    limiter) only when that middleware isn't installed (``auth.enabled`` is
-    False), so this endpoint can't be brute-forced in that case. When
-    ``auth.enabled`` is True, ``AuthMiddleware`` already rate-limits this path
-    (it's in ``PROTECTED_PATHS``) before the request reaches this handler, so
-    checking again here would double-count against the shared per-IP bucket.
+    Rate-limited by ``RateLimitMiddleware``, which is always mounted
+    (independent of ``auth.enabled``) and covers every path in
+    ``PROTECTED_PATHS``, including this one — so no separate check is needed
+    here.
     """
-    if not _config.auth.enabled:
-        client_ip = request.client.host if request.client else "unknown"
-        if not check_rate_limit(client_ip):
-            return JSONResponse(
-                {"error": "rate limit exceeded", "retry_after": RATE_LIMIT_WINDOW},
-                status_code=429,
-            )
-
     token = _config.auth.token
     if not token:
         # No token configured → refuse; don't expose topology to anonymous callers.
@@ -776,6 +764,12 @@ def create_app(config: BuoyConfig) -> Starlette:
             return response
 
     middleware.append(Middleware(SecurityHeadersMiddleware))
+
+    # Rate limiting is always active on protected endpoints (SPEC §7.2),
+    # independent of whether auth is enabled.
+    from buoy.auth import RateLimitMiddleware
+
+    middleware.append(Middleware(RateLimitMiddleware))
 
     # Add auth middleware if enabled
     if config.auth.enabled:

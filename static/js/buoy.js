@@ -140,6 +140,24 @@ function initKeyboardShortcuts() {
   document.getElementById('kb-help-btn')?.addEventListener('click', showShortcutHelp);
 }
 
+/**
+ * Apply theme.custom key/value pairs as CSS custom properties on <html>.
+ * Each key becomes `--<key>` so e.g. { bg: "#ff0000" } sets `--bg`.
+ * Inline styles win over stylesheet :root declarations by specificity,
+ * so this overlay works regardless of which preset is active.
+ *
+ * @param {Record<string, string>|null|undefined} custom
+ */
+function applyCustomTheme(custom) {
+  if (!custom || typeof custom !== 'object') return;
+  const root = document.documentElement;
+  for (const [key, value] of Object.entries(custom)) {
+    if (value != null && value !== '') {
+      root.style.setProperty(`--${key}`, String(value));
+    }
+  }
+}
+
 async function init() {
   config = await fetchConfig();
 
@@ -148,6 +166,10 @@ async function init() {
   if (config.theme.preset === 'light') {
     themeSheet.href = '/static/css/themes/light.css';
   }
+
+  // Apply custom CSS variable overrides (theme.custom in buoy.yaml).
+  // Called after the preset stylesheet swap so inline vars take precedence.
+  applyCustomTheme(config.theme && config.theme.custom);
 
   // Night mode
   applyNightMode(config.features.night_mode);

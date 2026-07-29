@@ -2,6 +2,8 @@
  * Detail module — expandable panels for CPU, memory, disk, containers.
  */
 
+import { escapeHtml } from './escape.js';
+
 let currentDetail = null;
 
 export function initDetail() {
@@ -60,7 +62,7 @@ function renderCpuDetail(d) {
   const loadColor = cpu.load_1 > (cpu.cores || 1) ? 'warn' : '';
   let html = `
     <div class="detail-header">
-      <div class="detail-title">CPU — ${cpu.model || 'unknown'}</div>
+      <div class="detail-title">CPU — ${escapeHtml(cpu.model || 'unknown')}</div>
       <button class="detail-close" onclick="this.closest('.detail-panel').classList.remove('open');document.querySelectorAll('.gauge.expanded').forEach(g=>g.classList.remove('expanded'))">&#10005; close</button>
     </div>
     <div class="detail-grid">
@@ -74,7 +76,7 @@ function renderCpuDetail(d) {
     html += `<div class="section-sub">Top processes (by CPU)</div>
     <table class="process-table"><thead><tr><th>PID</th><th>CPU%</th><th>MEM%</th><th>Command</th></tr></thead><tbody>`;
     cpu.top_processes.forEach(p => {
-      html += `<tr><td>${p.pid}</td><td>${p.cpu}%</td><td>${p.mem}%</td><td>${p.cmd}</td></tr>`;
+      html += `<tr><td>${escapeHtml(p.pid)}</td><td>${escapeHtml(p.cpu)}%</td><td>${escapeHtml(p.mem)}%</td><td>${escapeHtml(p.cmd)}</td></tr>`;
     });
     html += `</tbody></table>`;
   }
@@ -111,9 +113,9 @@ function renderDiskDetail(d) {
     disk.mounts.forEach(mnt => {
       const cls = mnt.pct >= 90 ? 'mount-bar-fill crit' : mnt.pct >= 75 ? 'mount-bar-fill warn' : 'mount-bar-fill';
       html += `<div class="mount-row">
-        <span class="mount-path">${mnt.mount || mnt.fs}</span>
+        <span class="mount-path">${escapeHtml(mnt.mount || mnt.fs)}</span>
         <div class="mount-bar"><div class="${cls}" style="width:${mnt.pct}%"></div></div>
-        <span class="mount-info">${mnt.used}/${mnt.size} (${mnt.pct}%)</span>
+        <span class="mount-info">${escapeHtml(mnt.used)}/${escapeHtml(mnt.size)} (${mnt.pct}%)</span>
       </div>`;
     });
   }
@@ -132,7 +134,7 @@ function renderContainersDetail() {
     html += `<div class="container-grid">`;
     containers.forEach(c => {
       const badge = _updateBadge(c.update_status);
-      html += `<div class="ctr" onclick="window._buoyInspectContainer('${c.name}')"><div class="dot-sm"></div><div class="ctr-name">${c.name}</div><div class="ctr-uptime" data-ctr="${c.name}"></div>${badge}</div>`;
+      html += `<div class="ctr" data-ctr-name="${escapeHtml(c.name)}"><div class="dot-sm"></div><div class="ctr-name">${escapeHtml(c.name)}</div><div class="ctr-uptime" data-ctr="${escapeHtml(c.name)}"></div>${badge}</div>`;
     });
     html += `</div>`;
     html += `<div id="container-inspect-panel"></div>`;
@@ -141,6 +143,9 @@ function renderContainersDetail() {
     setTimeout(() => {
       document.querySelectorAll('.ctr-uptime[data-ctr]').forEach(el => {
         loadContainerHistory(el.dataset.ctr, el);
+      });
+      document.querySelectorAll('.ctr[data-ctr-name]').forEach(el => {
+        el.addEventListener('click', () => inspectContainer(el.dataset.ctrName));
       });
     }, 0);
   } else {
@@ -216,7 +221,7 @@ async function inspectContainer(name) {
   }
 
   panel.dataset.active = name;
-  panel.innerHTML = `<div class="ctr-inspect loading"><span class="ctr-inspect-text">Loading ${name}...</span></div>`;
+  panel.innerHTML = `<div class="ctr-inspect loading"><span class="ctr-inspect-text">Loading ${escapeHtml(name)}...</span></div>`;
 
   try {
     const r = await fetch(`/api/container/${encodeURIComponent(name)}`);
@@ -224,8 +229,10 @@ async function inspectContainer(name) {
     const d = await r.json();
 
     panel.innerHTML = renderContainerInspect(d, name);
+    panel.querySelector('.ctr-btn-restart')?.addEventListener('click', function () { restartContainer(name, this); });
+    panel.querySelector('.ctr-btn-logs')?.addEventListener('click', () => showContainerLogs(name));
   } catch (e) {
-    panel.innerHTML = `<div class="ctr-inspect error"><span class="ctr-inspect-text">Failed to load: ${e.message}</span></div>`;
+    panel.innerHTML = `<div class="ctr-inspect error"><span class="ctr-inspect-text">Failed to load: ${escapeHtml(e.message)}</span></div>`;
   }
 }
 
@@ -236,7 +243,7 @@ function renderContainerInspect(d, name) {
   const started = d.started_at ? new Date(d.started_at).toLocaleString() : 'N/A';
   const restarts = d.restart_count ?? 0;
   const res = d.resources || {};
-  const cpu = res.cpu_pct != null ? `${res.cpu_pct}%` : 'N/A';
+  const cpu = res.cpu_pct || 'N/A';
   const mem = res.mem_usage || 'N/A';
   const netIO = res.net_io || 'N/A';
   const blockIO = res.block_io || 'N/A';
@@ -248,24 +255,24 @@ function renderContainerInspect(d, name) {
 
   return `<div class="ctr-inspect">
     <div class="ctr-inspect-header">
-      <div class="ctr-inspect-name"><div class="dot-sm" style="background:var(--${statusDot})"></div>${name}</div>
+      <div class="ctr-inspect-name"><div class="dot-sm" style="background:var(--${statusDot})"></div>${escapeHtml(name)}</div>
       <button class="ctr-inspect-close" onclick="document.getElementById('container-inspect-panel').innerHTML='';document.getElementById('container-inspect-panel').dataset.active=''">&#10005;</button>
     </div>
     <div class="ctr-inspect-grid">
-      <div class="ctr-stat"><span class="ctr-stat-label">Status</span><span class="ctr-stat-value">${status}</span></div>
-      <div class="ctr-stat"><span class="ctr-stat-label">Started</span><span class="ctr-stat-value">${started}</span></div>
-      <div class="ctr-stat"><span class="ctr-stat-label">Image</span><span class="ctr-stat-value ctr-image">${image}</span></div>
-      ${imageAge ? `<div class="ctr-stat"><span class="ctr-stat-label">Image Age</span><span class="ctr-stat-value">${imageAge}</span></div>` : ''}
+      <div class="ctr-stat"><span class="ctr-stat-label">Status</span><span class="ctr-stat-value">${escapeHtml(status)}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Started</span><span class="ctr-stat-value">${escapeHtml(started)}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Image</span><span class="ctr-stat-value ctr-image">${escapeHtml(image)}</span></div>
+      ${imageAge ? `<div class="ctr-stat"><span class="ctr-stat-label">Image Age</span><span class="ctr-stat-value">${escapeHtml(imageAge)}</span></div>` : ''}
       ${updateStatus ? `<div class="ctr-stat"><span class="ctr-stat-label">Updates</span><span class="ctr-stat-value">${_updateBadge(updateStatus)}</span></div>` : ''}
-      <div class="ctr-stat"><span class="ctr-stat-label">Restarts</span><span class="ctr-stat-value">${restarts}</span></div>
-      <div class="ctr-stat"><span class="ctr-stat-label">CPU</span><span class="ctr-stat-value">${cpu}</span></div>
-      <div class="ctr-stat"><span class="ctr-stat-label">Memory</span><span class="ctr-stat-value">${mem}</span></div>
-      <div class="ctr-stat"><span class="ctr-stat-label">Net I/O</span><span class="ctr-stat-value">${netIO}</span></div>
-      <div class="ctr-stat"><span class="ctr-stat-label">Block I/O</span><span class="ctr-stat-value">${blockIO}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Restarts</span><span class="ctr-stat-value">${escapeHtml(restarts)}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">CPU</span><span class="ctr-stat-value">${escapeHtml(cpu)}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Memory</span><span class="ctr-stat-value">${escapeHtml(mem)}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Net I/O</span><span class="ctr-stat-value">${escapeHtml(netIO)}</span></div>
+      <div class="ctr-stat"><span class="ctr-stat-label">Block I/O</span><span class="ctr-stat-value">${escapeHtml(blockIO)}</span></div>
     </div>
     <div class="ctr-inspect-actions">
-      <button class="ctr-btn ctr-btn-restart" onclick="window._buoyRestartContainer('${name}', this)">↻ restart</button>
-      <button class="ctr-btn ctr-btn-logs" onclick="window._buoyContainerLogs('${name}')">⊞ logs</button>
+      <button class="ctr-btn ctr-btn-restart">↻ restart</button>
+      <button class="ctr-btn ctr-btn-logs">⊞ logs</button>
     </div>
   </div>`;
 }
@@ -341,15 +348,11 @@ async function showContainerLogs(name) {
 
     const logsDiv = document.createElement('div');
     logsDiv.className = 'ctr-logs';
-    logsDiv.innerHTML = `<div class="ctr-logs-header">Logs — ${name} (last ${d.lines?.length || 0} lines)<button class="ctr-logs-close" onclick="this.closest('.ctr-logs').remove()">&#10005;</button></div><pre class="ctr-logs-pre">${escapeHtml(lines)}</pre>`;
+    logsDiv.innerHTML = `<div class="ctr-logs-header">Logs — ${escapeHtml(name)} (last ${d.lines?.length || 0} lines)<button class="ctr-logs-close" onclick="this.closest('.ctr-logs').remove()">&#10005;</button></div><pre class="ctr-logs-pre">${escapeHtml(lines)}</pre>`;
     panel.appendChild(logsDiv);
   } catch (e) {
     // Silently fail
   }
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // Expose functions globally for inline onclick handlers

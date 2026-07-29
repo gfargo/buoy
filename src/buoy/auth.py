@@ -30,13 +30,20 @@ RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX = 60  # requests per window
 
 
+def _is_protected(path: str) -> bool:
+    """Check if a path requires rate limiting / authentication."""
+    for prefix in PROTECTED_PATHS:
+        if path.startswith(prefix):
+            return True
+    return False
+
+
 def check_rate_limit(client_ip: str) -> bool:
     """Sliding-window rate limiter shared across auth-gated endpoints.
 
-    Used both by ``AuthMiddleware`` and by handlers that enforce their own
-    auth outside the middleware (e.g. ``/api/config/debug`` when
-    ``auth.enabled`` is False), so brute-force protection applies regardless
-    of whether the middleware is installed.
+    Always active via ``RateLimitMiddleware`` regardless of ``auth.enabled``,
+    so protected paths (including ``/api/config/debug``) can't be
+    brute-forced even on installs with auth turned off (SPEC §7.2).
     """
     now = time.time()
     window_start = now - RATE_LIMIT_WINDOW
@@ -44,6 +51,7 @@ def check_rate_limit(client_ip: str) -> bool:
     if client_ip not in _rate_limit:
         _rate_limit[client_ip] = []
 
+    # Remove old entries
     _rate_limit[client_ip] = [t for t in _rate_limit[client_ip] if t > window_start]
 
     if len(_rate_limit[client_ip]) >= RATE_LIMIT_MAX:
@@ -51,6 +59,25 @@ def check_rate_limit(client_ip: str) -> bool:
 
     _rate_limit[client_ip].append(now)
     return True
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Always-on per-IP rate limiter for destructive/protected endpoints (SPEC §7.2)."""
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+
+        if not _is_protected(path):
+            return await call_next(request)
+
+        client_ip = request.client.host if request.client else "unknown"
+        if not check_rate_limit(client_ip):
+            return JSONResponse(
+                {"error": "rate limit exceeded", "retry_after": RATE_LIMIT_WINDOW},
+                status_code=429,
+            )
+
+        return await call_next(request)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -67,14 +94,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not self._is_protected(path):
             return await call_next(request)
 
-        # Rate limiting
-        client_ip = request.client.host if request.client else "unknown"
-        if not self._check_rate_limit(client_ip):
-            return JSONResponse(
-                {"error": "rate limit exceeded", "retry_after": RATE_LIMIT_WINDOW},
-                status_code=429,
-            )
-
         # Auth check
         if not self._authenticate(request):
             return JSONResponse(
@@ -87,10 +106,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     def _is_protected(self, path: str) -> bool:
         """Check if a path requires authentication."""
-        for prefix in PROTECTED_PATHS:
-            if path.startswith(prefix):
-                return True
-        return False
+        return _is_protected(path)
 
     def _authenticate(self, request: Request) -> bool:
         """Validate the request's auth credentials."""

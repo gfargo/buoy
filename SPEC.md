@@ -191,7 +191,7 @@ theme:
   # custom:
   #   bg: "#0a0c0f"
   #   surface: "#12151a"
-  #   accent: "#e8a838"
+  #   amber: "#e8a838"
 
 auth:
   enabled: false
