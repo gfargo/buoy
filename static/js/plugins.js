@@ -3,6 +3,8 @@
  * Supports both default rendering and custom JS from plugins.
  */
 
+import { escapeHtml } from './escape.js';
+
 let pluginRenderers = {};
 let jsLoaded = false;
 
@@ -39,11 +41,11 @@ function renderDefaultPlugin(plugin) {
     const entries = Object.entries(plugin.detail).filter(([k, v]) => k !== 'error' && typeof v !== 'object');
     if (entries.length) {
       detailHtml = '<div style="margin-top:0.4rem;font-size:0.5rem;color:var(--text-dim)">' +
-        entries.map(([k, v]) => `${k}: <span style="color:var(--text)">${v}</span>`).join(' · ') +
+        entries.map(([k, v]) => `${escapeHtml(k)}: <span style="color:var(--text)">${escapeHtml(v)}</span>`).join(' · ') +
         '</div>';
     }
     if (plugin.detail.error) {
-      detailHtml += `<div style="margin-top:0.3rem;font-size:0.5rem;color:var(--red)">${plugin.detail.error}</div>`;
+      detailHtml += `<div style="margin-top:0.3rem;font-size:0.5rem;color:var(--red)">${escapeHtml(plugin.detail.error)}</div>`;
     }
   }
   return detailHtml;
@@ -75,11 +77,11 @@ function renderPluginCard(plugin) {
 
   return `<div class="svc" style="cursor:default">
     <div class="svc-header">
-      <span class="svc-icon">${plugin.icon || '🔌'}</span>
-      <div class="svc-name">${plugin.name}</div>
+      <span class="svc-icon">${escapeHtml(plugin.icon || '🔌')}</span>
+      <div class="svc-name">${escapeHtml(plugin.name)}</div>
       <div style="margin-left:auto;width:6px;height:6px;border-radius:50%;background:${statusColor}"></div>
     </div>
-    <div class="svc-desc">${plugin.summary}</div>
+    <div class="svc-desc">${escapeHtml(plugin.summary)}</div>
     ${innerHtml}
   </div>`;
 }

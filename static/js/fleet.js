@@ -3,6 +3,7 @@
  */
 
 import { renderSparkline } from './gauges.js';
+import { escapeHtml, safeUrl } from './escape.js';
 
 export async function refreshFleet(config) {
   const peers = config.network?.peers || [];
@@ -43,7 +44,7 @@ export async function refreshFleet(config) {
     if (!n.online) {
       return `<div class="fleet-node offline">
         <div class="fn-dot"></div>
-        <div class="fn-name">${n.name} <span style="font-weight:300;font-size:0.6rem;color:var(--text-dim)">${n.tier || ''}</span></div>
+        <div class="fn-name">${escapeHtml(n.name)} <span style="font-weight:300;font-size:0.6rem;color:var(--text-dim)">${escapeHtml(n.tier || '')}</span></div>
         <div class="fn-stats"><span>offline</span></div>
       </div>`;
     }
@@ -53,7 +54,7 @@ export async function refreshFleet(config) {
     const services = d.top_services || [];
     const pillRow = services.length
       ? `<div class="fn-services">${services.map(s =>
-          `<a class="fn-svc" href="${s.url}" title="${s.name}">${s.icon ? s.icon + ' ' : ''}${s.name}</a>`
+          `<a class="fn-svc" href="${escapeHtml(safeUrl(s.url))}" title="${escapeHtml(s.name)}">${s.icon ? escapeHtml(s.icon) + ' ' : ''}${escapeHtml(s.name)}</a>`
         ).join('')}</div>`
       : '';
     const peerKey = encodeURIComponent(n.name);
@@ -61,11 +62,11 @@ export async function refreshFleet(config) {
     const alerts = d.alerts || [];
     const worst = alerts.some(a => a.level === 'crit') ? 'crit' : alerts.length ? 'warn' : '';
     const alertBadge = worst
-      ? `<span class="fn-alert-badge fn-alert-${worst}" title="${alerts.map(a => escapeHtmlAttr(a.metric + ' ' + a.level)).join(', ')}">&#9888; ${alerts.length}</span>`
+      ? `<span class="fn-alert-badge fn-alert-${worst}" title="${alerts.map(a => escapeHtml(a.metric + ' ' + a.level)).join(', ')}">&#9888; ${alerts.length}</span>`
       : '';
-    return `<div class="fleet-node${worst ? ' alert-' + worst : ''}" data-peer="${n.name}">
+    return `<div class="fleet-node${worst ? ' alert-' + worst : ''}" data-peer="${escapeHtml(n.name)}">
       <div class="fn-dot"></div>
-      <a class="fn-name fn-name-link" href="${n.url}">${n.name} <span style="font-weight:300;font-size:0.6rem;color:var(--text-dim)">${n.tier || ''}</span></a>${alertBadge}
+      <a class="fn-name fn-name-link" href="${escapeHtml(safeUrl(n.url))}">${escapeHtml(n.name)} <span style="font-weight:300;font-size:0.6rem;color:var(--text-dim)">${escapeHtml(n.tier || '')}</span></a>${alertBadge}
       <div class="fn-stats">
         <span>CPU <span class="fn-val">${d.cpu || 0}%</span></span>
         <span>MEM <span class="fn-val">${memPct}%</span></span>
@@ -120,10 +121,6 @@ async function fetchLatencyHistory(peerName, peerKey) {
   } catch {
     // history disabled or network error — degrade silently
   }
-}
-
-function escapeHtmlAttr(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function formatUptime(h, m) {
