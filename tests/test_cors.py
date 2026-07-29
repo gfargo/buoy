@@ -78,3 +78,52 @@ class TestAllowlistedCORS:
             r = _preflight(client, EVIL_ORIGIN)
         assert r.headers.get("access-control-allow-origin") != EVIL_ORIGIN
         assert r.headers.get("access-control-allow-origin") != "*"
+
+
+class TestRestartRequiresJSON:
+    """The restart endpoint must reject CORS "simple requests".
+
+    A cross-origin <form> POST, or a fetch() using a CORS-safelisted
+    Content-Type (text/plain, application/x-www-form-urlencoded,
+    multipart/form-data), is sent by the browser *without* a preflight —
+    even with no CORS middleware installed at all. Requiring
+    Content-Type: application/json forces every cross-origin caller through
+    a preflight, so the missing Access-Control-Allow-Origin response is what
+    actually stops the browser from issuing the real POST.
+    """
+
+    def test_missing_content_type_rejected(self):
+        app = create_app(_make_config())
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.post("/api/container/anything/restart")
+        assert r.status_code == 415
+
+    def test_form_urlencoded_content_type_rejected(self):
+        app = create_app(_make_config())
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.post(
+                "/api/container/anything/restart",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                content=b"",
+            )
+        assert r.status_code == 415
+
+    def test_text_plain_content_type_rejected(self):
+        app = create_app(_make_config())
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.post(
+                "/api/container/anything/restart",
+                headers={"Content-Type": "text/plain"},
+                content=b"",
+            )
+        assert r.status_code == 415
+
+    def test_json_content_type_accepted(self):
+        app = create_app(_make_config())
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.post(
+                "/api/container/anything/restart",
+                headers={"Content-Type": "application/json"},
+                json={},
+            )
+        assert r.status_code == 200

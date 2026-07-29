@@ -274,7 +274,21 @@ async def api_container_logs(request: Request) -> JSONResponse:
 
 
 async def api_container_restart(request: Request) -> JSONResponse:
-    """Restart a Docker container."""
+    """Restart a Docker container.
+
+    Requires ``Content-Type: application/json``. This isn't for parsing a
+    body — it's because that content type isn't CORS-safelisted, so any
+    cross-origin caller (browser fetch or HTML form) is forced through a
+    preflight OPTIONS request. Since no CORS middleware is installed for
+    unlisted origins (see create_app), that preflight gets no
+    Access-Control-Allow-Origin back and the browser never issues the real
+    POST — closing the "simple request" gap that a same-origin-only CORS
+    policy alone leaves open on state-changing routes.
+    """
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        return JSONResponse({"error": "Content-Type must be application/json"}, status_code=415)
+
     name = request.path_params["name"]
     if not _validate_container_name(name):
         return JSONResponse({"error": "invalid container name"}, status_code=400)
