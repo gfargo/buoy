@@ -2,12 +2,22 @@
 
 import dataclasses
 
+import pytest
 from starlette.testclient import TestClient
 
 import buoy.server as server_module
 from buoy.auth import PROTECTED_PATHS, AuthMiddleware
 from buoy.config import _build_config
 from buoy.server import _redact_secrets, create_app
+
+
+@pytest.fixture(autouse=True)
+def _restore_server_config():
+    """Handler tests below patch the module-level ``_config`` global directly;
+    restore it afterward so state doesn't leak into unrelated tests."""
+    original = server_module._config
+    yield
+    server_module._config = original
 
 
 class FakeAuthConfig:
@@ -210,3 +220,31 @@ class TestConfigDebugHandlerAuth:
         # Correct header → 200
         resp = client.get("/api/config/debug", headers={"Authorization": "Bearer my-secret"})
         assert resp.status_code == 200
+
+    def test_basic_auth_without_token_still_returns_403(self):
+        """auth.type=basic with username/password but no auth.token → 403.
+
+        This is intentional: the debug endpoint is token-only (see
+        api_config_debug docstring), so basic-auth-only installs must also
+        set auth.token to reach it. Basic credentials alone are not accepted.
+        """
+        config = _build_config(
+            {
+                "auth": {
+                    "enabled": True,
+                    "type": "basic",
+                    "username": "admin",
+                    "password": "hunter2",
+                    "token": "",
+                }
+            }
+        )
+        server_module._config = config
+        app = create_app(config)
+        server_module._config = config
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(
+            "/api/config/debug",
+            auth=("admin", "hunter2"),
+        )
+        assert resp.status_code == 403

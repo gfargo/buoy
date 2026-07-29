@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hmac
 import json
 import re
 from pathlib import Path
@@ -93,9 +94,13 @@ async def api_config_debug(request: Request) -> JSONResponse:
     Access rules:
     - If ``auth.token`` is set, require ``Authorization: Bearer <token>``.
     - Otherwise the endpoint is disabled (403) — callers must configure a token.
-    """
-    import hmac
 
+    This is intentionally token-only: installs using ``auth.type == "basic"``
+    without also setting ``auth.token`` cannot reach this endpoint. Basic-auth
+    credentials are not accepted here because they're checked by a separate
+    code path (``AuthMiddleware._check_basic``) with different semantics;
+    requiring a dedicated token keeps this handler's auth self-contained.
+    """
     token = _config.auth.token
     if not token:
         # No token configured → refuse; don't expose topology to anonymous callers.
