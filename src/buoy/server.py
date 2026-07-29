@@ -695,14 +695,19 @@ def create_app(config: BuoyConfig) -> Starlette:
         Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
     ]
 
-    middleware = [
-        Middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_methods=["*"],
-            allow_headers=["*"],
-        ),
-    ]
+    # Same-origin by default (no CORS middleware = browsers block cross-origin
+    # reads). Cross-origin access is opt-in via an explicit origin allowlist
+    # (e.g. for fleet peers) — never a wildcard, per SPEC §7.2.
+    middleware = []
+    if config.network.allowed_origins:
+        middleware.append(
+            Middleware(
+                CORSMiddleware,
+                allow_origins=config.network.allowed_origins,
+                allow_methods=["GET", "POST", "OPTIONS"],
+                allow_headers=["Authorization", "Content-Type"],
+            )
+        )
 
     # Security headers middleware
     from starlette.middleware.base import BaseHTTPMiddleware
