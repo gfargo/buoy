@@ -719,6 +719,12 @@ def create_app(config: BuoyConfig) -> Starlette:
 
     middleware.append(Middleware(SecurityHeadersMiddleware))
 
+    # Rate limiting is always active on protected endpoints (SPEC §7.2),
+    # independent of whether auth is enabled.
+    from buoy.auth import RateLimitMiddleware
+
+    middleware.append(Middleware(RateLimitMiddleware))
+
     # Add auth middleware if enabled
     if config.auth.enabled:
         from buoy.auth import AuthMiddleware

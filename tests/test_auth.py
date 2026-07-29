@@ -3,7 +3,12 @@
 import base64
 import time
 
+import pytest
+from starlette.testclient import TestClient
+
 from buoy.auth import RATE_LIMIT_MAX, RATE_LIMIT_WINDOW, AuthMiddleware, _rate_limit
+from buoy.config import BuoyConfig
+from buoy.server import create_app
 
 
 class FakeAuthConfig:
@@ -187,3 +192,47 @@ class TestRateLimiting:
         _rate_limit[ip] = [time.time() - RATE_LIMIT_WINDOW - 10] * RATE_LIMIT_MAX
         # Should pass because old entries are pruned
         assert mw._check_rate_limit(ip) is True
+
+
+class TestRateLimitAlwaysActive:
+    """Regression tests for buoy#80: rate limiting must apply even when auth is disabled."""
+
+    @pytest.fixture(autouse=True)
+    def clear_rate_limit(self):
+        _rate_limit.clear()
+        yield
+        _rate_limit.clear()
+
+    def _make_app(self, auth_enabled=False):
+        config = BuoyConfig()
+        config.auth.enabled = auth_enabled
+        config.auth.token = "s3cret"
+        return create_app(config)
+
+    def test_protected_path_rate_limited_when_auth_disabled(self):
+        app = self._make_app(auth_enabled=False)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            for _ in range(RATE_LIMIT_MAX):
+                r = client.get("/api/config/debug")
+                assert r.status_code == 200
+            r = client.get("/api/config/debug")
+        assert r.status_code == 429
+        assert r.json() == {"error": "rate limit exceeded", "retry_after": RATE_LIMIT_WINDOW}
+
+    def test_unprotected_path_never_rate_limited_when_auth_disabled(self):
+        app = self._make_app(auth_enabled=False)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            for _ in range(RATE_LIMIT_MAX + 5):
+                r = client.get("/api/stats")
+                assert r.status_code == 200
+
+    def test_auth_enabled_still_enforces_rate_limit_and_auth(self):
+        app = self._make_app(auth_enabled=True)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            # No token provided: unauthenticated requests are rejected, but still
+            # counted toward the shared rate-limit window (no double counting).
+            for _ in range(RATE_LIMIT_MAX):
+                r = client.get("/api/config/debug")
+                assert r.status_code == 401
+            r = client.get("/api/config/debug")
+        assert r.status_code == 429
