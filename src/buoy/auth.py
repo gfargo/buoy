@@ -38,8 +38,13 @@ def _is_protected(path: str) -> bool:
     return False
 
 
-def _check_rate_limit(client_ip: str) -> bool:
-    """Simple sliding window rate limiter."""
+def check_rate_limit(client_ip: str) -> bool:
+    """Sliding-window rate limiter shared across auth-gated endpoints.
+
+    Always active via ``RateLimitMiddleware`` regardless of ``auth.enabled``,
+    so protected paths (including ``/api/config/debug``) can't be
+    brute-forced even on installs with auth turned off (SPEC §7.2).
+    """
     now = time.time()
     window_start = now - RATE_LIMIT_WINDOW
 
@@ -66,7 +71,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"
-        if not _check_rate_limit(client_ip):
+        if not check_rate_limit(client_ip):
             return JSONResponse(
                 {"error": "rate limit exceeded", "retry_after": RATE_LIMIT_WINDOW},
                 status_code=429,
@@ -148,4 +153,4 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     def _check_rate_limit(self, client_ip: str) -> bool:
         """Simple sliding window rate limiter."""
-        return _check_rate_limit(client_ip)
+        return check_rate_limit(client_ip)

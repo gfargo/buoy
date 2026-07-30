@@ -210,11 +210,14 @@ class TestRateLimitAlwaysActive:
         return create_app(config)
 
     def test_protected_path_rate_limited_when_auth_disabled(self):
+        # /api/config/debug requires its own token (SEC-4) even with auth.enabled=False,
+        # so unauthenticated requests get 401 — but they still count against the
+        # shared rate limiter, which is what this regression test is verifying.
         app = self._make_app(auth_enabled=False)
         with TestClient(app, raise_server_exceptions=False) as client:
             for _ in range(RATE_LIMIT_MAX):
                 r = client.get("/api/config/debug")
-                assert r.status_code == 200
+                assert r.status_code == 401
             r = client.get("/api/config/debug")
         assert r.status_code == 429
         assert r.json() == {"error": "rate limit exceeded", "retry_after": RATE_LIMIT_WINDOW}
