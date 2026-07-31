@@ -790,8 +790,26 @@ def create_app(config: BuoyConfig) -> Starlette:
 
     middleware.append(Middleware(RateLimitMiddleware))
 
-    # Add auth middleware if enabled
+    # Add auth middleware if enabled. Fail fast rather than silently serving
+    # a "protected" dashboard that isn't (SEC-1): a misconfigured install
+    # must refuse to start, not fall back to pass-through auth.
     if config.auth.enabled:
+        auth = config.auth
+        if auth.type == "token":
+            if not auth.token:
+                raise RuntimeError(
+                    "auth.enabled is true but auth.token is not set "
+                    "(set BUOY_AUTH_TOKEN or auth.token in buoy.yaml). Refusing to start."
+                )
+        elif auth.type == "basic":
+            if not auth.username or not auth.password:
+                raise RuntimeError(
+                    "auth.enabled is true but auth.username/auth.password are not "
+                    "both set. Refusing to start."
+                )
+        else:
+            raise RuntimeError(f"auth.enabled is true but auth.type is invalid: {auth.type!r}")
+
         from buoy.auth import AuthMiddleware
 
         middleware.append(Middleware(AuthMiddleware, auth_config=config.auth))

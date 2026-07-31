@@ -91,15 +91,15 @@ class TestTokenAuth:
         request = FakeRequest(headers={"Authorization": "Basic abc123"})
         assert mw._authenticate(request) is False
 
-    def test_no_token_configured_passes(self):
+    def test_no_token_configured_denies(self):
         mw = self._make_middleware(token=None)
         request = FakeRequest(headers={})
-        assert mw._authenticate(request) is True
+        assert mw._authenticate(request) is False
 
-    def test_empty_token_configured_passes(self):
+    def test_empty_token_configured_denies(self):
         mw = self._make_middleware(token="")
         request = FakeRequest(headers={})
-        assert mw._authenticate(request) is True
+        assert mw._authenticate(request) is False
 
 
 class TestBasicAuth:
@@ -130,10 +130,10 @@ class TestBasicAuth:
         request = FakeRequest(headers={"Authorization": self._encode_basic("root", "pass123")})
         assert mw._authenticate(request) is False
 
-    def test_no_credentials_configured_passes(self):
+    def test_no_credentials_configured_denies(self):
         mw = self._make_middleware(username=None, password=None)
         request = FakeRequest(headers={})
-        assert mw._authenticate(request) is True
+        assert mw._authenticate(request) is False
 
     def test_malformed_base64(self):
         mw = self._make_middleware()
@@ -239,3 +239,60 @@ class TestRateLimitAlwaysActive:
                 assert r.status_code == 401
             r = client.get("/api/config/debug")
         assert r.status_code == 429
+
+
+class TestAuthStartupValidation:
+    """Regression tests for SEC-1: refuse to start rather than fail open."""
+
+    def test_token_auth_without_token_raises(self):
+        config = BuoyConfig()
+        config.auth.enabled = True
+        config.auth.type = "token"
+        config.auth.token = ""
+        with pytest.raises(RuntimeError):
+            create_app(config)
+
+    def test_token_auth_with_token_starts(self):
+        config = BuoyConfig()
+        config.auth.enabled = True
+        config.auth.type = "token"
+        config.auth.token = "s3cret"
+        create_app(config)
+
+    def test_basic_auth_without_credentials_raises(self):
+        config = BuoyConfig()
+        config.auth.enabled = True
+        config.auth.type = "basic"
+        config.auth.username = ""
+        config.auth.password = ""
+        with pytest.raises(RuntimeError):
+            create_app(config)
+
+    def test_basic_auth_without_password_raises(self):
+        config = BuoyConfig()
+        config.auth.enabled = True
+        config.auth.type = "basic"
+        config.auth.username = "admin"
+        config.auth.password = ""
+        with pytest.raises(RuntimeError):
+            create_app(config)
+
+    def test_basic_auth_with_credentials_starts(self):
+        config = BuoyConfig()
+        config.auth.enabled = True
+        config.auth.type = "basic"
+        config.auth.username = "admin"
+        config.auth.password = "pw"
+        create_app(config)
+
+    def test_invalid_auth_type_raises(self):
+        config = BuoyConfig()
+        config.auth.enabled = True
+        config.auth.type = "bogus"
+        with pytest.raises(RuntimeError):
+            create_app(config)
+
+    def test_auth_disabled_starts_without_credentials(self):
+        config = BuoyConfig()
+        config.auth.enabled = False
+        create_app(config)

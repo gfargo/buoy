@@ -122,7 +122,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """Verify Bearer token."""
         expected = self.auth_config.token
         if not expected:
-            return True  # No token configured = pass through
+            return False  # No token configured = fail closed, deny all
 
         if not auth_header.startswith("Bearer "):
             return False
@@ -137,7 +137,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         expected_pass = self.auth_config.password
 
         if not expected_user or not expected_pass:
-            return True  # Not configured = pass through
+            return False  # Not configured = fail closed, deny all
 
         if not auth_header.startswith("Basic "):
             return False
