@@ -77,11 +77,13 @@ services:
       port: 3000
 ```
 
-`services.hidden` entries match a docker-compose style container name
-(`<project>-<service>-<n>` or `<project>_<service>_<n>`) on the service
-segment, so `"redis"` hides `plane-plane-redis-1` as well as a bare `redis`
-container. Entries containing `*`, `?`, or `[` are matched as glob patterns
-against the full container name instead (e.g. `"plane-*-worker-*"`).
+`services.hidden` entries match against the container's Docker Compose
+service name (the `com.docker.compose.service` label Compose sets on every
+container it manages), so `"redis"` hides a Compose-managed `plane-plane-redis-1`
+container as well as a bare `redis` container run outside Compose — without
+risk of also matching the project name or a compound service like
+`redis-sentinel`. Entries containing `*`, `?`, or `[` are matched as glob
+patterns against the full container name instead (e.g. `"plane-*-worker-*"`).
 
 Environment variables override any YAML value (prefix: `BUOY_`):
 ```bash

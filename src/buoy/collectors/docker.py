@@ -54,8 +54,12 @@ class DockerCollector:
         return self._available
 
     async def list_containers(self) -> list[dict]:
-        """List running containers with name and host port."""
-        code, stdout, _ = await self._run("ps", "--format", "{{.Names}}\t{{.Ports}}")
+        """List running containers with name, host port, and compose service label."""
+        code, stdout, _ = await self._run(
+            "ps",
+            "--format",
+            '{{.Names}}\t{{.Ports}}\t{{.Label "com.docker.compose.service"}}',
+        )
         if code != 0 or not stdout:
             return []
 
@@ -63,12 +67,13 @@ class DockerCollector:
         for line in stdout.split("\n"):
             if not line.strip():
                 continue
-            parts = line.split("\t", 1)
+            parts = line.split("\t", 2)
             name = parts[0].strip()
             ports_str = parts[1].strip() if len(parts) > 1 else ""
+            service = parts[2].strip() if len(parts) > 2 else ""
 
             host_port = self._parse_first_port(ports_str)
-            containers.append({"name": name, "host_port": host_port})
+            containers.append({"name": name, "host_port": host_port, "service": service})
 
         return containers
 

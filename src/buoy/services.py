@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING
 
@@ -11,18 +10,23 @@ if TYPE_CHECKING:
 
 
 def _hidden_matcher(pattern: str):
-    """Build a predicate matching `pattern` against real container names.
+    """Build a predicate matching `pattern` against a discovered container.
 
-    Compose names the "service" as one segment of `<project>-<service>-<n>`
-    (or the legacy `<project>_<service>_<n>`), not the bare service name, so a
-    plain equality check against e.g. "redis" never matches "plane-plane-redis-1".
-    Match on that segment boundary instead of full equality. Patterns containing
-    glob characters (`*`, `?`, `[`) are matched with fnmatch for advanced use.
+    Compose names containers `<project>-<service>-<n>` (or the legacy
+    `<project>_<service>_<n>`), not the bare service name, so a plain equality
+    check against e.g. "redis" never matches "plane-plane-redis-1". Rather than
+    guessing at name segmentation (ambiguous once project or service names
+    contain hyphens themselves), match against the container's own
+    `com.docker.compose.service` label when Docker reports one — that's the
+    exact service name Compose assigned, with no risk of matching the project
+    segment or a substring of a compound service name. Falls back to exact
+    full-name equality for containers Compose didn't label. Patterns containing
+    glob characters (`*`, `?`, `[`) are matched with fnmatch against the full
+    container name for advanced use.
     """
     if any(ch in pattern for ch in "*?["):
-        return lambda name: fnmatch(name, pattern)
-    boundary = re.compile(r"(?:^|[-_])" + re.escape(pattern) + r"(?:[-_]|$)")
-    return lambda name: bool(boundary.search(name))
+        return lambda ctr: fnmatch(ctr["name"], pattern)
+    return lambda ctr: ctr.get("service") == pattern or ctr["name"] == pattern
 
 
 async def discover_services(config: BuoyConfig, is_tailscale: bool) -> dict:
@@ -45,7 +49,7 @@ async def discover_services(config: BuoyConfig, is_tailscale: bool) -> dict:
     local_services = []
     for ctr in containers:
         name = ctr.get("name", "")
-        if any(matches(name) for matches in hidden_matchers):
+        if any(matches(ctr) for matches in hidden_matchers):
             continue
 
         override = overrides.get(name)
