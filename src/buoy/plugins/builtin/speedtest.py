@@ -148,7 +148,7 @@ class SpeedtestPlugin(Plugin):
         server_id = self.config.get("server_id")
 
         binary = self._binary or "speedtest-cli"
-        is_ookla = (binary == "speedtest")
+        is_ookla = binary == "speedtest"
 
         if is_ookla:
             cmd = [binary, "--format=json", "--accept-license", "--accept-gdpr"]
