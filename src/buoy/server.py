@@ -688,6 +688,7 @@ async def _empty_system():
         "temp": 0,
         "uptime_h": 0,
         "uptime_m": 0,
+        "uptime_s": 0,
     }
 
 
