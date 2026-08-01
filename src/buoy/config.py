@@ -107,6 +107,11 @@ class PluginsConfig:
 
 
 @dataclass
+class AlertsConfig:
+    webhook_url: str = ""
+
+
+@dataclass
 class BuoyConfig:
     node: NodeConfig = field(default_factory=NodeConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
@@ -116,6 +121,7 @@ class BuoyConfig:
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
     refresh: RefreshConfig = field(default_factory=RefreshConfig)
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
+    alerts: AlertsConfig = field(default_factory=AlertsConfig)
 
 
 # ── Loader ─────────────────────────────────────────────────────────────────────
@@ -174,6 +180,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_HISTORY": ("features", "history"),
         "BUOY_FEATURES_IMAGE_UPDATES": ("features", "image_updates"),
         "BUOY_REFRESH_IMAGE_UPDATES_INTERVAL": ("refresh", "image_updates_interval"),
+        "BUOY_ALERTS_WEBHOOK_URL": ("alerts", "webhook_url"),
     }
 
     for env_key, path in env_map.items():
@@ -246,6 +253,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     features_raw = raw.get("features", {})
     refresh_raw = raw.get("refresh", {})
     plugins_raw = raw.get("plugins", {})
+    alerts_raw = raw.get("alerts", {})
 
     node = NodeConfig(
         name=node_raw.get("name", "buoy"),
@@ -302,6 +310,10 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         builtin=_parse_plugins(plugins_raw.get("builtin", {})),
     )
 
+    alerts = AlertsConfig(
+        webhook_url=alerts_raw.get("webhook_url", "") if isinstance(alerts_raw, dict) else "",
+    )
+
     return BuoyConfig(
         node=node,
         network=network,
@@ -311,6 +323,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         features=features,
         refresh=refresh,
         plugins=plugins,
+        alerts=alerts,
     )
 
 

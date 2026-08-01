@@ -170,7 +170,7 @@ class AlertEngine:
 
     async def _send_webhooks(self, alert: Alert):
         """Send alert to configured webhooks (Discord, Slack, generic)."""
-        webhook_url = self.config.plugins.builtin.get("alerts", None)
+        webhook_url = self.config.alerts.webhook_url
         if not webhook_url:
             return
 
@@ -186,13 +186,16 @@ class AlertEngine:
             }
         ).encode()
 
-        try:
+        def _post():
             req = urllib.request.Request(
-                webhook_url if isinstance(webhook_url, str) else "",
+                webhook_url,
                 data=payload,
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
             urllib.request.urlopen(req, timeout=5)
+
+        try:
+            await asyncio.to_thread(_post)
         except Exception:
             pass  # Best-effort, don't crash on webhook failure
