@@ -753,11 +753,17 @@ class TestPrometheusExporterPlugin:
         assert "\\\\" in output  # escaped backslash (two chars: \\)
         assert "\\n" in output  # escaped newline literal
 
-        # And no raw newline should appear inside a label value position
-        for line in output.splitlines():
-            if "{" in line and "}" in line:
-                label_value_region = line[line.index("{") : line.index("}") + 1]
-                assert "\n" not in label_value_region
+        # Verify that the literal \n in the hostname was escaped (not injected as
+        # a real line break).  Checking per-line after splitlines() is dead code
+        # because splitlines() already splits on \n, so individual elements can
+        # never contain a bare newline.  Instead, compare the line count against
+        # a clean hostname: if escaping failed the hostile name would add an extra
+        # line for each raw newline it contains.
+        clean_stats = dict(stats, hostname="clean")
+        clean_output = PrometheusExporterPlugin.format_metrics(clean_stats)
+        assert len(output.splitlines()) == len(clean_output.splitlines()), (
+            "Hostile hostname injected extra lines — newline escaping failed"
+        )
 
     def test_format_metrics_uptime_uses_uptime_s(self):
         from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin

@@ -30,7 +30,16 @@ class TestDemoSystemCollector:
         coll = DemoSystemCollector(config)
         data = await coll.collect()
 
-        required = ["hostname", "cpu", "mem_used", "mem_total", "temp", "uptime_h", "uptime_m"]
+        required = [
+            "hostname",
+            "cpu",
+            "mem_used",
+            "mem_total",
+            "temp",
+            "uptime_h",
+            "uptime_m",
+            "uptime_s",
+        ]
         for field in required:
             assert field in data, f"Missing field: {field}"
 
