@@ -77,6 +77,12 @@ services:
       port: 3000
 ```
 
+`services.hidden` entries match a docker-compose style container name
+(`<project>-<service>-<n>` or `<project>_<service>_<n>`) on the service
+segment, so `"redis"` hides `plane-plane-redis-1` as well as a bare `redis`
+container. Entries containing `*`, `?`, or `[` are matched as glob patterns
+against the full container name instead (e.g. `"plane-*-worker-*"`).
+
 Environment variables override any YAML value (prefix: `BUOY_`):
 ```bash
 BUOY_NODE_NAME=harbor

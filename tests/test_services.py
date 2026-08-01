@@ -77,6 +77,59 @@ class TestDiscoverServicesLocal:
         assert result["local"][0]["name"] == "grafana"
 
     @pytest.mark.asyncio
+    async def test_hidden_matches_compose_style_container_names(self):
+        # Real docker-compose containers are named `<project>-<service>-<n>`,
+        # not the bare service name shown in the README example.
+        config = _make_config(hidden=["redis", "postgres"])
+        containers = [
+            {"name": "grafana", "host_port": 3000},
+            {"name": "plane-plane-redis-1", "host_port": 6379},
+            {"name": "plane-plane-postgres-1", "host_port": 5432},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "grafana"
+
+    @pytest.mark.asyncio
+    async def test_hidden_does_not_match_unrelated_substring(self):
+        # "postgres" must not hide "postgresql-extra" — the match should
+        # respect segment boundaries, not do a bare substring search.
+        config = _make_config(hidden=["postgres"])
+        containers = [{"name": "postgresql-extra", "host_port": 5433}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "postgresql-extra"
+
+    @pytest.mark.asyncio
+    async def test_hidden_supports_glob_patterns(self):
+        config = _make_config(hidden=["plane-*-worker-*"])
+        containers = [
+            {"name": "grafana", "host_port": 3000},
+            {"name": "plane-plane-worker-1", "host_port": 8081},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "grafana"
+
+    @pytest.mark.asyncio
     async def test_overrides_applied(self):
         overrides = {
             "grafana": ServiceOverride(name="Grafana", icon="📊", port=3000, path="/d/main"),

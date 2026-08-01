@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
+import re
+from fnmatch import fnmatch
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+
+def _hidden_matcher(pattern: str):
+    """Build a predicate matching `pattern` against real container names.
+
+    Compose names the "service" as one segment of `<project>-<service>-<n>`
+    (or the legacy `<project>_<service>_<n>`), not the bare service name, so a
+    plain equality check against e.g. "redis" never matches "plane-plane-redis-1".
+    Match on that segment boundary instead of full equality. Patterns containing
+    glob characters (`*`, `?`, `[`) are matched with fnmatch for advanced use.
+    """
+    if any(ch in pattern for ch in "*?["):
+        return lambda name: fnmatch(name, pattern)
+    boundary = re.compile(r"(?:^|[-_])" + re.escape(pattern) + r"(?:[-_]|$)")
+    return lambda name: bool(boundary.search(name))
 
 
 async def discover_services(config: BuoyConfig, is_tailscale: bool) -> dict:
@@ -19,7 +36,7 @@ async def discover_services(config: BuoyConfig, is_tailscale: bool) -> dict:
     collector = DockerCollector(config)
     containers = await collector.list_containers()
 
-    hidden = set(config.services.hidden)
+    hidden_matchers = [_hidden_matcher(pattern) for pattern in config.services.hidden]
     overrides = config.services.overrides
     hostname = config.node.name
     tailnet = config.network.tailnet_domain
@@ -28,7 +45,7 @@ async def discover_services(config: BuoyConfig, is_tailscale: bool) -> dict:
     local_services = []
     for ctr in containers:
         name = ctr.get("name", "")
-        if name in hidden:
+        if any(matches(name) for matches in hidden_matchers):
             continue
 
         override = overrides.get(name)
