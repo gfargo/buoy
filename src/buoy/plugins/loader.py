@@ -225,6 +225,9 @@ class PluginManager:
 
     async def _collect_loop(self, plugin_id: str, plugin: Plugin):
         """Run a plugin's collect() on its configured interval, with error isolation."""
+        # Resolved once at loop start, not re-evaluated per iteration: config is
+        # static for the process lifetime today. A future live-reload feature
+        # would need to re-resolve this inside the loop to pick up changes.
         interval = self._resolve_interval(plugin)
         # Initial collect immediately
         await self._safe_collect(plugin_id, plugin)
