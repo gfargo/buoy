@@ -17,7 +17,8 @@
   --cyan-dim: #006070;
 }
 
-/* Night mode — identical (already maximum contrast) */
+/* Night mode — bg/surface/text stay pinned to max contrast; border is
+   nudged slightly brighter so panel edges stay legible at night. */
 body.night-mode {
   --bg: #000000;
   --surface: #0a0a0a;

@@ -114,8 +114,20 @@ function initKeyboardShortcuts() {
       case 'r': refreshStats(); break;
       case 't': {
         const sheet = document.getElementById('theme-stylesheet');
-        const isLight = sheet.href.includes('light.css');
-        const next = isLight ? 'terminal' : 'light';
+        const current = presetNameFromHref(sheet.href);
+        let next;
+        if (current === 'light') {
+          // Restore whichever dark-family preset was active before we
+          // switched to light, instead of always landing on terminal.
+          next = 'terminal';
+          try { next = localStorage.getItem('buoy-theme-dark') || 'terminal'; } catch (_) { /* ignore */ }
+        } else {
+          // Remember the dark-family preset so toggling back from light
+          // restores it (nord/solarized/high-contrast/terminal), rather
+          // than always collapsing to 'light'.
+          try { localStorage.setItem('buoy-theme-dark', current); } catch (_) { /* ignore */ }
+          next = 'light';
+        }
         sheet.href = presetHref(next);
         try { localStorage.setItem('buoy-theme', next); } catch (_) { /* ignore */ }
         break;
@@ -164,6 +176,21 @@ const PRESET_FILES = {
  */
 function presetHref(name) {
   return PRESET_FILES[name] || PRESET_FILES.terminal;
+}
+
+/**
+ * Reverse lookup: given a (possibly absolute) stylesheet href, return the
+ * preset name it belongs to. Falls back to 'terminal' if it doesn't match
+ * a known preset path.
+ *
+ * @param {string} href
+ * @returns {string}
+ */
+function presetNameFromHref(href) {
+  for (const [name, path] of Object.entries(PRESET_FILES)) {
+    if (href.includes(path)) return name;
+  }
+  return 'terminal';
 }
 
 /**
@@ -226,7 +253,10 @@ async function init() {
   // index.html already loaded.
   const themeSheet = document.getElementById('theme-stylesheet');
   const resolvedPreset = resolveInitialTheme(config.theme);
-  themeSheet.href = presetHref(resolvedPreset);
+  const resolvedHref = presetHref(resolvedPreset);
+  if (!themeSheet.href.endsWith(resolvedHref)) {
+    themeSheet.href = resolvedHref;
+  }
 
   // Apply custom CSS variable overrides (theme.custom in buoy.yaml).
   // Called after the preset stylesheet swap so inline vars take precedence.
