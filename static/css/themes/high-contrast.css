@@ -1,0 +1,26 @@
+/* High Contrast theme — maximum legibility for accessibility. */
+
+:root {
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --border: #555555;
+  --border-hi: #888888;
+  --text: #ffffff;
+  --text-dim: #aaaaaa;
+  --text-bright: #ffffff;
+  --amber: #ffdd00;
+  --amber-dim: #806e00;
+  --green: #00ff88;
+  --green-dim: #007040;
+  --red: #ff4444;
+  --cyan: #00ddff;
+  --cyan-dim: #006070;
+}
+
+/* Night mode — identical (already maximum contrast) */
+body.night-mode {
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --border: #666666;
+  --text: #ffffff;
+}

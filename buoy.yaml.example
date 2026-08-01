@@ -73,7 +73,7 @@ services:
 
 # ── Theme ──────────────────────────────────────────────────
 theme:
-  preset: terminal           # terminal (dark) | light
+  preset: terminal           # terminal (dark) | light | solarized | nord | high-contrast
   # For custom CSS variable overrides:
   # custom:
   #   bg: "#0a0c0f"

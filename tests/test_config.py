@@ -102,6 +102,28 @@ class TestConfigFromYAML:
         assert config.plugins.builtin["github"].enabled is True
         assert config.plugins.builtin["github"].settings["token"] == "ghp_xxx"
 
+    def test_theme_preset_light(self):
+        config = _build_config({"theme": {"preset": "light"}})
+        assert config.theme.preset == "light"
+
+    def test_theme_preset_solarized(self):
+        config = _build_config({"theme": {"preset": "solarized"}})
+        assert config.theme.preset == "solarized"
+
+    def test_theme_preset_nord(self):
+        config = _build_config({"theme": {"preset": "nord"}})
+        assert config.theme.preset == "nord"
+
+    def test_theme_preset_high_contrast(self):
+        config = _build_config({"theme": {"preset": "high-contrast"}})
+        assert config.theme.preset == "high-contrast"
+
+    def test_theme_custom_vars(self):
+        raw = {"theme": {"preset": "terminal", "custom": {"bg": "#ff0000", "amber": "#00ff00"}}}
+        config = _build_config(raw)
+        assert config.theme.custom["bg"] == "#ff0000"
+        assert config.theme.custom["amber"] == "#00ff00"
+
 
 class TestEnvOverrides:
     """Environment variables override YAML values."""
@@ -166,6 +188,12 @@ class TestEnvOverrides:
         result = _apply_env_overrides(raw)
         config = _build_config(result)
         assert config.network.allowed_origins == ["https://harbor.example.ts.net"]
+
+    def test_theme_preset_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_THEME_PRESET", "nord")
+        raw = {"theme": {"preset": "terminal"}}
+        result = _apply_env_overrides(raw)
+        assert result["theme"]["preset"] == "nord"
 
 
 class TestLoadConfig:

@@ -16,3 +16,11 @@
   --cyan: #1888b0;
   --cyan-dim: #d0e8f0;
 }
+
+/* Night mode — slightly deeper tones for the light palette (auto-applied via JS) */
+body.night-mode {
+  --bg: #eef0f4;
+  --surface: #f0f2f6;
+  --border: #d0d4da;
+  --text: #2a2f38;
+}

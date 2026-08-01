@@ -1,0 +1,26 @@
+/* Solarized Dark theme — Ethan Schoonover's Solarized palette. */
+
+:root {
+  --bg: #002b36;
+  --surface: #073642;
+  --border: #0d4454;
+  --border-hi: #14556a;
+  --text: #839496;
+  --text-dim: #586e75;
+  --text-bright: #93a1a1;
+  --amber: #b58900;
+  --amber-dim: #5c4700;
+  --green: #859900;
+  --green-dim: #3d4700;
+  --red: #dc322f;
+  --cyan: #2aa198;
+  --cyan-dim: #134f4b;
+}
+
+/* Night mode — slightly deeper darks */
+body.night-mode {
+  --bg: #001e27;
+  --surface: #042830;
+  --border: #0a3340;
+  --text: #728c8e;
+}

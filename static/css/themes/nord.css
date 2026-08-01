@@ -1,0 +1,26 @@
+/* Nord theme — Arctic, north-bluish colour palette. */
+
+:root {
+  --bg: #2e3440;
+  --surface: #3b4252;
+  --border: #434c5e;
+  --border-hi: #4c566a;
+  --text: #d8dee9;
+  --text-dim: #6a7589;
+  --text-bright: #eceff4;
+  --amber: #ebcb8b;
+  --amber-dim: #7a6440;
+  --green: #a3be8c;
+  --green-dim: #4e5d42;
+  --red: #bf616a;
+  --cyan: #88c0d0;
+  --cyan-dim: #3b6070;
+}
+
+/* Night mode — slightly deeper darks */
+body.night-mode {
+  --bg: #252a33;
+  --surface: #2e3440;
+  --border: #393f4d;
+  --text: #c8d0df;
+}
