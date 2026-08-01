@@ -186,7 +186,7 @@ services:
       port: 5050
 
 theme:
-  preset: terminal          # terminal | light | custom
+  preset: terminal          # terminal | light | solarized | nord | high-contrast
   # Or provide custom CSS variables:
   # custom:
   #   bg: "#0a0c0f"

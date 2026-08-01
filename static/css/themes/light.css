@@ -16,3 +16,24 @@
   --cyan: #1888b0;
   --cyan-dim: #d0e8f0;
 }
+
+/* Night mode — slightly deeper tones for the light palette (auto-applied via JS).
+   Unlike the dark presets, light.css's daytime accent-dim colours are pale
+   tints meant for a bright surface, so they also need darkening here —
+   otherwise badges/sparklines stay washed-out against the dimmed background. */
+body.night-mode {
+  --bg: #eef0f4;
+  --surface: #f0f2f6;
+  --border: #d0d4da;
+  --border-hi: #b6bcc6;
+  --text: #2a2f38;
+  --text-dim: #6e7480;
+  --text-bright: #14171d;
+  --amber: #c07818;
+  --amber-dim: #d8c090;
+  --green: #158040;
+  --green-dim: #a8d8b8;
+  --red: #c02c2c;
+  --cyan: #146888;
+  --cyan-dim: #a8d0dc;
+}

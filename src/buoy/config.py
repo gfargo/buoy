@@ -60,7 +60,7 @@ class ServicesConfig:
 
 @dataclass
 class ThemeConfig:
-    preset: str = "terminal"  # terminal | light | custom
+    preset: str = "terminal"  # terminal | light | solarized | nord | high-contrast
     custom: dict[str, str] = field(default_factory=dict)
 
 

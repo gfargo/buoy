@@ -114,8 +114,22 @@ function initKeyboardShortcuts() {
       case 'r': refreshStats(); break;
       case 't': {
         const sheet = document.getElementById('theme-stylesheet');
-        const isLight = sheet.href.includes('light.css');
-        sheet.href = isLight ? '/static/css/themes/terminal.css' : '/static/css/themes/light.css';
+        const current = presetNameFromHref(sheet.href);
+        let next;
+        if (current === 'light') {
+          // Restore whichever dark-family preset was active before we
+          // switched to light, instead of always landing on terminal.
+          next = 'terminal';
+          try { next = localStorage.getItem('buoy-theme-dark') || 'terminal'; } catch (_) { /* ignore */ }
+        } else {
+          // Remember the dark-family preset so toggling back from light
+          // restores it (nord/solarized/high-contrast/terminal), rather
+          // than always collapsing to 'light'.
+          try { localStorage.setItem('buoy-theme-dark', current); } catch (_) { /* ignore */ }
+          next = 'light';
+        }
+        sheet.href = presetHref(next);
+        try { localStorage.setItem('buoy-theme', next); } catch (_) { /* ignore */ }
         break;
       }
       case 'f':
@@ -141,6 +155,79 @@ function initKeyboardShortcuts() {
 }
 
 /**
+ * Map of known preset names to their stylesheet paths.
+ * Extend here when adding new presets; the rest of the code picks them up
+ * automatically via presetHref().
+ */
+const PRESET_FILES = {
+  terminal:      '/static/css/themes/terminal.css',
+  light:         '/static/css/themes/light.css',
+  solarized:     '/static/css/themes/solarized.css',
+  nord:          '/static/css/themes/nord.css',
+  'high-contrast': '/static/css/themes/high-contrast.css',
+};
+
+/**
+ * Return the stylesheet href for a given preset name.
+ * Falls back to terminal for unknown/undefined presets so we never 404.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+function presetHref(name) {
+  return PRESET_FILES[name] || PRESET_FILES.terminal;
+}
+
+/**
+ * Reverse lookup: given a (possibly absolute) stylesheet href, return the
+ * preset name it belongs to. Falls back to 'terminal' if it doesn't match
+ * a known preset path.
+ *
+ * @param {string} href
+ * @returns {string}
+ */
+function presetNameFromHref(href) {
+  for (const [name, path] of Object.entries(PRESET_FILES)) {
+    if (href.includes(path)) return name;
+  }
+  return 'terminal';
+}
+
+/**
+ * Determine which theme preset to apply on page load.
+ *
+ * Precedence (highest → lowest):
+ *   1. User's persisted localStorage choice ('buoy-theme')
+ *   2. Explicit preset in config (when it's a known preset)
+ *   3. OS prefers-color-scheme (dark→terminal, light→light)
+ *   4. terminal (hard default)
+ *
+ * @param {{ preset?: string }} themeConfig
+ * @returns {string} preset name
+ */
+function resolveInitialTheme(themeConfig) {
+  // 1. Persisted user choice wins
+  try {
+    const stored = localStorage.getItem('buoy-theme');
+    if (stored && PRESET_FILES[stored]) return stored;
+  } catch (_) { /* localStorage unavailable (private mode / sandboxed) */ }
+
+  // 2. Explicit config preset (only when it's a known preset)
+  const cfgPreset = themeConfig && themeConfig.preset;
+  if (cfgPreset && PRESET_FILES[cfgPreset]) return cfgPreset;
+
+  // 3. OS colour scheme preference
+  try {
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+      return 'light';
+    }
+  } catch (_) { /* matchMedia not available */ }
+
+  // 4. Hard default
+  return 'terminal';
+}
+
+/**
  * Apply theme.custom key/value pairs as CSS custom properties on <html>.
  * Each key becomes `--<key>` so e.g. { bg: "#ff0000" } sets `--bg`.
  * Inline styles win over stylesheet :root declarations by specificity,
@@ -161,10 +248,14 @@ function applyCustomTheme(custom) {
 async function init() {
   config = await fetchConfig();
 
-  // Apply theme
+  // Apply theme: resolve preset via persisted choice / config / OS preference,
+  // then swap the stylesheet if it differs from the default terminal.css that
+  // index.html already loaded.
   const themeSheet = document.getElementById('theme-stylesheet');
-  if (config.theme.preset === 'light') {
-    themeSheet.href = '/static/css/themes/light.css';
+  const resolvedPreset = resolveInitialTheme(config.theme);
+  const resolvedHref = presetHref(resolvedPreset);
+  if (!themeSheet.href.endsWith(resolvedHref)) {
+    themeSheet.href = resolvedHref;
   }
 
   // Apply custom CSS variable overrides (theme.custom in buoy.yaml).
