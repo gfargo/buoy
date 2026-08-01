@@ -316,7 +316,7 @@ class TestAlertEngineWebhooks:
 
     @pytest.mark.asyncio
     async def test_webhook_failure_is_swallowed(self, monkeypatch):
-        """A network error during webhook dispatch does not crash evaluate."""
+        """A network error during webhook dispatch does not crash _send_webhooks."""
         import urllib.request
 
         config = _make_config()
@@ -328,10 +328,7 @@ class TestAlertEngineWebhooks:
         monkeypatch.setattr(urllib.request, "urlopen", exploding_urlopen)
 
         engine = AlertEngine(config)
-        # Should not raise; fire via evaluate so the full path is exercised
-        await engine.evaluate(
-            {"cpu": 10, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 92}
-        )
-        # Alert still recorded despite webhook failure
-        assert len(engine.active_alerts) == 1
-        assert engine.active_alerts[0].metric == "disk"
+        alert = Alert(metric="disk", level="crit", value=92, threshold=90, message="DISK crit: 92")
+        # Await directly so the failure-swallow path is deterministically exercised
+        # (no dangling create_task), and confirm no exception escapes.
+        await engine._send_webhooks(alert)
