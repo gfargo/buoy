@@ -2,6 +2,8 @@
  * Gauges module — renders gauge cards, sparklines, and bar fills.
  */
 
+import { formatUptime } from './format.js';
+
 const SPARK_MAX = 30;
 const tempHistory = [];
 const diskHistory = [];
@@ -113,11 +115,6 @@ function setText(id, text) {
 function show(id) {
   const el = document.getElementById(id);
   if (el) el.style.display = '';
-}
-
-function formatUptime(h, m) {
-  if (h > 24) return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
-  return h + 'h ' + m + 'm';
 }
 
 export function renderSparkline(containerId, values, minVal, maxVal, color) {
