@@ -827,11 +827,15 @@ class TestPrometheusExporterPlugin:
 class TestSpeedtestPlugin:
     """Tests for the internet speedtest tracker plugin."""
 
-    def _make_plugin(self, config=None):
+    def _make_plugin(self, config=None, binary="speedtest-cli"):
         from buoy.plugins.builtin.speedtest import SpeedtestPlugin
 
         plugin = SpeedtestPlugin()
         plugin.configure(config or {})
+        # Simulate a binary being found so collect() doesn't short-circuit to
+        # 'unavailable'.  Tests that exercise the no-binary path set _binary=None
+        # explicitly after calling this helper.
+        plugin._binary = binary
         return plugin
 
     @pytest.mark.asyncio
@@ -907,7 +911,8 @@ class TestSpeedtestPlugin:
 
     @pytest.mark.asyncio
     async def test_run_test_parses_json(self):
-        plugin = self._make_plugin()
+        """Legacy speedtest-cli: flat schema, speeds in bits/s."""
+        plugin = self._make_plugin(binary="speedtest-cli")
         speedtest_output = json.dumps(
             {
                 "download": 480_000_000,
@@ -920,14 +925,80 @@ class TestSpeedtestPlugin:
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(speedtest_output, b""))
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
             entry = await plugin._run_test()
+
+        # Legacy CLI must use --json (not --format=json)
+        call_args = mock_exec.call_args[0]
+        assert "--json" in call_args
+        assert "--format=json" not in call_args
 
         assert entry["ok"] is True
         assert abs(entry["download_mbps"] - 480.0) < 0.1
         assert abs(entry["upload_mbps"] - 22.0) < 0.1
         assert entry["ping_ms"] == 12.5
         assert entry["server"] == "Test Server"
+
+    @pytest.mark.asyncio
+    async def test_run_test_parses_ookla_json(self):
+        """Ookla speedtest CLI: nested schema, bandwidth in Bytes/s."""
+        plugin = self._make_plugin(binary="speedtest")
+        # Ookla emits bandwidth in Bytes/s; 60_000_000 B/s ÷ 125_000 = 480 Mbps
+        ookla_output = json.dumps(
+            {
+                "type": "result",
+                "download": {"bandwidth": 60_000_000, "bytes": 0, "elapsed": 0},
+                "upload": {"bandwidth": 2_750_000, "bytes": 0, "elapsed": 0},
+                "ping": {"latency": 14.2, "jitter": 1.1},
+                "server": {"name": "Ookla Server"},
+            }
+        ).encode()
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(ookla_output, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            entry = await plugin._run_test()
+
+        # Ookla CLI must use --format=json (not --json) and include license flags
+        call_args = mock_exec.call_args[0]
+        assert "--format=json" in call_args
+        assert "--accept-license" in call_args
+        assert "--accept-gdpr" in call_args
+        assert "--json" not in call_args
+
+        assert entry["ok"] is True
+        # 60_000_000 B/s ÷ 125_000 = 480 Mbps
+        assert abs(entry["download_mbps"] - 480.0) < 0.1
+        # 2_750_000 B/s ÷ 125_000 = 22 Mbps
+        assert abs(entry["upload_mbps"] - 22.0) < 0.1
+        assert abs(entry["ping_ms"] - 14.2) < 0.01
+        assert entry["server"] == "Ookla Server"
+
+    @pytest.mark.asyncio
+    async def test_run_test_ookla_uses_server_id_flag(self):
+        """Ookla CLI uses --server-id (not --server) for server selection."""
+        plugin = self._make_plugin(config={"server_id": "12345"}, binary="speedtest")
+        ookla_output = json.dumps(
+            {
+                "download": {"bandwidth": 10_000_000, "bytes": 0, "elapsed": 0},
+                "upload": {"bandwidth": 1_000_000, "bytes": 0, "elapsed": 0},
+                "ping": {"latency": 5.0, "jitter": 0.5},
+                "server": {"name": "S"},
+            }
+        ).encode()
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(ookla_output, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            await plugin._run_test()
+
+        call_args = mock_exec.call_args[0]
+        assert "--server-id" in call_args
+        assert "12345" in call_args
+        # --server (legacy flag) must NOT appear as a standalone argument
+        assert "--server" not in call_args
 
     @pytest.mark.asyncio
     async def test_run_test_binary_missing(self):
@@ -944,6 +1015,45 @@ class TestSpeedtestPlugin:
         js = plugin.frontend_js()
         assert js is not None
         assert "render_speedtest" in js
+
+    # ── New tests for optional-dependency behaviour ────────────────────────────
+
+    def test_find_speedtest_binary_returns_none_when_absent(self):
+        """_find_speedtest_binary returns None when neither CLI is on PATH."""
+        from buoy.plugins.builtin.speedtest import _find_speedtest_binary
+
+        with patch("shutil.which", return_value=None):
+            assert _find_speedtest_binary() is None
+
+    def test_find_speedtest_binary_prefers_official_cli(self):
+        """_find_speedtest_binary returns 'speedtest' (Ookla) before 'speedtest-cli'."""
+        from buoy.plugins.builtin.speedtest import _find_speedtest_binary
+
+        def _which(name):
+            return f"/usr/bin/{name}" if name == "speedtest" else None
+
+        with patch("shutil.which", side_effect=_which):
+            assert _find_speedtest_binary() == "speedtest"
+
+    def test_find_speedtest_binary_falls_back_to_legacy(self):
+        """_find_speedtest_binary returns 'speedtest-cli' when only that is present."""
+        from buoy.plugins.builtin.speedtest import _find_speedtest_binary
+
+        def _which(name):
+            return "/usr/local/bin/speedtest-cli" if name == "speedtest-cli" else None
+
+        with patch("shutil.which", side_effect=_which):
+            assert _find_speedtest_binary() == "speedtest-cli"
+
+    @pytest.mark.asyncio
+    async def test_collect_unavailable_when_no_binary(self):
+        """collect() returns status='unavailable' and a helpful hint when no CLI is found."""
+        plugin = self._make_plugin()
+        plugin._binary = None  # simulate no binary found at setup()
+        result = await plugin.collect()
+        assert result.status == "unavailable"
+        assert "speedtest" in result.summary.lower()
+        assert "hint" in result.detail
 
 
 # =============================================================================

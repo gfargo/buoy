@@ -1,13 +1,21 @@
 """Speedtest plugin — periodic internet speed tests with trend tracking.
 
-Runs speedtest-cli in a background task (not in collect()) because a speed test
-can exceed the 30-second collect() timeout enforced by the loader.
+Runs a speed-test binary in a background task (not in collect()) because a speed
+test can exceed the 30-second collect() timeout enforced by the loader.
+
+The plugin probes for a usable CLI at startup (in priority order):
+  1. ``speedtest`` — official Ookla CLI (recommended; actively maintained)
+  2. ``speedtest-cli`` — legacy Python CLI (install via ``pip install buoy[speedtest]``)
+
+If neither binary is found the plugin marks itself unavailable and returns a
+descriptive status rather than failing silently or blocking the boot sequence.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import statistics
 import time
 from pathlib import Path
@@ -16,6 +24,18 @@ from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 _HISTORY_PATHS = [Path("/data/speedtest_history.json"), Path("speedtest_history.json")]
 _MAX_HISTORY = 100
+
+# Candidates tried in order.  The official Ookla CLI is preferred because
+# speedtest-cli has been effectively unmaintained since 2021.
+_CLI_CANDIDATES = ["speedtest", "speedtest-cli"]
+
+
+def _find_speedtest_binary() -> str | None:
+    """Return the first available speed-test binary, or None."""
+    for candidate in _CLI_CANDIDATES:
+        if shutil.which(candidate):
+            return candidate
+    return None
 
 
 class SpeedtestPlugin(Plugin):
@@ -38,10 +58,13 @@ class SpeedtestPlugin(Plugin):
         super().__init__()
         self._history: list[dict] = []
         self._task: asyncio.Task | None = None
+        self._binary: str | None = None  # resolved at setup() time
 
     async def setup(self) -> None:
+        self._binary = _find_speedtest_binary()
         self._load_history()
-        self._task = asyncio.create_task(self._loop())
+        if self._binary is not None:
+            self._task = asyncio.create_task(self._loop())
 
     async def teardown(self) -> None:
         if self._task:
@@ -49,6 +72,18 @@ class SpeedtestPlugin(Plugin):
 
     async def collect(self) -> PanelData:
         """Return latest cached result instantly; never blocks on a subprocess."""
+        if self._binary is None:
+            return PanelData(
+                status="unavailable",
+                summary="No speedtest binary found",
+                detail={
+                    "hint": (
+                        "Install the official Ookla CLI ('speedtest') or the legacy "
+                        "Python wrapper ('pip install buoy[speedtest]') and restart Buoy."
+                    )
+                },
+            )
+
         if not self._history:
             return PanelData(status="ok", summary="Measuring…", detail={})
 
@@ -97,13 +132,32 @@ class SpeedtestPlugin(Plugin):
         self._save_history()
 
     async def _run_test(self) -> dict:
-        """Run speedtest-cli --json and return a normalised result dict."""
+        """Run the speed-test binary and return a normalised result dict.
+
+        Two CLIs are supported with different invocation styles and output schemas:
+
+        * ``speedtest`` (Ookla official) — uses ``--format=json --accept-license
+          --accept-gdpr``; emits nested objects where ``download.bandwidth`` and
+          ``upload.bandwidth`` are in **Bytes/s** and ping is at ``ping.latency``.
+
+        * ``speedtest-cli`` (legacy Python wrapper) — uses ``--json``; emits flat
+          keys where ``download`` and ``upload`` are in **bits/s** and ping is at
+          ``ping``.
+        """
         ts = time.time()
         server_id = self.config.get("server_id")
 
-        cmd = ["speedtest-cli", "--json"]
-        if server_id:
-            cmd += ["--server", str(server_id)]
+        binary = self._binary or "speedtest-cli"
+        is_ookla = binary == "speedtest"
+
+        if is_ookla:
+            cmd = [binary, "--format=json", "--accept-license", "--accept-gdpr"]
+            if server_id:
+                cmd += ["--server-id", str(server_id)]
+        else:
+            cmd = [binary, "--json"]
+            if server_id:
+                cmd += ["--server", str(server_id)]
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -113,13 +167,26 @@ class SpeedtestPlugin(Plugin):
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
             data = json.loads(stdout.decode())
+
+            if is_ookla:
+                # Ookla CLI: nested schema, bandwidth in Bytes/s (÷ 125_000 → Mbps)
+                download_mbps = data["download"]["bandwidth"] / 125_000
+                upload_mbps = data["upload"]["bandwidth"] / 125_000
+                ping_ms = data["ping"]["latency"]
+                server_name = data.get("server", {}).get("name", "")
+            else:
+                # Legacy speedtest-cli: flat schema, speeds in bits/s (÷ 1e6 → Mbps)
+                download_mbps = data["download"] / 1e6
+                upload_mbps = data["upload"] / 1e6
+                ping_ms = data["ping"]
+                server_name = data.get("server", {}).get("name", "")
+
             return {
                 "ts": ts,
-                # speedtest-cli reports bits/s; convert to Mbps
-                "download_mbps": data["download"] / 1e6,
-                "upload_mbps": data["upload"] / 1e6,
-                "ping_ms": data["ping"],
-                "server": data.get("server", {}).get("name", ""),
+                "download_mbps": download_mbps,
+                "upload_mbps": upload_mbps,
+                "ping_ms": ping_ms,
+                "server": server_name,
                 "ok": True,
             }
         except FileNotFoundError:
@@ -130,7 +197,7 @@ class SpeedtestPlugin(Plugin):
                 "ping_ms": 0.0,
                 "server": "",
                 "ok": False,
-                "error": "speedtest-cli not found",
+                "error": f"{binary} not found",
             }
         except Exception as exc:
             return {
