@@ -3,7 +3,14 @@
 import pytest
 
 from buoy.alerts import Alert, AlertEngine
-from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig, PluginsConfig
+from buoy.config import (
+    AlertsConfig,
+    BuoyConfig,
+    FeaturesConfig,
+    NetworkConfig,
+    NodeConfig,
+    PluginsConfig,
+)
 
 
 def _make_config():
@@ -247,3 +254,81 @@ class TestAlertEngineDuration:
             {"cpu": 30, "mem_used": 2048, "mem_total": 8192, "temp": 40, "disk_pct": 50}
         )
         assert "cpu" not in engine._breach_start
+
+
+class TestAlertEngineWebhooks:
+    """Test webhook dispatch from _send_webhooks."""
+
+    @pytest.mark.asyncio
+    async def test_no_webhook_when_unconfigured(self, monkeypatch):
+        """No HTTP request is made when webhook_url is empty (the default)."""
+        config = _make_config()
+        # Default AlertsConfig has empty webhook_url — no override needed
+
+        calls = []
+
+        async def fake_to_thread(fn, *args, **kwargs):
+            calls.append(fn)
+
+        monkeypatch.setattr("buoy.alerts.asyncio.to_thread", fake_to_thread)
+
+        engine = AlertEngine(config)
+        alert = Alert(metric="disk", level="crit", value=92, threshold=90, message="DISK crit: 92")
+        await engine._send_webhooks(alert)
+
+        assert calls == [], "asyncio.to_thread should not be called when webhook_url is empty"
+
+    @pytest.mark.asyncio
+    async def test_webhook_posts_when_configured(self, monkeypatch):
+        """A POST is attempted with the correct URL and JSON payload."""
+        import json
+        import urllib.request
+
+        config = _make_config()
+        config.alerts = AlertsConfig(webhook_url="https://hooks.example/x")
+
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["url"] = req.full_url
+            captured["method"] = req.method
+            captured["data"] = json.loads(req.data.decode())
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        engine = AlertEngine(config)
+        alert = Alert(
+            metric="disk",
+            level="crit",
+            value=92,
+            threshold=90,
+            message="DISK crit: 92",
+            fired_at=1000.0,
+        )
+        await engine._send_webhooks(alert)
+
+        assert captured["url"] == "https://hooks.example/x"
+        assert captured["method"] == "POST"
+        assert captured["data"]["metric"] == "disk"
+        assert captured["data"]["level"] == "crit"
+        assert captured["data"]["hostname"] == "test"
+        assert captured["data"]["value"] == 92
+
+    @pytest.mark.asyncio
+    async def test_webhook_failure_is_swallowed(self, monkeypatch):
+        """A network error during webhook dispatch does not crash _send_webhooks."""
+        import urllib.request
+
+        config = _make_config()
+        config.alerts = AlertsConfig(webhook_url="https://hooks.example/x")
+
+        def exploding_urlopen(req, timeout=None):
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(urllib.request, "urlopen", exploding_urlopen)
+
+        engine = AlertEngine(config)
+        alert = Alert(metric="disk", level="crit", value=92, threshold=90, message="DISK crit: 92")
+        # Await directly so the failure-swallow path is deterministically exercised
+        # (no dangling create_task), and confirm no exception escapes.
+        await engine._send_webhooks(alert)

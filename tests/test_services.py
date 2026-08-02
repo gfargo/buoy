@@ -268,6 +268,42 @@ class TestDiscoverServicesMetadata:
         assert "network" in result
 
 
+class TestDiscoverServicesCollectorReuse:
+    """Test that a passed-in collector is reused instead of building a new one."""
+
+    @pytest.mark.asyncio
+    async def test_reuses_passed_collector(self):
+        config = _make_config()
+        containers = [{"name": "grafana", "host_port": 3000}]
+
+        mock_collector = AsyncMock()
+        mock_collector.list_containers = AsyncMock(return_value=containers)
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_cls:
+            result = await discover_services(config, is_tailscale=False, collector=mock_collector)
+
+        mock_collector.list_containers.assert_called_once()
+        mock_cls.assert_not_called()
+        assert result["local"][0]["name"] == "grafana"
+
+    @pytest.mark.asyncio
+    async def test_top_services_reuses_passed_collector(self):
+        from buoy.services import top_services
+
+        config = _make_config()
+        containers = [{"name": "grafana", "host_port": 3000}]
+
+        mock_collector = AsyncMock()
+        mock_collector.list_containers = AsyncMock(return_value=containers)
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_cls:
+            result = await top_services(config, is_tailscale=False, collector=mock_collector)
+
+        mock_collector.list_containers.assert_called_once()
+        mock_cls.assert_not_called()
+        assert result[0]["name"] == "grafana"
+
+
 class TestTopServices:
     """Tests for the top_services helper."""
 

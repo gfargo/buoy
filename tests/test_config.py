@@ -195,6 +195,18 @@ class TestEnvOverrides:
         result = _apply_env_overrides(raw)
         assert result["theme"]["preset"] == "nord"
 
+    def test_alerts_webhook_url_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_ALERTS_WEBHOOK_URL", "https://hooks.example/test")
+        raw = {}
+        result = _apply_env_overrides(raw)
+        assert result["alerts"]["webhook_url"] == "https://hooks.example/test"
+
+    def test_alerts_webhook_url_env_builds_config(self, monkeypatch):
+        monkeypatch.setenv("BUOY_ALERTS_WEBHOOK_URL", "https://hooks.example/test")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.alerts.webhook_url == "https://hooks.example/test"
+
 
 class TestLoadConfig:
     """Integration test for the full load_config flow."""

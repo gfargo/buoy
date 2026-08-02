@@ -9,12 +9,14 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
+_LIST_CACHE_TTL = 5.0
 
 
 def _valid_name(name: str) -> bool:
@@ -27,6 +29,9 @@ class DockerCollector:
     def __init__(self, config: BuoyConfig):
         self.config = config
         self._available: bool | None = None
+        self._containers_cache: list[dict] | None = None
+        self._containers_cache_ts: float = 0.0
+        self._list_lock = asyncio.Lock()
 
     async def _run(self, *args: str, timeout: float = 10) -> tuple[int, str, str]:
         """Run a docker command and return (returncode, stdout, stderr)."""
@@ -54,7 +59,26 @@ class DockerCollector:
         return self._available
 
     async def list_containers(self) -> list[dict]:
-        """List running containers with name, host port, and compose service label."""
+        """List running containers with name and host port (cached, 5s TTL)."""
+        now = time.monotonic()
+        if self._containers_cache is not None and now - self._containers_cache_ts < _LIST_CACHE_TTL:
+            return self._containers_cache
+
+        async with self._list_lock:
+            now = time.monotonic()
+            if (
+                self._containers_cache is not None
+                and now - self._containers_cache_ts < _LIST_CACHE_TTL
+            ):
+                return self._containers_cache
+
+            containers = await self._fetch_containers()
+            self._containers_cache = containers
+            self._containers_cache_ts = time.monotonic()
+            return containers
+
+    async def _fetch_containers(self) -> list[dict]:
+        """Shell out to `docker ps` and parse the container list, including compose service label."""
         code, stdout, _ = await self._run(
             "ps",
             "--format",

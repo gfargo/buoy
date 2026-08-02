@@ -29,15 +29,21 @@ def _hidden_matcher(pattern: str):
     return lambda ctr: ctr.get("service") == pattern or ctr["name"] == pattern
 
 
-async def discover_services(config: BuoyConfig, is_tailscale: bool) -> dict:
+async def discover_services(config: BuoyConfig, is_tailscale: bool, collector=None) -> dict:
     """Discover local services from Docker and build the full response.
+
+    Args:
+        collector: Optional pre-built Docker collector to reuse (avoids a
+            redundant `docker ps` and preserves its caches). Defaults to a
+            fresh `DockerCollector`.
 
     Returns:
         Dict with 'local', 'network', 'hostname', 'tailscale', 'tailnet_domain' keys.
     """
-    from buoy.collectors.docker import DockerCollector
+    if collector is None:
+        from buoy.collectors.docker import DockerCollector
 
-    collector = DockerCollector(config)
+        collector = DockerCollector(config)
     containers = await collector.list_containers()
 
     hidden_matchers = [_hidden_matcher(pattern) for pattern in config.services.hidden]
@@ -104,12 +110,14 @@ async def discover_services(config: BuoyConfig, is_tailscale: bool) -> dict:
     }
 
 
-async def top_services(config: BuoyConfig, is_tailscale: bool, limit: int = 5) -> list[dict]:
+async def top_services(
+    config: BuoyConfig, is_tailscale: bool, limit: int = 5, collector=None
+) -> list[dict]:
     """Return the first `limit` local services that have a URL.
 
     Used by /api/stats so fleet cards can render service link pills.
     """
-    data = await discover_services(config, is_tailscale)
+    data = await discover_services(config, is_tailscale, collector=collector)
     return [
         {"name": s["name"], "icon": s["icon"], "url": s["url"]} for s in data["local"] if s["url"]
     ][:limit]
