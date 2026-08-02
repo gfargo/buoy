@@ -150,6 +150,26 @@ class TestDiscoverServicesLocal:
         assert result["local"][0]["name"] == "grafana"
 
     @pytest.mark.asyncio
+    async def test_hidden_empty_string_does_not_hide_unlabeled_containers(self):
+        # An empty-string entry in `hidden` (e.g. a YAML typo) must not
+        # accidentally hide every non-Compose container, which has service="".
+        config = _make_config(hidden=["", "redis"])
+        containers = [
+            {"name": "grafana", "host_port": 3000, "service": ""},
+            {"name": "plane-plane-redis-1", "host_port": 6379, "service": "redis"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        # grafana (unlabeled) must not be hidden; only redis must be hidden
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "grafana"
+
+    @pytest.mark.asyncio
     async def test_overrides_applied(self):
         overrides = {
             "grafana": ServiceOverride(name="Grafana", icon="📊", port=3000, path="/d/main"),

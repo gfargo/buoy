@@ -24,6 +24,10 @@ def _hidden_matcher(pattern: str):
     glob characters (`*`, `?`, `[`) are matched with fnmatch against the full
     container name for advanced use.
     """
+    if not pattern:
+        # Empty string would match every unlabeled (non-Compose) container
+        # because Docker reports service="" for them; skip silently.
+        return lambda ctr: False
     if any(ch in pattern for ch in "*?["):
         return lambda ctr: fnmatch(ctr["name"], pattern)
     return lambda ctr: ctr.get("service") == pattern or ctr["name"] == pattern
