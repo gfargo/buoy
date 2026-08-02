@@ -11,6 +11,8 @@ All notable changes to Buoy are documented here.
 - Keyboard shortcuts for panel navigation (#47)
 - Improved mobile responsive breakpoints (#48)
 - 24h uptime history sparkline per container (#49)
+- systemd_health built-in plugin for service health monitoring (#50)
+- System journal error count gauge (#45)
 - Internet speedtest tracker plugin (#51)
 - SnapRAID parity status plugin (#53)
 - Tailscale network status plugin (#54)
@@ -53,16 +55,13 @@ All notable changes to Buoy are documented here.
 ### Added
 - Container detail panel with metadata, logs, and restart action (#1)
 - Deploy info footer showing version, build date, and git SHA (#8)
-- Tailscale ping for peer latency measurement with HTTP fallback (#7)
+- Tailscale ping for peer latency measurement with HTTP fallback (#15)
 - Fleet node cards now show service link pills (#16)
 
 ## [2.0.3] - 2026-06-27
 
 ### Fixed
-- Operator precedence bug in `loadPluginJS` breaking custom plugin renderers (#214, fixed in two passes)
-
-### Changed
-- Added comprehensive test coverage: auth, storage, alerts, services discovery, and plugin loader (73 new tests)
+- Operator precedence bug in `loadPluginJS` breaking custom plugin renderers (fixed in two passes)
 
 ## [2.0.2] - 2026-06-26
 
