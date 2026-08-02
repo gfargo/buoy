@@ -4,6 +4,7 @@
 
 import { renderSparkline } from './gauges.js';
 import { escapeHtml, safeUrl } from './escape.js';
+import { formatUptime } from './format.js';
 
 export async function refreshFleet(config) {
   const peers = config.network?.peers || [];
@@ -123,7 +124,3 @@ async function fetchLatencyHistory(peerName, peerKey) {
   }
 }
 
-function formatUptime(h, m) {
-  if (h > 24) return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
-  return h + 'h ' + m + 'm';
-}
