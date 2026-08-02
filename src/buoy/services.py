@@ -2,10 +2,49 @@
 
 from __future__ import annotations
 
+from fnmatch import fnmatch
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+
+def _hidden_matcher(pattern: str):
+    """Build a predicate matching `pattern` against a discovered container.
+
+    Compose names containers `<project>-<service>-<n>` (or the legacy
+    `<project>_<service>_<n>`), not the bare service name, so a plain equality
+    check against e.g. "redis" never matches "plane-plane-redis-1". Rather than
+    guessing at name segmentation (ambiguous once project or service names
+    contain hyphens themselves), match against the container's own
+    `com.docker.compose.service` label when Docker reports one — that's the
+    exact service name Compose assigned, with no risk of matching the project
+    segment or a substring of a compound service name. Falls back to exact
+    full-name equality for containers Compose didn't label. Patterns containing
+    glob characters (`*`, `?`, `[`) are matched with fnmatch against the full
+    container name for advanced use.
+    """
+    if not pattern:
+        # Empty string would match every unlabeled (non-Compose) container
+        # because Docker reports service="" for them; skip silently.
+        return lambda ctr: False
+    if any(ch in pattern for ch in "*?["):
+        return lambda ctr: fnmatch(ctr["name"], pattern)
+    return lambda ctr: ctr.get("service") == pattern or ctr["name"] == pattern
+
+
+def _resolve_override(overrides: dict, ctr: dict):
+    """Look up a service override for `ctr`, keyed the same way `hidden` matches.
+
+    Compose containers are keyed by their `com.docker.compose.service` label
+    (e.g. "redis" for `plane-plane-redis-1`) so overrides configured with the
+    bare service name apply the same way `hidden` entries do. Falls back to
+    the full container name for containers Compose didn't label.
+    """
+    service = ctr.get("service")
+    if service and service in overrides:
+        return overrides[service]
+    return overrides.get(ctr["name"])
 
 
 async def discover_services(config: BuoyConfig, is_tailscale: bool, collector=None) -> dict:
@@ -25,7 +64,7 @@ async def discover_services(config: BuoyConfig, is_tailscale: bool, collector=No
         collector = DockerCollector(config)
     containers = await collector.list_containers()
 
-    hidden = set(config.services.hidden)
+    hidden_matchers = [_hidden_matcher(pattern) for pattern in config.services.hidden]
     overrides = config.services.overrides
     hostname = config.node.name
     tailnet = config.network.tailnet_domain
@@ -34,10 +73,10 @@ async def discover_services(config: BuoyConfig, is_tailscale: bool, collector=No
     local_services = []
     for ctr in containers:
         name = ctr.get("name", "")
-        if name in hidden:
+        if any(matches(ctr) for matches in hidden_matchers):
             continue
 
-        override = overrides.get(name)
+        override = _resolve_override(overrides, ctr)
         display_name = override.name if override and override.name else name
         icon = override.icon if override else ""
         desc = override.desc if override else ""

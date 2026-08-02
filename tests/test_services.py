@@ -77,6 +77,99 @@ class TestDiscoverServicesLocal:
         assert result["local"][0]["name"] == "grafana"
 
     @pytest.mark.asyncio
+    async def test_hidden_matches_compose_style_container_names(self):
+        # Real docker-compose containers are named `<project>-<service>-<n>`,
+        # not the bare service name shown in the README example. Docker
+        # labels these with the actual compose service name.
+        config = _make_config(hidden=["redis", "postgres"])
+        containers = [
+            {"name": "grafana", "host_port": 3000, "service": ""},
+            {"name": "plane-plane-redis-1", "host_port": 6379, "service": "redis"},
+            {"name": "plane-plane-postgres-1", "host_port": 5432, "service": "postgres"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "grafana"
+
+    @pytest.mark.asyncio
+    async def test_hidden_does_not_match_unrelated_compound_service(self):
+        # "redis" must not hide a compound compose service like
+        # "redis-sentinel", and must not match on the project name segment
+        # either — only the exact compose service label counts.
+        config = _make_config(hidden=["redis", "plane"])
+        containers = [
+            {"name": "plane-redis-sentinel-1", "host_port": 5433, "service": "redis-sentinel"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "plane-redis-sentinel-1"
+
+    @pytest.mark.asyncio
+    async def test_hidden_does_not_match_unrelated_substring(self):
+        # "postgres" must not hide "postgresql-extra" run outside compose —
+        # bare names require an exact match, not a substring search.
+        config = _make_config(hidden=["postgres"])
+        containers = [{"name": "postgresql-extra", "host_port": 5433, "service": ""}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "postgresql-extra"
+
+    @pytest.mark.asyncio
+    async def test_hidden_supports_glob_patterns(self):
+        config = _make_config(hidden=["plane-*-worker-*"])
+        containers = [
+            {"name": "grafana", "host_port": 3000},
+            {"name": "plane-plane-worker-1", "host_port": 8081},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "grafana"
+
+    @pytest.mark.asyncio
+    async def test_hidden_empty_string_does_not_hide_unlabeled_containers(self):
+        # An empty-string entry in `hidden` (e.g. a YAML typo) must not
+        # accidentally hide every non-Compose container, which has service="".
+        config = _make_config(hidden=["", "redis"])
+        containers = [
+            {"name": "grafana", "host_port": 3000, "service": ""},
+            {"name": "plane-plane-redis-1", "host_port": 6379, "service": "redis"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        # grafana (unlabeled) must not be hidden; only redis must be hidden
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "grafana"
+
+    @pytest.mark.asyncio
     async def test_overrides_applied(self):
         overrides = {
             "grafana": ServiceOverride(name="Grafana", icon="📊", port=3000, path="/d/main"),
@@ -94,6 +187,30 @@ class TestDiscoverServicesLocal:
         assert svc["name"] == "Grafana"
         assert svc["icon"] == "📊"
         assert svc["url"] == "http://localhost:3000/d/main"
+
+    @pytest.mark.asyncio
+    async def test_overrides_matches_compose_service_name(self):
+        # Overrides are configured with the bare service name, same as
+        # `hidden`, so they must key off the compose service label rather
+        # than the compose-prefixed container name.
+        overrides = {
+            "grafana": ServiceOverride(name="Grafana", icon="📊", port=3000),
+        }
+        config = _make_config(overrides=overrides)
+        containers = [
+            {"name": "plane-plane-grafana-1", "host_port": 9999, "service": "grafana"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        svc = result["local"][0]
+        assert svc["name"] == "Grafana"
+        assert svc["icon"] == "📊"
+        assert svc["url"] == "http://localhost:3000"
 
     @pytest.mark.asyncio
     async def test_tailscale_url_generation(self):
