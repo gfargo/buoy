@@ -8,7 +8,7 @@ import { initDetail } from './detail.js';
 import { refreshServices } from './services.js';
 import { refreshFleet } from './fleet.js';
 import { refreshPlugins } from './plugins.js';
-import { connectWebSocket } from './ws.js';
+import { connectWebSocket, isWebSocketOpen } from './ws.js';
 
 let config = null;
 
@@ -283,7 +283,11 @@ async function init() {
   await fetchDeployInfo();
 
   // Refresh loops
-  setInterval(refreshStats, config.refresh.stats_interval * 1000);
+  // Stats polling is suppressed while the WebSocket is open (it already
+  // pushes stats updates); polling resumes as a fallback once it's closed.
+  setInterval(() => {
+    if (!config.features.websocket || !isWebSocketOpen()) refreshStats();
+  }, config.refresh.stats_interval * 1000);
   setInterval(() => refreshServices(config), config.refresh.services_interval * 1000);
   setInterval(() => refreshFleet(config), config.refresh.fleet_interval * 1000);
   setInterval(refreshPlugins, (config.refresh.plugins_interval || 60) * 1000);
