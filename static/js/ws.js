@@ -112,6 +112,10 @@ export function sendMessage(msg) {
   }
 }
 
+export function isWebSocketOpen() {
+  return !!ws && ws.readyState === WebSocket.OPEN;
+}
+
 function showAlertToast(alert) {
   // Create toast container if it doesn't exist
   let container = document.getElementById('alert-toasts');
