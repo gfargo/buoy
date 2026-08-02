@@ -33,6 +33,20 @@ def _hidden_matcher(pattern: str):
     return lambda ctr: ctr.get("service") == pattern or ctr["name"] == pattern
 
 
+def _resolve_override(overrides: dict, ctr: dict):
+    """Look up a service override for `ctr`, keyed the same way `hidden` matches.
+
+    Compose containers are keyed by their `com.docker.compose.service` label
+    (e.g. "redis" for `plane-plane-redis-1`) so overrides configured with the
+    bare service name apply the same way `hidden` entries do. Falls back to
+    the full container name for containers Compose didn't label.
+    """
+    service = ctr.get("service")
+    if service and service in overrides:
+        return overrides[service]
+    return overrides.get(ctr["name"])
+
+
 async def discover_services(config: BuoyConfig, is_tailscale: bool, collector=None) -> dict:
     """Discover local services from Docker and build the full response.
 
@@ -62,7 +76,7 @@ async def discover_services(config: BuoyConfig, is_tailscale: bool, collector=No
         if any(matches(ctr) for matches in hidden_matchers):
             continue
 
-        override = overrides.get(name)
+        override = _resolve_override(overrides, ctr)
         display_name = override.name if override and override.name else name
         icon = override.icon if override else ""
         desc = override.desc if override else ""

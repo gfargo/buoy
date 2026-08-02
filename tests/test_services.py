@@ -189,6 +189,30 @@ class TestDiscoverServicesLocal:
         assert svc["url"] == "http://localhost:3000/d/main"
 
     @pytest.mark.asyncio
+    async def test_overrides_matches_compose_service_name(self):
+        # Overrides are configured with the bare service name, same as
+        # `hidden`, so they must key off the compose service label rather
+        # than the compose-prefixed container name.
+        overrides = {
+            "grafana": ServiceOverride(name="Grafana", icon="📊", port=3000),
+        }
+        config = _make_config(overrides=overrides)
+        containers = [
+            {"name": "plane-plane-grafana-1", "host_port": 9999, "service": "grafana"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        svc = result["local"][0]
+        assert svc["name"] == "Grafana"
+        assert svc["icon"] == "📊"
+        assert svc["url"] == "http://localhost:3000"
+
+    @pytest.mark.asyncio
     async def test_tailscale_url_generation(self):
         config = _make_config(name="compass", tailnet_domain="tailb82ead.ts.net")
         containers = [{"name": "grafana", "host_port": 3000}]
