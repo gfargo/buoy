@@ -13,6 +13,7 @@
   --green: #1a9848;
   --green-dim: #d0f0dc;
   --red: #d43838;
+  --red-dim: #f8d0d0;
   --cyan: #1888b0;
   --cyan-dim: #d0e8f0;
 }
@@ -34,6 +35,7 @@ body.night-mode {
   --green: #158040;
   --green-dim: #a8d8b8;
   --red: #c02c2c;
+  --red-dim: #e8b8b8;
   --cyan: #146888;
   --cyan-dim: #a8d0dc;
 }

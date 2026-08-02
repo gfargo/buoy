@@ -76,7 +76,7 @@ class SystemdHealthPlugin(Plugin):
 function render_systemd_health(data) {
   const units = data.detail.units || [];
   if (!units.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No units configured</div>';
-  const stateColor = s => s === 'active' ? 'var(--ok)' : s === 'failed' ? 'var(--error)' : 'var(--warn)';
+  const stateColor = s => s === 'active' ? 'var(--green)' : s === 'failed' ? 'var(--red)' : 'var(--amber)';
   let html = '<table style="width:100%;border-collapse:collapse;font-size:0.5rem">';
   html += '<tr><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Unit</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">State</th></tr>';
   units.forEach(u => {

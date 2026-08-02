@@ -84,7 +84,7 @@ class ImmichPlugin(Plugin):
 function render_immich(data) {
   const d = data.detail;
   const pct = d.disk_pct ?? 0;
-  const barColor = pct > 80 ? 'var(--yellow)' : 'var(--cyan)';
+  const barColor = pct > 80 ? 'var(--amber)' : 'var(--cyan)';
   return '<div style="padding:0.5rem 0"><div style="display:flex;gap:1rem;font-size:0.6rem;color:var(--text-bright);margin-bottom:0.4rem"><span>' + (d.photos ?? 0).toLocaleString() + ' photos</span><span>' + (d.videos ?? 0).toLocaleString() + ' videos</span></div><div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-bottom:0.3rem"><div style="height:100%;width:' + pct + '%;background:' + barColor + ';border-radius:3px"></div></div><div style="font-size:0.55rem;color:var(--text-dim)">' + pct + '% disk used' + (d.disk_use ? ' · ' + d.disk_use + ' / ' + d.disk_size : '') + '</div></div>';
 }
 """
