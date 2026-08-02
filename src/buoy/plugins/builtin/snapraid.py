@@ -80,7 +80,7 @@ class SnapraidPlugin(Plugin):
 function render_snapraid(data) {
   const d = data.detail || {};
   const status = data.status;
-  const color = status === 'ok' ? 'var(--ok)' : status === 'warn' ? 'var(--warn)' : status === 'error' ? 'var(--error)' : 'var(--text-dim)';
+  const color = status === 'ok' ? 'var(--green)' : status === 'warn' ? 'var(--amber)' : status === 'error' ? 'var(--red)' : 'var(--text-dim)';
   let html = '<div style="font-size:0.6rem">';
   html += '<div style="margin-bottom:0.3rem;color:' + color + ';font-weight:bold">' + (data.summary || '') + '</div>';
   const rows = [];

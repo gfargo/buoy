@@ -155,7 +155,7 @@ function render_smart_disk(data) {
   html += '<tr><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Device</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Health</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Temp</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Reallocated</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Power Hours</th></tr>';
   drives.forEach(d => {
     const healthColor = d.health === 'PASSED' ? 'var(--green)' : d.health === 'FAILED' ? 'var(--red)' : 'var(--text-dim)';
-    const reallocColor = (d.reallocated || 0) > 0 ? 'var(--yellow)' : 'var(--text)';
+    const reallocColor = (d.reallocated || 0) > 0 ? 'var(--amber)' : 'var(--text)';
     html += '<tr>';
     html += '<td style="padding:0.2rem 0.4rem;color:var(--text);white-space:nowrap">' + d.device + '</td>';
     html += '<td style="padding:0.2rem 0.4rem;color:' + healthColor + '">' + d.health + '</td>';
