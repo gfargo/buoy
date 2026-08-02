@@ -1,5 +1,7 @@
 """Tests for Buoy collectors (using mocked data / demo collectors)."""
 
+import asyncio
+
 import pytest
 
 from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig
@@ -167,6 +169,59 @@ class TestDockerContainerNameValidation:
         assert _valid_name("a" * 200) is False
         assert _valid_name("has spaces") is False
         assert _valid_name("has;semicolon") is False
+
+
+class TestDockerListContainersCache:
+    """Tests for DockerCollector.list_containers() 5s TTL cache (SPEC §8.2)."""
+
+    @pytest.mark.asyncio
+    async def test_second_call_within_ttl_uses_cache(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll._fetch_containers = AsyncMock(return_value=[{"name": "grafana", "host_port": 3000}])
+
+        first = await coll.list_containers()
+        second = await coll.list_containers()
+
+        assert first == second
+        coll._fetch_containers.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cache_expires_after_ttl(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll._fetch_containers = AsyncMock(return_value=[{"name": "grafana", "host_port": 3000}])
+
+        await coll.list_containers()
+        coll._containers_cache_ts -= 6  # simulate TTL expiry
+        await coll.list_containers()
+
+        assert coll._fetch_containers.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_only_fetch_once(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll._fetch_containers = AsyncMock(return_value=[{"name": "grafana", "host_port": 3000}])
+
+        results = await asyncio.gather(
+            coll.list_containers(), coll.list_containers(), coll.list_containers()
+        )
+
+        assert all(r == results[0] for r in results)
+        coll._fetch_containers.assert_called_once()
 
 
 class TestDiskCollectorNvme:

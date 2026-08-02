@@ -200,7 +200,7 @@ async def api_stats(request: Request) -> JSONResponse:
         system_coll.collect() if system_coll else _empty_system(),
         docker_coll.collect_summary() if docker_coll else _empty_docker(),
         disk_coll.collect_summary() if disk_coll else _empty_disk(),
-        top_services(_config, is_tailscale),
+        top_services(_config, is_tailscale, collector=docker_coll),
         return_exceptions=True,
     )
 
@@ -251,7 +251,7 @@ async def api_services(request: Request) -> JSONResponse:
     from buoy.services import discover_services
 
     is_tailscale = ".ts.net" in request.headers.get("host", "")
-    data = await discover_services(_config, is_tailscale)
+    data = await discover_services(_config, is_tailscale, collector=_collectors.get("docker"))
     return JSONResponse(data)
 
 
