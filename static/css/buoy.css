@@ -209,7 +209,7 @@ header .uptime span { color: var(--green); }
 .fleet-node.alert-warn .fn-dot { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 .fleet-node.alert-crit .fn-dot { background: var(--red); box-shadow: 0 0 6px var(--red); }
 .fn-alert-badge { font-size: 0.6rem; padding: 0.1rem 0.35rem; border-radius: 3px; font-weight: 600; white-space: nowrap; }
-.fn-alert-warn { background: var(--amber-dim, rgba(255,170,0,0.15)); color: var(--amber); border: 1px solid var(--amber); }
+.fn-alert-warn { background: var(--amber-dim); color: var(--amber); border: 1px solid var(--amber); }
 .fn-alert-crit { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
 
 /* ── Skeleton Loaders ────────────────────────────────── */
@@ -268,7 +268,7 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; background: 
 .ws-status-reconnecting {
   opacity: 1;
   transform: translateY(0);
-  background: var(--amber-dim, #7a5a20);
+  background: var(--amber-dim);
   color: var(--amber, #e8a838);
   border-bottom: 1px solid var(--amber, #e8a838);
   pointer-events: none;
