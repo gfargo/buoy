@@ -108,6 +108,16 @@ refresh:
   plugins_interval: 60       # Global minimum interval for server-side plugin collection (plugins may poll less often per their own manifest)
   image_updates_interval: 21600  # Image update check interval (6 hours)
 
+# ── Alerts ─────────────────────────────────────────────────
+# Optional: POST a JSON payload to a webhook when a threshold alert fires.
+# Supports Slack, Discord (generic HTTP endpoint), and any webhook receiver.
+# Leave webhook_url empty (or unset) to disable webhook dispatch entirely.
+# Also configurable via BUOY_ALERTS_WEBHOOK_URL environment variable.
+alerts:
+  webhook_url: ""            # e.g. https://hooks.slack.com/services/...
+                             # or https://discord.com/api/webhooks/...
+                             # or any generic HTTP POST endpoint
+
 # ── Plugins ────────────────────────────────────────────────
 # Built-in plugins are disabled by default. Enable and configure below.
 # Custom plugins go in the /plugins volume mount.
