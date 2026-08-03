@@ -364,8 +364,31 @@ async def api_plugin_js(request: Request) -> Response:
     return Response(combined, media_type="application/javascript")
 
 
+def _prometheus_enabled(config: BuoyConfig) -> bool:
+    """Return True only when the prometheus_exporter builtin plugin is enabled.
+
+    Mirrors the gate used in PluginManager._load_builtins: both
+    ``plugins.enabled`` (global toggle) and the per-plugin ``enabled`` flag
+    must be true.
+    """
+    if config is None or not config.plugins.enabled:
+        return False
+    entry = config.plugins.builtin.get("prometheus_exporter")
+    return bool(entry and entry.enabled)
+
+
 async def api_metrics(request: Request) -> Response:
-    """Prometheus /metrics endpoint (if prometheus_exporter plugin is enabled)."""
+    """Prometheus /metrics endpoint.
+
+    Only reachable when the ``prometheus_exporter`` builtin plugin is enabled
+    (``plugins.enabled=true`` AND ``plugins.builtin.prometheus_exporter.enabled=true``).
+    The route is not registered at all when the plugin is disabled; this
+    defensive guard handles the edge case of a test or direct call with a
+    disabled config.
+    """
+    if not _prometheus_enabled(_config):
+        return JSONResponse({"error": "not found"}, status_code=404)
+
     from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
 
     # Collect current stats
@@ -751,10 +774,14 @@ def create_app(config: BuoyConfig) -> Starlette:
         Route("/api/container/{name}", api_container_detail),
         Route("/api/container/{name}/logs", api_container_logs),
         Route("/api/container/{name}/restart", api_container_restart, methods=["POST"]),
-        Route("/metrics", api_metrics),
         WebSocketRoute("/ws", ws_endpoint),
         Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
     ]
+
+    # /metrics is only registered when the prometheus_exporter plugin is enabled.
+    # Inserting before the catch-all static mount keeps route ordering intact.
+    if _prometheus_enabled(config):
+        routes.insert(-2, Route("/metrics", api_metrics))
 
     # Same-origin by default (no CORS middleware = browsers block cross-origin
     # reads). Cross-origin access is opt-in via an explicit origin allowlist

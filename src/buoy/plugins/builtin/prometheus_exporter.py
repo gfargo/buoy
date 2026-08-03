@@ -14,7 +14,12 @@ class PrometheusExporterPlugin(Plugin):
     """Exposes a /metrics endpoint in Prometheus exposition format.
 
     This plugin is special: it doesn't have a frontend panel.
-    The server.py checks for this plugin and adds the /metrics route.
+    When enabled (``plugins.builtin.prometheus_exporter.enabled=true``),
+    ``create_app()`` registers the ``/metrics`` route.  The route is absent
+    entirely when the plugin is disabled, so the endpoint is never reachable
+    on installs that haven't opted in.  ``/metrics`` is also included in
+    ``PROTECTED_PATHS``, so it is always rate-limited and is auth-gated
+    whenever ``auth.enabled=true``.
     """
 
     manifest = PluginManifest(
