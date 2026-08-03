@@ -45,6 +45,9 @@ Homepage = "https://github.com/gfargo/buoy"
 Repository = "https://github.com/gfargo/buoy"
 Issues = "https://github.com/gfargo/buoy/issues"
 
+[tool.hatch.build.targets.wheel.force-include]
+"static" = "buoy/static"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

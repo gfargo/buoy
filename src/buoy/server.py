@@ -665,12 +665,19 @@ def _resolve_static_dir() -> Path:
 
     Checks (in order):
     1. /app/static — Docker container (Dockerfile copies static/ here)
-    2. Relative to source — local development (src/buoy/../../static)
+    2. Adjacent to this module — installed wheel (force-include maps static/ → buoy/static)
+    3. Repo root relative to source — local / editable dev install
     """
+    # 1. Docker container path
     docker_path = Path("/app/static")
     if docker_path.exists():
         return docker_path
-    # Development: relative to this file (src/buoy/server.py → src/buoy → src → project root)
+    # 2. Installed wheel: hatch force-include puts static/ at buoy/static (next to server.py)
+    packaged = Path(__file__).parent / "static"
+    if packaged.exists():
+        return packaged
+    # 3. Development / editable install: repo-root static/
+    #    (src/buoy/server.py → src/buoy → src → project root)
     return Path(__file__).parent.parent.parent / "static"
 
 
