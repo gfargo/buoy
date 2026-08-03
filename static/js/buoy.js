@@ -262,10 +262,13 @@ async function init() {
   // Called after the preset stylesheet swap so inline vars take precedence.
   applyCustomTheme(config.theme && config.theme.custom);
 
-  // Apply node.tier to the tier badge so gauges.js can read it via data-tier
+  // Apply node.tier to the tier badge so gauges.js can read it via data-tier.
+  // Also set textContent immediately so the badge shows the tier on first
+  // render rather than showing "--" until the first /api/stats response.
   const tierTag = document.getElementById('tier-tag');
   if (tierTag && config.node && config.node.tier) {
     tierTag.dataset.tier = config.node.tier;
+    tierTag.textContent = config.node.tier;
   }
 
   // Night mode
