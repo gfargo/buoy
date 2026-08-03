@@ -224,9 +224,7 @@ class PluginManager:
         candidates = [
             obj
             for _name, obj in inspect.getmembers(module, inspect.isclass)
-            if issubclass(obj, Plugin)
-            and obj is not Plugin
-            and obj.__module__ == module_name
+            if issubclass(obj, Plugin) and obj is not Plugin and obj.__module__ == module_name
         ]
         if not candidates:
             return None
