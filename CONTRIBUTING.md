@@ -109,9 +109,24 @@ See [docs/plugins.md](docs/plugins.md) for the full guide.
 
 - Keep PRs focused (one concern per PR)
 - Include tests for new functionality
-- Update `CHANGELOG.md` under "Unreleased"
-- Don't bump the version (maintainer handles releases)
+- Use [Conventional Commits](https://www.conventionalcommits.org/) for your commit messages / PR title
+  (`feat:`, `fix:`, `chore:`, etc.) — [release-please](https://github.com/googleapis/release-please)
+  uses these to generate `CHANGELOG.md` and pick the next version automatically. `feat:` → minor bump,
+  `fix:` → patch bump, `feat!:`/`BREAKING CHANGE:` → major bump.
+- Don't hand-edit `CHANGELOG.md` or bump the version yourself — release-please's release PR does both
 - CI must pass (tests + lint + format + Docker build)
+
+## Release Process
+
+Releases are automated via [release-please](https://github.com/googleapis/release-please):
+
+1. Every merge to `main` updates (or opens) a standing "chore(main): release X.Y.Z" PR with the
+   version bump (`pyproject.toml` + `src/buoy/__init__.py`) and a generated `CHANGELOG.md` entry.
+2. Merging that PR tags the release and publishes the GitHub Release.
+3. The tag push triggers `.github/workflows/release.yml`, which builds and pushes the multi-arch
+   image to `ghcr.io/gfargo/buoy` (`latest`, `X.Y.Z`, `X.Y`, and short-SHA tags).
+
+No manual version bumps or tags — just merge PRs with conventional commit messages.
 
 ## Reporting Issues
 
