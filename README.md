@@ -137,18 +137,30 @@ volumes:
 
 Buoy ships with built-in plugins (disabled by default):
 
-| Plugin | What it shows | Config needed |
-|--------|---------------|---------------|
-| GitHub | Notifications + open PRs | `token` |
-| UptimeKuma | Service health badges | `url` |
-| Loki | Recent error log entries | `url` |
-| Plane | Sprint/cycle progress | `api_key`, `url` |
-| Prometheus | `/metrics` endpoint | (none) |
-| SnapRAID | Parity sync age & disk health | `status_file` |
-| Jellyfin | Active streams, libraries, transcoding | `url`, `api_key` |
-| Portainer | Remote container stats | `url`, `api_key`, `endpoint_id` |
-| Smart Disk | SMART health for SATA + NVMe drives | (none) |
-| Cert Expiry | TLS certificate days remaining | (none) |
+| Plugin | Config key | What it shows | Config needed |
+|--------|------------|----------------|---------------|
+| GitHub | `github` | Notifications + open PRs | `token` |
+| UptimeKuma | `uptime_kuma` | Service health badges | `url` |
+| Loki | `loki` | Recent error log entries | `url` |
+| Plane | `plane` | Sprint/cycle progress | `api_key`, `url` |
+| Prometheus | `prometheus_exporter` | `/metrics` endpoint | (none) |
+| SnapRAID | `snapraid` | Parity sync age & disk health | `status_file` |
+| Jellyfin | `jellyfin` | Active streams, libraries, transcoding | `url`, `api_key` |
+| Portainer | `portainer` | Remote container stats | `url`, `api_key`, `endpoint_id` |
+| Smart Disk | `smart_disk` | SMART health for SATA + NVMe drives | (none) |
+| Cert Expiry | `cert_expiry` | TLS certificate days remaining | (none) |
+| Actual Budget | `actual_budget` | Monthly spend vs budget | `url`, `api_key`, `budget_sync_id` |
+| Backups | `backup_status` | Backup health & freshness | (none) |
+| Cron | `cron_health` | Recent cron job runs | (none) |
+| DNS Filter | `dns_filter` | Pi-hole / AdGuard Home filtering stats | `type`, `url` |
+| Photos | `immich` | Immich photo library stats | `url`, `api_key` |
+| Journal | `journal_errors` | Priority-error journal entries | (none) |
+| Proxmox | `proxmox` | Proxmox VE node + guest status | `url`, `token_id`, `token_secret`, `node` |
+| Speedtest | `speedtest` | Periodic internet speed tests with trend tracking | (none) |
+| Systemd | `systemd_health` | Systemd service health checks | (none) |
+| Tailscale | `tailscale` | Tailnet peer status | (none) |
+| Trigger.dev | `trigger_dev` | Task run status | `url`, `api_key`, `project_ref` |
+| WireGuard | `wireguard` | WireGuard tunnel peer status | (none) |
 
 **Custom plugins** are Python files dropped into the `/plugins` volume:
 

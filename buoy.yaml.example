@@ -246,3 +246,40 @@ plugins:
       cert_dir: /etc/caddy/certs   # directory scanned for *.crt / *.pem files
       warn_days: 30                # amber at or under this many days remaining
       critical_days: 7             # red at or under this many days remaining
+
+    # Backup health & freshness (scans a directory for recent backup files)
+    # Requires the backup directory mounted: - /path/to/backups:/backup:ro
+    backup_status:
+      enabled: false
+      backup_dir: /backup      # directory scanned for backup files
+      pattern: "*.sql.gz"      # glob pattern matching backup filenames
+      max_age_hours: 36        # warn if newest matching file is older than this
+      min_size_bytes: 100      # warn if newest matching file is smaller than this
+
+    # Recent cron job runs
+    # Requires privileged + pid: host deployment (see README) for host cron log access
+    cron_health:
+      enabled: false
+
+    # Priority-error journal entries (reads host journald via nsenter)
+    # Requires privileged + pid: host deployment (see README)
+    journal_errors:
+      enabled: false
+      since: "24 hours ago"   # journalctl --since window
+      max_entries: 20         # max entries to display
+
+    # Prometheus /metrics endpoint for scraping by an external Prometheus server
+    prometheus_exporter:
+      enabled: false
+
+    # Periodic internet speed tests with trend tracking
+    speedtest:
+      enabled: false
+      interval_hours: 6   # how often to run a speed test
+      server_id: ""       # optional Ookla server ID (empty = auto-select)
+
+    # Systemd service health checks
+    # Requires privileged + pid: host deployment (see README)
+    systemd_health:
+      enabled: false
+      units: []   # unit names to check; empty = auto-detect
