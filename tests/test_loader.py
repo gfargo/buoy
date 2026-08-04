@@ -104,6 +104,26 @@ class TestFindPluginClass:
     the module's __name__, which is required by the fixed implementation.
     """
 
+    @pytest.fixture(autouse=True)
+    def _sys_state_cleanup(self):
+        """Track sys.modules/sys.path mutations made by loaded test modules and undo them.
+
+        Generated modules register themselves in sys.modules under a fixed
+        name, and some also do their own sys.path.insert(0, tmp_path) to
+        import a sibling module. Left in place, those leak into later tests
+        (or a re-run of the same test) since pytest reuses the process.
+        """
+        self._loaded_names: list[str] = []
+        self._added_paths: list[str] = []
+        yield
+        import sys
+
+        for name in self._loaded_names:
+            sys.modules.pop(name, None)
+        for path in self._added_paths:
+            if path in sys.path:
+                sys.path.remove(path)
+
     def _load_module(self, tmp_path, name: str, src: str):
         """Write *src* to a .py file in tmp_path and return the loaded module."""
         import importlib.util
@@ -111,9 +131,11 @@ class TestFindPluginClass:
 
         py_file = tmp_path / f"{name}.py"
         py_file.write_text(src)
+        sys.modules.pop(name, None)  # guarantee a fresh load, even on re-runs
         spec = importlib.util.spec_from_file_location(name, py_file)
         mod = importlib.util.module_from_spec(spec)
         sys.modules[name] = mod
+        self._loaded_names.append(name)
         spec.loader.exec_module(mod)
         return mod
 
@@ -166,6 +188,10 @@ class TestFindPluginClass:
         )
         alpha_py = tmp_path / "alpha_plugin_mod.py"
         alpha_py.write_text(alpha_src)
+        # The zebra module below inserts tmp_path onto sys.path and imports
+        # alpha_plugin_mod normally, registering both as process-wide state.
+        self._added_paths.append(str(tmp_path))
+        self._loaded_names.append("alpha_plugin_mod")
 
         # Build the module under test: imports AlphaPlugin AND defines ZebraPlugin.
         zebra_src = (
@@ -218,6 +244,10 @@ class TestFindPluginClass:
         )
         other_py = tmp_path / "other_plugin_mod.py"
         other_py.write_text(other_src)
+        # The module below inserts tmp_path onto sys.path and imports
+        # other_plugin_mod normally, registering both as process-wide state.
+        self._added_paths.append(str(tmp_path))
+        self._loaded_names.append("other_plugin_mod")
 
         # Module under test: only imports, defines nothing.
         import_only_src = (

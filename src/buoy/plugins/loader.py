@@ -216,9 +216,9 @@ class PluginManager:
         base class that merely subclasses Plugin without providing a manifest.
 
         If a module defines more than one manifest-bearing plugin class,
-        ``inspect.getmembers`` returns them in alphabetical order and the first
-        is returned.  The one-plugin-per-module contract makes this edge case
-        benign in practice.
+        ``inspect.getmembers`` returns them in alphabetical-by-name order and
+        the alphabetically first one is returned.  The one-plugin-per-module
+        contract makes this edge case benign in practice.
         """
         module_name = getattr(module, "__name__", None)
         candidates = [
