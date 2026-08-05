@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 PROTECTED_PATHS = {
     "/api/container/",  # prefix match — covers /restart, /logs, detail
     "/api/config/debug",
+    "/metrics",  # Prometheus scrape endpoint — rate-limited always; auth-gated when auth.enabled
 }
 
 # Rate limiting: track requests per IP for protected endpoints
