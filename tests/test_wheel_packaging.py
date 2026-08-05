@@ -10,6 +10,7 @@ in minimal environments that install only runtime deps).
 
 from __future__ import annotations
 
+import functools
 import glob
 import subprocess
 import sys
@@ -26,8 +27,13 @@ REPO_ROOT = Path(__file__).parent.parent
 # ---------------------------------------------------------------------------
 
 
+@functools.lru_cache(maxsize=1)
 def _pip_wheel_available() -> bool:
-    """Return True if we can build a wheel (hatchling build backend present)."""
+    """Return True if we can build a wheel (hatchling build backend present).
+
+    Cached because this runs at collection time via skipif; without caching,
+    every collection would spawn a `pip wheel --help` subprocess.
+    """
     try:
         import importlib.util
 
@@ -70,7 +76,8 @@ def test_wheel_contains_static_assets(tmp_path: Path) -> None:
     wheels = glob.glob(str(tmp_path / "buoy-*.whl"))
     assert wheels, "No buoy-*.whl produced by pip wheel"
 
-    names = zipfile.ZipFile(wheels[0]).namelist()
+    with zipfile.ZipFile(wheels[0]) as zf:
+        names = zf.namelist()
 
     assert "buoy/static/index.html" in names, (
         "buoy/static/index.html missing from wheel — "
