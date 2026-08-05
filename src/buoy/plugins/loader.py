@@ -204,11 +204,34 @@ class PluginManager:
 
     @staticmethod
     def _find_plugin_class(module) -> type[Plugin] | None:
-        """Find the first Plugin subclass in a module."""
-        for _name, obj in inspect.getmembers(module, inspect.isclass):
-            if issubclass(obj, Plugin) and obj is not Plugin:
-                return obj
-        return None
+        """Find the Plugin subclass a module defines.
+
+        Only classes *defined* in ``module`` itself are considered (guarded by
+        ``obj.__module__ == module.__name__``). This prevents picking up an
+        imported concrete plugin or a shared base class from another module.
+
+        Among the locally-defined candidates, a class that declares its own
+        ``manifest`` in its ``__dict__`` is preferred — this is the explicit
+        marker of a concrete plugin and distinguishes it from an intermediate
+        base class that merely subclasses Plugin without providing a manifest.
+
+        If a module defines more than one manifest-bearing plugin class,
+        ``inspect.getmembers`` returns them in alphabetical-by-name order and
+        the alphabetically first one is returned.  The one-plugin-per-module
+        contract makes this edge case benign in practice.
+        """
+        module_name = getattr(module, "__name__", None)
+        candidates = [
+            obj
+            for _name, obj in inspect.getmembers(module, inspect.isclass)
+            if issubclass(obj, Plugin) and obj is not Plugin and obj.__module__ == module_name
+        ]
+        if not candidates:
+            return None
+        # Prefer a class that explicitly declares its own manifest (concrete
+        # plugin), falling back to any candidate if none do.
+        marked = [obj for obj in candidates if "manifest" in obj.__dict__]
+        return (marked or candidates)[0]
 
     # ── Collection Loop ────────────────────────────────────────────────────────
 
