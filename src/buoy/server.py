@@ -781,7 +781,7 @@ def create_app(config: BuoyConfig) -> Starlette:
     # /metrics is only registered when the prometheus_exporter plugin is enabled.
     # Inserting before the catch-all static mount keeps route ordering intact.
     if _prometheus_enabled(config):
-        routes.insert(-2, Route("/metrics", api_metrics))
+        routes.insert(-1, Route("/metrics", api_metrics))
 
     # Same-origin by default (no CORS middleware = browsers block cross-origin
     # reads). Cross-origin access is opt-in via an explicit origin allowlist

@@ -58,9 +58,10 @@ def _config_plugin_disabled() -> BuoyConfig:
 
 
 def _make_client(config: BuoyConfig) -> TestClient:
+    # api_metrics reads server_module._config at call time (defensive guard),
+    # so it must be set before create_app() registers the route too.
     server_module._config = config
     app = create_app(config)
-    server_module._config = config
     return TestClient(app, raise_server_exceptions=False)
 
 
