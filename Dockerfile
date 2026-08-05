@@ -18,12 +18,12 @@ WORKDIR /app
 # Copy source + metadata together (hatchling reads src/buoy/__init__.py for version)
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
+# static/ must be present before `pip install` so hatchling's force-include
+# (which maps static/ → buoy/static in the wheel) can find it at build time.
+COPY static/ ./static/
 
 # Install the package (deps + buoy itself)
 RUN pip install --no-cache-dir .
-
-# Copy frontend assets
-COPY static/ ./static/
 COPY buoy.yaml.example ./buoy.yaml.example
 
 # Create plugin + data directories
