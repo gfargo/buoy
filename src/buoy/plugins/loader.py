@@ -111,19 +111,25 @@ class PluginManager:
                 pass
 
     async def collect_all_now(self) -> dict[str, dict]:
-        """Force-collect all plugins and return their data (for API response)."""
+        """Return current panel data for every registered plugin.
+
+        Plugins that have not completed their first collect() yet are reported
+        with status "pending" rather than omitted, so a slow or failing initial
+        collect surfaces as a pending/errored card instead of disappearing.
+        """
         result = {}
         for plugin_id, plugin in self._plugins.items():
-            if plugin_id in self._latest_data:
-                data = self._latest_data[plugin_id]
-                result[plugin_id] = {
-                    "id": plugin_id,
-                    "name": plugin.manifest.name,
-                    "icon": plugin.manifest.icon,
-                    "status": data.status,
-                    "summary": data.summary,
-                    "detail": data.detail,
-                }
+            data = self._latest_data.get(plugin_id)
+            if data is None:
+                data = PanelData(status="pending", summary="Collecting…")
+            result[plugin_id] = {
+                "id": plugin_id,
+                "name": plugin.manifest.name,
+                "icon": plugin.manifest.icon,
+                "status": data.status,
+                "summary": data.summary,
+                "detail": data.detail,
+            }
         return result
 
     def get_plugin_frontend_js(self) -> dict[str, str]:

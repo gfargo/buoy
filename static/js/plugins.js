@@ -60,6 +60,7 @@ function renderPluginCard(plugin) {
     warn: 'var(--amber)',
     error: 'var(--red)',
     disabled: 'var(--text-dim)',
+    pending: 'var(--text-dim)',
   }[plugin.status] || 'var(--text-dim)';
 
   // Check for custom renderer

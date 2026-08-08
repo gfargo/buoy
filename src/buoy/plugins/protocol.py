@@ -24,7 +24,7 @@ class PanelData:
     """Data returned by a plugin's collect() method.
 
     Attributes:
-        status: ok | warn | error | disabled
+        status: ok | warn | error | disabled | pending
         summary: Short text shown in compact view (e.g., "3 notifications")
         detail: Arbitrary dict passed to the frontend renderer
     """

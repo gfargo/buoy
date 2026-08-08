@@ -441,6 +441,24 @@ class TestPluginCollection:
         assert "another" in result
         assert result["another"]["icon"] == ""
 
+    @pytest.mark.asyncio
+    async def test_collect_all_now_includes_pending(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        # "another" has never completed a collect(), so it's missing from _latest_data
+        mgr._plugins = {"fake": FakePlugin(), "another": AnotherFakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok", summary="Fake data")}
+
+        result = await mgr.collect_all_now()
+
+        assert "fake" in result
+        assert result["fake"]["status"] == "ok"
+        assert "another" in result
+        assert result["another"]["name"] == "Another"
+        assert result["another"]["status"] == "pending"
+        assert result["another"]["detail"] == {}
+
 
 # =============================================================================
 # Frontend JS
