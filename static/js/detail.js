@@ -207,6 +207,21 @@ function renderUptimeBar(samples, hours) {
 }
 
 /**
+ * Convert an ISO timestamp into a human-readable age string (e.g. "3 days").
+ * Returns '' when the timestamp is missing, unparseable, or in the future
+ * (guards against the Docker zero-time sentinel and skewed inputs).
+ */
+function formatAge(iso) {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const days = Math.floor((Date.now() - then) / 86400000);
+  if (days < 0) return '';
+  if (days === 0) return 'today';
+  return days === 1 ? '1 day' : `${days} days`;
+}
+
+/**
  * Fetch and display detailed info for a single container.
  */
 async function inspectContainer(name) {
@@ -240,14 +255,15 @@ function renderContainerInspect(d, name) {
   const status = d.status || 'unknown';
   const statusDot = status === 'running' ? 'green' : status === 'exited' ? 'red' : 'amber';
   const image = d.image || '';
-  const started = d.started_at ? new Date(d.started_at).toLocaleString() : 'N/A';
+  const startedDate = d.started ? new Date(d.started) : null;
+  const started = startedDate && !Number.isNaN(startedDate.getTime()) ? startedDate.toLocaleString() : 'N/A';
   const restarts = d.restart_count ?? 0;
   const res = d.resources || {};
   const cpu = res.cpu_pct || 'N/A';
   const mem = res.mem_usage || 'N/A';
   const netIO = res.net_io || 'N/A';
   const blockIO = res.block_io || 'N/A';
-  const imageAge = d.image_age || '';
+  const imageAge = formatAge(d.image_created);
 
   // Find update_status from the containers list (already in ws data)
   const ctrData = (window._latestContainers || []).find(c => c.name === name);
