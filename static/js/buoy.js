@@ -271,6 +271,14 @@ async function init() {
     tierTag.textContent = config.node.tier;
   }
 
+  // Apply node.role (e.g. "Database Server") as a descriptive label next
+  // to the hostname. Hidden entirely when unset since it's optional.
+  const roleTag = document.getElementById('node-role');
+  if (roleTag && config.node && config.node.role) {
+    roleTag.textContent = config.node.role;
+    roleTag.style.display = '';
+  }
+
   // Night mode
   applyNightMode(config.features.night_mode);
   setInterval(() => applyNightMode(config.features.night_mode), 60000);
