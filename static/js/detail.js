@@ -310,7 +310,7 @@ function _updateBadge(status) {
  */
 async function restartContainer(name, btn) {
   if (!btn.classList.contains('confirm')) {
-    btn.textContent = '⚠ click again to confirm';
+    btn.textContent = '⚠ click again to confirm restart';
     btn.classList.add('confirm');
     setTimeout(() => {
       if (btn.classList.contains('confirm')) {
