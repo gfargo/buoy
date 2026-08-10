@@ -18,6 +18,7 @@ from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 @dataclass
 class PluginEntry:
     enabled: bool = False
+    refresh_interval: int | None = None
     settings: dict = field(default_factory=dict)
 
 
@@ -869,9 +870,9 @@ class TestPluginEnvInjection:
 # =============================================================================
 
 
-def _make_config_with_refresh(plugins_interval: int):
+def _make_config_with_refresh(plugins_interval: int, builtin=None):
     """Build a minimal BuoyConfig with the given refresh.plugins_interval."""
-    config = _make_config()
+    config = _make_config(builtin=builtin)
     config.refresh = RefreshConfig(plugins_interval=plugins_interval)
     return config
 
@@ -933,6 +934,40 @@ class TestResolveInterval:
         """Default RefreshConfig (plugins_interval=60) does not affect manifest=60."""
         config = _make_config()  # no explicit refresh — uses BuoyConfig default
         config.refresh = RefreshConfig()  # default plugins_interval=60
+        mgr = PluginManager(config)
+        plugin = FakePlugin()  # manifest.refresh_interval = 60
+        assert mgr._resolve_interval(plugin) == 60
+
+    def test_override_raises_above_manifest(self):
+        """override=600, manifest=60, config floor=60 → 600 (override wins)."""
+        config = _make_config_with_refresh(
+            plugins_interval=60, builtin={"fake": PluginEntry(refresh_interval=600)}
+        )
+        mgr = PluginManager(config)
+        plugin = FakePlugin()  # manifest.refresh_interval = 60
+        assert mgr._resolve_interval(plugin) == 600
+
+    def test_override_below_floor_is_clamped(self):
+        """override=30, config floor=60 → 60 (global floor still wins over override)."""
+        config = _make_config_with_refresh(
+            plugins_interval=60, builtin={"fake": PluginEntry(refresh_interval=30)}
+        )
+        mgr = PluginManager(config)
+        plugin = FakePlugin()  # manifest.refresh_interval = 60
+        assert mgr._resolve_interval(plugin) == 60
+
+    def test_override_raises_low_manifest_plugin(self):
+        """manifest=30, override=120, config floor=60 → 120 (override replaces manifest base)."""
+        config = _make_config_with_refresh(
+            plugins_interval=60, builtin={"another": PluginEntry(refresh_interval=120)}
+        )
+        mgr = PluginManager(config)
+        plugin = AnotherFakePlugin()  # manifest.refresh_interval = 30
+        assert mgr._resolve_interval(plugin) == 120
+
+    def test_no_override_uses_manifest(self):
+        """No PluginEntry for this plugin id → falls back to manifest, unchanged behavior."""
+        config = _make_config_with_refresh(plugins_interval=60, builtin={})
         mgr = PluginManager(config)
         plugin = FakePlugin()  # manifest.refresh_interval = 60
         assert mgr._resolve_interval(plugin) == 60

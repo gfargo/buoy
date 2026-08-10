@@ -188,6 +188,23 @@ Once installed alongside Buoy, it's discovered automatically at startup — same
 built-ins (`plugins.builtin.weather.enabled: true` in `buoy.yaml`). Use the `buoy plugin` CLI to
 inspect what's available:
 
+Each plugin's author-set `refresh_interval` can be overridden per instance — useful for slow
+endpoints or APIs with tight rate limits — by setting `refresh_interval` (seconds) alongside
+`enabled` under `plugins.builtin.<id>` in `buoy.yaml`:
+
+```yaml
+plugins:
+  builtin:
+    github:
+      enabled: true
+      refresh_interval: 600 # override the plugin's default interval
+```
+
+The global `refresh.plugins_interval` still applies as a floor on top of the override — the
+effective interval is `max(refresh_interval, refresh.plugins_interval)`. This only applies to
+built-in and entry-point plugins (both gate on `plugins.builtin.<id>`); plugins loaded from the
+`/plugins` directory have no config entry and can't be overridden.
+
 ```bash
 buoy plugin list                 # every discoverable plugin: source, id, name, version, enabled
 buoy plugin info weather         # full manifest for one plugin

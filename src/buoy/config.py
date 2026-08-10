@@ -95,6 +95,9 @@ class RefreshConfig:
 @dataclass
 class PluginEntry:
     enabled: bool = False
+    # Per-instance override for manifest.refresh_interval (seconds); None means
+    # use the plugin's author-set default.
+    refresh_interval: int | None = None
     # Additional plugin-specific config stored as dict
     settings: dict[str, Any] = field(default_factory=dict)
 
@@ -238,8 +241,12 @@ def _parse_plugins(raw_plugins: dict[str, dict]) -> dict[str, PluginEntry]:
     entries = {}
     for plugin_id, cfg in raw_plugins.items():
         enabled = cfg.pop("enabled", False) if isinstance(cfg, dict) else False
+        raw_interval = cfg.pop("refresh_interval", None) if isinstance(cfg, dict) else None
+        refresh_interval = int(raw_interval) if raw_interval is not None else None
         settings = cfg if isinstance(cfg, dict) else {}
-        entries[plugin_id] = PluginEntry(enabled=enabled, settings=settings)
+        entries[plugin_id] = PluginEntry(
+            enabled=enabled, refresh_interval=refresh_interval, settings=settings
+        )
     return entries
 
 

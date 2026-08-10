@@ -102,6 +102,25 @@ class TestConfigFromYAML:
         assert config.plugins.builtin["github"].enabled is True
         assert config.plugins.builtin["github"].settings["token"] == "ghp_xxx"
 
+    def test_plugins_builtin_refresh_interval_override(self):
+        raw = {
+            "plugins": {
+                "builtin": {
+                    "github": {"enabled": True, "refresh_interval": 600, "token": "ghp_xxx"},
+                }
+            }
+        }
+        config = _build_config(raw)
+        assert config.plugins.builtin["github"].refresh_interval == 600
+        # Must not leak into settings passed to the plugin's configure().
+        assert "refresh_interval" not in config.plugins.builtin["github"].settings
+        assert config.plugins.builtin["github"].settings["token"] == "ghp_xxx"
+
+    def test_plugins_builtin_refresh_interval_defaults_to_none(self):
+        raw = {"plugins": {"builtin": {"github": {"enabled": True}}}}
+        config = _build_config(raw)
+        assert config.plugins.builtin["github"].refresh_interval is None
+
     def test_theme_preset_light(self):
         config = _build_config({"theme": {"preset": "light"}})
         assert config.theme.preset == "light"

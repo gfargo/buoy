@@ -315,17 +315,16 @@ class PluginManager:
         Returns a list of dicts (one per unique plugin id, later sources win
         on collision, mirroring ``start()``'s builtin < entrypoint < dir
         precedence): id, name, icon, description, version, config_schema,
-        refresh_interval, source ("builtin" | "entrypoint" | "dir"), enabled.
+        refresh_interval, refresh_interval_override, source ("builtin" |
+        "entrypoint" | "dir"), enabled.
         """
         seen: dict[str, dict[str, Any]] = {}
 
         def _record(plugin_class: type[Plugin], source: str) -> None:
             plugin_id = plugin_class.manifest.id
-            if source == "dir":
-                enabled = True
-            else:
-                entry = config.plugins.builtin.get(plugin_id)
-                enabled = bool(entry and entry.enabled)
+            entry = None if source == "dir" else config.plugins.builtin.get(plugin_id)
+            enabled = True if source == "dir" else bool(entry and entry.enabled)
+            override = entry.refresh_interval if entry else None
             if plugin_id in seen:
                 print(
                     f"[buoy:plugins] '{plugin_id}' from {source} overrides a "
@@ -340,6 +339,7 @@ class PluginManager:
                 "version": manifest.version,
                 "config_schema": manifest.config_schema,
                 "refresh_interval": manifest.refresh_interval,
+                "refresh_interval_override": override,
                 "source": source,
                 "enabled": enabled,
             }
@@ -389,13 +389,22 @@ class PluginManager:
     def _resolve_interval(self, plugin: Plugin) -> int:
         """Resolve the effective collection interval for a plugin.
 
-        Uses the greater of the plugin's manifest interval and the global
-        ``refresh.plugins_interval`` config value.  This lets the global value
-        act as a floor that slows down collection (its documented purpose)
-        without ever shortening intentionally long intervals such as the
-        github plugin (300 s) or the prometheus_exporter sentinel (9999 s).
+        The base interval is the plugin's manifest interval, unless an
+        operator has set a per-plugin ``refresh_interval`` override under
+        ``plugins.builtin.<id>`` in config, in which case that override wins.
+        The greater of that base and the global ``refresh.plugins_interval``
+        config value is then used. This lets the global value act as a floor
+        that slows down collection (its documented purpose) without ever
+        shortening intentionally long intervals such as the github plugin
+        (300 s) or the prometheus_exporter sentinel (9999 s).
         """
-        return max(plugin.manifest.refresh_interval, self.config.refresh.plugins_interval)
+        entry = self.config.plugins.builtin.get(plugin.manifest.id)
+        base = (
+            entry.refresh_interval
+            if entry and entry.refresh_interval is not None
+            else plugin.manifest.refresh_interval
+        )
+        return max(base, self.config.refresh.plugins_interval)
 
     async def _collect_loop(self, plugin_id: str, plugin: Plugin):
         """Run a plugin's collect() on its configured interval, with error isolation."""
