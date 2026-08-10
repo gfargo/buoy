@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -103,20 +105,58 @@ class TailscalePlugin(Plugin):
         except (TimeoutError, FileNotFoundError, PermissionError, json.JSONDecodeError):
             return None
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_tailscale(data) {
-  const peers = (data.detail && data.detail.peers) || [];
-  if (!peers.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No peers</div>';
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:0.5rem">';
-  html += '<tr><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Peer</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Conn</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Status</th></tr>';
-  peers.slice(0, 20).forEach(p => {
-    const dot = p.online ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--red)">●</span>';
-    const conn = p.conn_type === 'direct' ? '<span style="color:var(--green)">direct</span>' : p.conn_type === 'relay' ? '<span style="color:var(--amber)">relay</span>' : '<span style="color:var(--text-dim)">—</span>';
-    const seen = p.last_seen ? '<span style="color:var(--text-dim)">' + new Date(p.last_seen).toLocaleTimeString() + '</span>' : '';
-    html += '<tr><td style="padding:0.2rem 0.4rem;color:var(--text)">' + p.name + (p.exit_node ? ' <span style="color:var(--amber)">exit</span>' : '') + '</td><td style="padding:0.2rem 0.4rem">' + conn + '</td><td style="padding:0.2rem 0.4rem">' + dot + seen + '</td></tr>';
-  });
-  html += '</table>';
-  return html;
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        peers = data.detail.get("peers") or []
+        if not peers:
+            return [panel.text("No peers", status="dim")]
+
+        conn_status = {"direct": "ok", "relay": "warn"}
+        rows = []
+        for p in peers[:20]:
+            name = p.get("name", "")
+            if p.get("exit_node"):
+                name += " (exit)"
+            conn_type = p.get("conn_type", "unknown")
+            seen_label = _format_relative_age(p.get("last_seen") or "")
+            rows.append(
+                [
+                    panel.cell(name),
+                    panel.cell(
+                        conn_type if conn_type != "unknown" else "—",
+                        status=conn_status.get(conn_type),
+                    ),
+                    panel.cell(
+                        "up" if p.get("online") else seen_label or "down",
+                        status="ok" if p.get("online") else "error",
+                    ),
+                ]
+            )
+        return [panel.table(["Peer", "Conn", "Status"], rows)]
+
+
+def _format_relative_age(last_seen: str) -> str:
+    """Format an RFC3339 LastSeen timestamp as a short relative age (e.g. "3m ago").
+
+    Falls back to "" on anything unparseable so a malformed/missing timestamp
+    degrades gracefully instead of surfacing a raw value.
+    """
+    if not last_seen:
+        return ""
+    try:
+        seen = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+        if seen.tzinfo is None:
+            seen = seen.replace(tzinfo=UTC)
+        seconds = max(0, (datetime.now(UTC) - seen).total_seconds())
+    except (ValueError, OverflowError):
+        return ""
+
+    if seconds < 60:
+        return "just now"
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    return f"{days}d ago"

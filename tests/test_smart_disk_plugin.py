@@ -146,8 +146,26 @@ Power On Hours:                     3500
             result = await plugin.collect()
         assert result.status == "disabled"
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_no_drives_shows_text(self):
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_smart_disk" in js
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError("smartctl")):
+            result = await plugin.collect()
+        blocks = plugin.render(result)
+        assert blocks == [{"type": "text", "value": "No drives detected", "status": "dim"}]
+
+    @pytest.mark.asyncio
+    async def test_render_produces_table_with_status_colors(self):
+        plugin = self._make_plugin(drives=["/dev/sda"])
+        proc = self._make_proc(self.SATA_WARN)
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "table"
+        assert blocks[0]["columns"] == ["Device", "Health", "Temp", "Reallocated", "Power Hours"]
+        row = blocks[0]["rows"][0]
+        assert row[1]["value"] == "PASSED"
+        assert row[1]["status"] == "ok"
+        assert row[3]["value"] == 7
+        assert row[3]["status"] == "warn"

@@ -83,8 +83,37 @@ class TestWireGuardPlugin:
         assert result.summary == "1/2 peers up"
         assert result.detail["peers"][1]["stale"] is True
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_table_with_stale_status(self):
+        plugin = self._make_plugin(stale_seconds=180)
+        now = int(time.time())
+        dump = (
+            b"privkey\tpubkey\t51820\toff\n"
+            + f"AAAAAAAAAAAA\t(none)\t1.2.3.4:51820\t10.0.0.2/32\t{now - 30}\t1024\t2048\t0\n".encode()
+            + b"BBBBBBBBBBBB\t(none)\t(none)\t10.0.0.3/32\t0\t0\t0\t0\n"  # never handshaked
+        )
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(dump, b""))
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "table"
+        rows = blocks[0]["rows"]
+        assert rows[0][0]["status"] == "ok"
+        assert rows[0][0]["mono"] is True
+        assert rows[1][2]["value"] == "never"
+        assert rows[1][0]["status"] == "error"
+        assert rows[0][3]["value"] == "1.0K / 2.0K"
+
+    @pytest.mark.asyncio
+    async def test_render_no_peers_shows_text(self):
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_wireguard" in js
+        iface_line = b"privkey123\tpubkey456\t51820\toff\n"
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(iface_line, b""))
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks == [{"type": "text", "value": "No peers configured", "status": "dim"}]

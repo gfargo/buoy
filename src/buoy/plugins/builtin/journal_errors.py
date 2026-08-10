@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -76,18 +77,17 @@ class JournalErrorsPlugin(Plugin):
         except (TimeoutError, FileNotFoundError):
             return []
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_journal_errors(data) {
-  const entries = data.detail.entries || [];
-  if (!entries.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No journal errors in 24h</div>';
-  let html = '<div style="max-height:200px;overflow-y:auto">';
-  html += '<table style="width:100%;border-collapse:collapse;font-size:0.5rem">';
-  html += '<tr><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Time</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Unit</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Message</th></tr>';
-  entries.forEach(e => {
-    html += '<tr><td style="padding:0.2rem 0.4rem;color:var(--text-dim);white-space:nowrap">' + e.time.slice(4) + '</td><td style="padding:0.2rem 0.4rem;color:var(--text);white-space:nowrap">' + e.unit + '</td><td style="padding:0.2rem 0.4rem;color:var(--red);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + e.message + '</td></tr>';
-  });
-  html += '</table></div>';
-  return html;
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        entries = data.detail.get("entries") or []
+        if not entries:
+            return [panel.text("No journal errors in 24h", status="dim")]
+
+        rows = [
+            [
+                panel.cell(e.get("time", "")[4:], status="dim"),
+                panel.cell(e.get("unit", "")),
+                panel.cell(e.get("message", ""), status="error", truncate=True),
+            ]
+            for e in entries
+        ]
+        return [panel.table(["Time", "Unit", "Message"], rows)]

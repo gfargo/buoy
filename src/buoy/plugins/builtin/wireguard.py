@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -74,30 +75,41 @@ class WireGuardPlugin(Plugin):
         except (TimeoutError, FileNotFoundError):
             return None
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_wireguard(data) {
-  const peers = data.detail.peers || [];
-  if (!peers.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No peers configured</div>';
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:0.5rem">';
-  html += '<tr><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Peer</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Endpoint</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Handshake</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">RX/TX</th></tr>';
-  peers.forEach(p => {
-    const color = p.stale ? 'var(--red)' : 'var(--green)';
-    const age = p.handshake_age < 0 ? 'never' : (p.handshake_age < 60 ? p.handshake_age + 's' : Math.floor(p.handshake_age/60) + 'm');
-    html += '<tr><td style="padding:0.2rem 0.4rem;color:' + color + ';font-family:monospace">' + p.public_key + '</td>';
-    html += '<td style="padding:0.2rem 0.4rem;color:var(--text-dim)">' + p.endpoint + '</td>';
-    html += '<td style="padding:0.2rem 0.4rem;color:' + color + '">' + age + '</td>';
-    html += '<td style="padding:0.2rem 0.4rem;color:var(--text-dim)">' + _fmt_bytes(p.rx) + ' / ' + _fmt_bytes(p.tx) + '</td></tr>';
-  });
-  html += '</table>';
-  return html;
-}
-function _fmt_bytes(n) {
-  if (n < 1024) return n + 'B';
-  if (n < 1048576) return (n/1024).toFixed(1) + 'K';
-  return (n/1048576).toFixed(1) + 'M';
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        peers = data.detail.get("peers") or []
+        if not peers:
+            return [panel.text("No peers configured", status="dim")]
+
+        rows = []
+        for p in peers:
+            stale = p.get("stale")
+            status = "error" if stale else "ok"
+            age = p.get("handshake_age", -1)
+            if age < 0:
+                age_label = "never"
+            elif age < 60:
+                age_label = f"{age}s"
+            else:
+                age_label = f"{age // 60}m"
+            rows.append(
+                [
+                    panel.cell(p.get("public_key", ""), status=status, mono=True),
+                    panel.cell(p.get("endpoint", ""), status="dim"),
+                    panel.cell(age_label, status=status),
+                    panel.cell(
+                        f"{_fmt_bytes(p.get('rx', 0))} / {_fmt_bytes(p.get('tx', 0))}", status="dim"
+                    ),
+                ]
+            )
+        return [panel.table(["Peer", "Endpoint", "Handshake", "RX/TX"], rows)]
+
+
+def _fmt_bytes(n: int) -> str:
+    if n < 1024:
+        return f"{n}B"
+    if n < 1048576:
+        return f"{n / 1024:.1f}K"
+    return f"{n / 1048576:.1f}M"
 
 
 def _parse_peers(dump: str, stale_seconds: int) -> list[dict]:

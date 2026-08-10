@@ -6,6 +6,7 @@ import json
 import urllib.request
 from datetime import UTC, datetime, timedelta
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 _MAX_RUNS = 50
@@ -103,30 +104,42 @@ class TriggerDevPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_trigger_dev(data) {
-  const d = data.detail || {};
-  const recent = d.recent || [];
-  const lastFailed = d.last_failed;
-  const failures = d.failures_24h || 0;
-  const queued = d.queued || 0;
-  const statusColor = data.status === 'ok' ? 'var(--green)' : data.status === 'warn' ? 'var(--amber)' : 'var(--red)';
-  let html = '<div style="font-size:0.6rem;margin-bottom:0.4rem">';
-  html += '<span style="color:' + statusColor + '">' + data.summary + '</span>';
-  if (lastFailed) {
-    html += '<span style="color:var(--text-dim);margin-left:0.5rem">last failed: <strong style="color:var(--amber)">' + lastFailed + '</strong></span>';
-  }
-  if (queued > 0) {
-    html += '<span style="color:var(--cyan);margin-left:0.5rem">' + queued + ' queued</span>';
-  }
-  html += '</div>';
-  if (recent.length) {
-    html += '<div style="display:flex;flex-wrap:wrap;gap:0.25rem">' + recent.slice(0, 10).map(r => {
-      const c = r.status === 'COMPLETED' ? 'var(--green)' : (r.status === 'FAILED' || r.status === 'CRASHED') ? 'var(--red)' : (r.status === 'QUEUED' || r.status === 'EXECUTING') ? 'var(--cyan)' : 'var(--text-dim)';
-      return '<div style="font-size:0.5rem;padding:0.1rem 0.35rem;border:1px solid var(--border);border-radius:3px;color:' + c + '">' + r.task + '</div>';
-    }).join('') + '</div>';
-  }
-  return html || '<div style="font-size:0.6rem;color:var(--text-dim)">No data</div>';
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        d = data.detail or {}
+        recent = d.get("recent") or []
+        last_failed = d.get("last_failed")
+        queued = d.get("queued") or 0
+
+        blocks: list[dict] = []
+        kv_rows = []
+        if last_failed:
+            kv_rows.append({"label": "Last failed", "value": last_failed, "status": "warn"})
+        if queued > 0:
+            kv_rows.append({"label": "Queued", "value": str(queued), "status": "info"})
+        if kv_rows:
+            blocks.append(panel.keyvalue(kv_rows))
+
+        if not recent:
+            blocks.append(panel.text("No data", status="dim"))
+            return blocks
+
+        run_status_map = {
+            "COMPLETED": "ok",
+            "FAILED": "error",
+            "CRASHED": "error",
+            "QUEUED": "info",
+            "EXECUTING": "info",
+        }
+        blocks.append(
+            panel.badges(
+                [
+                    panel.badge(
+                        r.get("task", ""),
+                        status=run_status_map.get(r.get("status"), "dim"),
+                        dot=False,
+                    )
+                    for r in recent[:10]
+                ]
+            )
+        )
+        return blocks

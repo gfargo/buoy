@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -71,18 +72,17 @@ class SystemdHealthPlugin(Plugin):
         except (FileNotFoundError, TimeoutError):
             return "unknown"
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_systemd_health(data) {
-  const units = data.detail.units || [];
-  if (!units.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No units configured</div>';
-  const stateColor = s => s === 'active' ? 'var(--green)' : s === 'failed' ? 'var(--red)' : 'var(--amber)';
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:0.5rem">';
-  html += '<tr><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Unit</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">State</th></tr>';
-  units.forEach(u => {
-    html += '<tr><td style="padding:0.2rem 0.4rem;color:var(--text);white-space:nowrap">' + u.unit + '</td><td style="padding:0.2rem 0.4rem;color:' + stateColor(u.state) + '">' + u.state + '</td></tr>';
-  });
-  html += '</table>';
-  return html;
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        units = data.detail.get("units") or []
+        if not units:
+            return [panel.text("No units configured", status="dim")]
+
+        state_status = {"active": "ok", "failed": "error"}
+        rows = [
+            [
+                panel.cell(u.get("unit", "")),
+                panel.cell(u.get("state", ""), status=state_status.get(u.get("state"), "warn")),
+            ]
+            for u in units
+        ]
+        return [panel.table(["Unit", "State"], rows)]

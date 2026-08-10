@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -146,28 +147,31 @@ class SmartDiskPlugin(Plugin):
             "power_hours": power_hours,
         }
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_smart_disk(data) {
-  const drives = data.detail.drives || [];
-  if (!drives.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No drives detected</div>';
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:0.5rem">';
-  html += '<tr><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Device</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Health</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Temp</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Reallocated</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Power Hours</th></tr>';
-  drives.forEach(d => {
-    const healthColor = d.health === 'PASSED' ? 'var(--green)' : d.health === 'FAILED' ? 'var(--red)' : 'var(--text-dim)';
-    const reallocColor = (d.reallocated || 0) > 0 ? 'var(--amber)' : 'var(--text)';
-    html += '<tr>';
-    html += '<td style="padding:0.2rem 0.4rem;color:var(--text);white-space:nowrap">' + d.device + '</td>';
-    html += '<td style="padding:0.2rem 0.4rem;color:' + healthColor + '">' + d.health + '</td>';
-    html += '<td style="padding:0.2rem 0.4rem;color:var(--text)">' + (d.temp != null ? d.temp + '°C' : '—') + '</td>';
-    html += '<td style="padding:0.2rem 0.4rem;color:' + reallocColor + '">' + (d.reallocated != null ? d.reallocated : '—') + '</td>';
-    html += '<td style="padding:0.2rem 0.4rem;color:var(--text-dim)">' + (d.power_hours != null ? d.power_hours + 'h' : '—') + '</td>';
-    html += '</tr>';
-  });
-  html += '</table>';
-  return html;
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        drives = data.detail.get("drives") or []
+        if not drives:
+            return [panel.text("No drives detected", status="dim")]
+
+        rows = []
+        for d in drives:
+            health = d.get("health")
+            health_status = "ok" if health == "PASSED" else "error" if health == "FAILED" else "dim"
+            reallocated = d.get("reallocated")
+            realloc_status = "warn" if (reallocated or 0) > 0 else None
+            temp = d.get("temp")
+            power_hours = d.get("power_hours")
+            rows.append(
+                [
+                    panel.cell(d.get("device", "")),
+                    panel.cell(health, status=health_status),
+                    panel.cell(f"{temp}°C" if temp is not None else "—"),
+                    panel.cell(
+                        reallocated if reallocated is not None else "—", status=realloc_status
+                    ),
+                    panel.cell(f"{power_hours}h" if power_hours is not None else "—", status="dim"),
+                ]
+            )
+        return [panel.table(["Device", "Health", "Temp", "Reallocated", "Power Hours"], rows)]
 
 
 # ── Parsing helpers ────────────────────────────────────────────────────────────

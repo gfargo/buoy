@@ -7,6 +7,7 @@ import ssl
 import urllib.request
 from datetime import date
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -93,18 +94,28 @@ class ActualBudgetPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_actual_budget(data) {
-  if (!data.detail || data.status === 'disabled') return '<div style="font-size:0.6rem;color:var(--text-dim)">Not configured</div>';
-  const d = data.detail;
-  const color = d.pct > 90 ? 'var(--amber)' : 'var(--cyan)';
-  const cats = (d.categories || []).filter(c => c.budgeted > 0);
-  const rows = cats.slice(0, 8).map(c => {
-    const cp = c.budgeted > 0 ? Math.min(100, Math.round((c.spent / c.budgeted) * 100)) : 0;
-    const cc = cp > 90 ? 'var(--red)' : 'var(--text-dim)';
-    return '<div style="display:flex;justify-content:space-between;font-size:0.5rem;margin-bottom:0.2rem"><span style="color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%">' + c.name + '</span><span style="color:' + cc + '">' + cp + '%</span></div>';
-  }).join('');
-  return '<div style="padding:0.4rem 0"><div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-bottom:0.4rem"><div style="height:100%;width:' + Math.min(100, d.pct) + '%;background:' + color + ';border-radius:3px"></div></div><div style="font-size:0.55rem;color:var(--text-dim);margin-bottom:0.5rem">' + d.month + ' · $' + d.spent.toFixed(2) + ' of $' + d.budgeted.toFixed(2) + '</div>' + rows + '</div>';
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        if not data.detail or data.status == "disabled":
+            return [panel.text("Not configured", status="dim")]
+
+        d = data.detail
+        pct = d.get("pct", 0)
+        bar_status = "warn" if pct > 90 else "info"
+        label = f"{d.get('month', '')} · ${d.get('spent', 0):.2f} of ${d.get('budgeted', 0):.2f}"
+        blocks: list[dict] = [panel.bar(pct, label=label, status=bar_status)]
+
+        cats = [c for c in (d.get("categories") or []) if c.get("budgeted", 0) > 0]
+        rows = []
+        for c in cats[:8]:
+            budgeted = c.get("budgeted", 0)
+            cat_pct = min(100, round((c.get("spent", 0) / budgeted) * 100)) if budgeted > 0 else 0
+            rows.append(
+                {
+                    "label": c.get("name", ""),
+                    "value": f"{cat_pct}%",
+                    "status": "error" if cat_pct > 90 else "dim",
+                }
+            )
+        if rows:
+            blocks.append(panel.keyvalue(rows))
+        return blocks

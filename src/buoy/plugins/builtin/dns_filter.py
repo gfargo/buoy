@@ -7,6 +7,7 @@ import json
 import ssl
 import urllib.request
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 _WARN_PCT = 25.0
@@ -133,18 +134,28 @@ class DnsFilterPlugin(Plugin):
             },
         )
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_dns_filter(data) {
-  const d = data.detail || {};
-  const top = d.top_blocked || [];
-  let html = '<div style="font-size:0.6rem;margin-bottom:0.4rem"><span style="color:var(--cyan)">' + (d.queries || 0).toLocaleString() + '</span> queries &nbsp;·&nbsp; <span style="color:var(--amber)">' + (d.pct || 0) + '%</span> blocked (' + (d.blocked || 0).toLocaleString() + ')</div>';
-  if (top.length) {
-    html += '<div style="font-size:0.55rem;color:var(--text-dim);margin-bottom:0.2rem">Top blocked domains</div>';
-    html += top.slice(0, 5).map(function(t) {
-      return '<div style="display:flex;justify-content:space-between;font-size:0.5rem;padding:0.15rem 0;border-bottom:1px solid var(--border)"><span>' + t.domain + '</span><span style="color:var(--text-dim)">' + t.count + '</span></div>';
-    }).join('');
-  }
-  return html;
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        d = data.detail or {}
+        top = d.get("top_blocked") or []
+        blocks: list[dict] = [
+            panel.keyvalue(
+                [
+                    {"label": "Queries", "value": f"{d.get('queries', 0):,}", "status": "info"},
+                    {
+                        "label": "Blocked",
+                        "value": f"{d.get('pct', 0)}% ({d.get('blocked', 0):,})",
+                        "status": "warn",
+                    },
+                ]
+            )
+        ]
+        if top:
+            blocks.append(
+                panel.list_(
+                    [
+                        panel.list_item(t.get("domain", ""), secondary=str(t.get("count", "")))
+                        for t in top[:5]
+                    ]
+                )
+            )
+        return blocks

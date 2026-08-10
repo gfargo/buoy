@@ -175,6 +175,21 @@ class WeatherPlugin(Plugin):
         return PanelData(status="ok", summary="72°F, Sunny")
 ```
 
+For a richer panel than the default key-value grid, implement `render()` and return blocks from
+`buoy.plugins.panel` (`text`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`) — trusted,
+escaping frontend code turns them into HTML, so untrusted data (names, log lines, URLs) can never
+inject markup. `frontend_js()` (raw JS executed via `new Function()`) is still supported but is a
+deprecated escape hatch — it can't run under a strict CSP and requires escaping every value by hand.
+
+```python
+from buoy.plugins import panel
+
+class WeatherPlugin(Plugin):
+    ...
+    def render(self, data: PanelData) -> list[dict] | None:
+        return [panel.keyvalue([("Temp", "72°F"), ("Condition", "Sunny")])]
+```
+
 **Distributable plugins** can also be shipped as a pip-installable package. Register your `Plugin`
 subclass (or a module containing one) under the `buoy.plugins` entry-point group:
 
@@ -187,6 +202,23 @@ weather = "buoy_plugin_weather:WeatherPlugin"
 Once installed alongside Buoy, it's discovered automatically at startup — same enable gate as
 built-ins (`plugins.builtin.weather.enabled: true` in `buoy.yaml`). Use the `buoy plugin` CLI to
 inspect what's available:
+
+Each plugin's author-set `refresh_interval` can be overridden per instance — useful for slow
+endpoints or APIs with tight rate limits — by setting `refresh_interval` (seconds) alongside
+`enabled` under `plugins.builtin.<id>` in `buoy.yaml`:
+
+```yaml
+plugins:
+  builtin:
+    github:
+      enabled: true
+      refresh_interval: 600 # override the plugin's default interval
+```
+
+The global `refresh.plugins_interval` still applies as a floor on top of the override — the
+effective interval is `max(refresh_interval, refresh.plugins_interval)`. This only applies to
+built-in and entry-point plugins (both gate on `plugins.builtin.<id>`); plugins loaded from the
+`/plugins` directory have no config entry and can't be overridden.
 
 ```bash
 buoy plugin list                 # every discoverable plugin: source, id, name, version, enabled

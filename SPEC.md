@@ -343,6 +343,9 @@ class GitHubPlugin(Plugin):
         """
 ```
 
+> [!NOTE]
+> **As shipped**, `frontend_js()` is a deprecated escape hatch, not the recommended custom-rendering path — see §4.4. All built-in plugins implement `render()` instead, returning a declarative panel spec (`buoy.plugins.panel`: `text`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`) that trusted frontend code (`static/js/panel.js`) turns into HTML, escaping every value itself. This closes the XSS surface `frontend_js()` had (a plugin's raw JS/HTML string, `eval`'d via `new Function()`) and is what makes a strict CSP for the dashboard possible. `frontend_js()` still works for third-party plugins that need it.
+
 ### 4.2 Plugin Lifecycle
 
 1. **Discovery:** On startup, scan three sources in order — `buoy.plugins.builtin` package, then
@@ -385,6 +388,9 @@ Plugins can either:
 - **Custom renderer:** Plugin provides a `frontend_js()` method → hub injects the JS and calls the render function with the plugin's data
 
 This keeps the barrier low (no JS needed for simple plugins) while allowing rich custom UIs.
+
+> [!NOTE]
+> **As shipped**, a third option sits between these two and is the recommended path: **declarative panel renderer** — the plugin implements `render(data) -> list[dict] | None` and returns blocks built from `buoy.plugins.panel` helpers. `PluginManager.collect_all_now()` includes the rendered spec as a `panel` field on the existing `/api/plugins` payload (no new endpoint). `static/js/panel.js` is the only code that turns plugin data into HTML, escaping every value (`escapeHtml`/`safeUrl`) so a plugin can't inject markup — this is what closed the `frontend_js()`/`new Function()` XSS surface for all 19 built-ins that used to ship custom JS. `frontend_js()` remains supported as a fallback for plugins that still need it (checked when `panel` is absent), but is deprecated.
 
 ---
 
@@ -889,7 +895,7 @@ jobs:
 
 ## 13. Open Source Readiness Checklist
 
-> Status as of v2.1.0: repo prep is done except CODE_OF_CONDUCT.md, issue templates, and GitHub Discussions; the `docs/*.md` files in §13.2 were never created (README.md and CONTRIBUTING.md cover that ground instead). Checkboxes below reflect actual repo state, verified against the filesystem.
+> Status as of v2.1.0: repo prep is done except GitHub Discussions; the `docs/*.md` files in §13.2 were never created (README.md and CONTRIBUTING.md cover that ground instead). Checkboxes below reflect actual repo state, verified against the filesystem.
 
 ### 13.1 Repository Prep
 
@@ -898,8 +904,8 @@ jobs:
 - [x] Write public README with quick-start, feature list (no screenshots yet)
 - [x] Add CONTRIBUTING.md (dev setup, PR process, architecture overview)
 - [x] Add CHANGELOG.md (start from v2.0.0)
-- [ ] Add CODE_OF_CONDUCT.md
-- [ ] Set up GitHub issue templates (bug report, feature request)
+- [x] Add CODE_OF_CONDUCT.md
+- [x] Set up GitHub issue templates (bug report, feature request)
 - [ ] Set up GitHub Discussions for Q&A
 - [x] Create release workflow (tag → build → push to GHCR + create GitHub Release)
 

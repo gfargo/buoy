@@ -7,6 +7,7 @@ import ssl
 import urllib.request
 from datetime import date
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -87,11 +88,10 @@ class PlanePlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="API error", detail={"error": str(e)})
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_plane(data) {
-  if (!data.detail.cycle) return '<div style="font-size:0.6rem;color:var(--text-dim)">No active cycle</div>';
-  const d = data.detail;
-  return '<div style="padding:0.5rem 0"><div style="font-family:Outfit,sans-serif;font-weight:600;font-size:0.75rem;color:var(--text-bright);margin-bottom:0.4rem">' + d.cycle + '</div><div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-bottom:0.4rem"><div style="height:100%;width:' + d.pct + '%;background:var(--cyan);border-radius:3px"></div></div><div style="font-size:0.55rem;color:var(--text-dim);display:flex;gap:1rem"><span>' + d.completed_issues + '/' + d.total_issues + ' items</span><span>' + d.pct + '%</span><span>' + d.days_left + 'd left</span></div></div>';
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        d = data.detail or {}
+        if not d.get("cycle"):
+            return [panel.text("No active cycle", status="dim")]
+
+        label = f"{d.get('completed_issues', 0)}/{d.get('total_issues', 0)} items · {d.get('pct', 0)}% · {d.get('days_left', 0)}d left"
+        return [panel.text(d["cycle"]), panel.bar(d.get("pct", 0), label=label, status="info")]

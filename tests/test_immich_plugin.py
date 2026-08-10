@@ -124,8 +124,21 @@ class TestImmichPlugin:
         assert result.status == "warn"
         assert result.detail["disk_pct"] == 85.0
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_bar_and_keyvalue(self):
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_immich" in js
+        stats = self._stats_response(photos=1234, videos=56)
+        storage = self._storage_response(pct=85.0)
+
+        with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(stats, storage)):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "keyvalue"
+        assert blocks[0]["rows"][0]["value"] == "1,234"
+        assert blocks[1] == {
+            "type": "bar",
+            "pct": 85.0,
+            "label": "85.0% disk used · 49.4 GiB / 97.9 GiB",
+            "status": "warn",
+        }

@@ -4,9 +4,26 @@
  */
 
 import { escapeHtml } from './escape.js';
+import { renderPanelSpec } from './panel.js';
 
 let pluginRenderers = {};
 let jsLoaded = false;
+
+/**
+ * Convert an epoch-seconds timestamp into a human-readable "ago" string
+ * (e.g. "3m ago", "2h ago"). Returns '' when missing or in the future
+ * (guards against clock skew between server and browser).
+ */
+function formatAgo(epochSeconds) {
+  if (!epochSeconds) return '';
+  const ms = Date.now() - epochSeconds * 1000;
+  if (ms < 0) return 'just now';
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
 
 /**
  * Load custom plugin JS renderers from /api/plugins/js
@@ -63,17 +80,36 @@ function renderPluginCard(plugin) {
     pending: 'var(--text-dim)',
   }[plugin.status] || 'var(--text-dim)';
 
-  // Check for custom renderer
-  const renderFn = pluginRenderers[`render_${plugin.id}`];
+  // Prefer the declarative panel spec (trusted, escaping renderer). Fall back
+  // to legacy custom JS (new Function, deprecated) only when a plugin still
+  // ships frontend_js() instead, then to the generic key-value renderer.
   let innerHtml;
-  if (renderFn) {
-    try {
-      innerHtml = renderFn(plugin);
-    } catch (e) {
+  if (Array.isArray(plugin.panel) && plugin.panel.length) {
+    innerHtml = renderPanelSpec(plugin.panel);
+  } else {
+    const renderFn = pluginRenderers[`render_${plugin.id}`];
+    if (renderFn) {
+      try {
+        innerHtml = renderFn(plugin);
+      } catch (e) {
+        innerHtml = renderDefaultPlugin(plugin);
+      }
+    } else {
       innerHtml = renderDefaultPlugin(plugin);
     }
-  } else {
-    innerHtml = renderDefaultPlugin(plugin);
+  }
+
+  const ago = formatAgo(plugin.last_collect_at);
+  const agoHtml = ago
+    ? `<div style="margin-top:0.3rem;font-size:0.5rem;color:var(--text-dim)">updated ${ago}</div>`
+    : '';
+
+  let errorHtml = '';
+  if (plugin.consecutive_failures || plugin.last_error) {
+    const failCount = plugin.consecutive_failures
+      ? ` (${plugin.consecutive_failures})`
+      : '';
+    errorHtml = `<div style="margin-top:0.3rem;font-size:0.5rem;color:var(--red)">⚠ ${escapeHtml(plugin.last_error || 'failing')}${failCount}</div>`;
   }
 
   return `<div class="svc" style="cursor:default">
@@ -84,6 +120,8 @@ function renderPluginCard(plugin) {
     </div>
     <div class="svc-desc">${escapeHtml(plugin.summary)}</div>
     ${innerHtml}
+    ${agoHtml}
+    ${errorHtml}
   </div>`;
 }
 
