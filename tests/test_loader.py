@@ -26,9 +26,10 @@ class PluginsConfig:
     enabled: bool = True
     directory: str = "/plugins"
     builtin: dict = field(default_factory=dict)
+    user: dict = field(default_factory=dict)
 
 
-def _make_config(plugins_enabled=True, builtin=None):
+def _make_config(plugins_enabled=True, builtin=None, user=None):
     config = BuoyConfig()
     config.node = NodeConfig(name="test")
     config.network = NetworkConfig()
@@ -36,6 +37,7 @@ def _make_config(plugins_enabled=True, builtin=None):
     config.plugins = PluginsConfig(
         enabled=plugins_enabled,
         builtin=builtin or {},
+        user=user or {},
     )
     return config
 
@@ -533,6 +535,64 @@ class MyCustomPlugin(Plugin):
         await mgr._load_user_plugins()
 
         assert "my_custom" in mgr.plugins
+        assert mgr.plugins["my_custom"].config == {}
+
+    @pytest.mark.asyncio
+    async def test_user_plugin_receives_yaml_settings(self, tmp_path):
+        plugin_file = tmp_path / "weather_plugin.py"
+        plugin_file.write_text("""
+from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+
+class WeatherPlugin(Plugin):
+    manifest = PluginManifest(
+        id="weather",
+        name="Weather",
+        config_schema={"url": {"type": "string"}, "api_key": {"type": "string"}},
+    )
+
+    async def collect(self):
+        return PanelData(status="ok", summary="Weather works")
+""")
+
+        config = _make_config(
+            builtin={},
+            user={"weather": PluginEntry(settings={"url": "https://api.example.com"})},
+        )
+        config.plugins.directory = str(tmp_path)
+        mgr = PluginManager(config)
+
+        await mgr._load_user_plugins()
+
+        assert mgr.plugins["weather"].config["url"] == "https://api.example.com"
+
+    @pytest.mark.asyncio
+    async def test_user_plugin_env_override(self, tmp_path, monkeypatch):
+        plugin_file = tmp_path / "weather_plugin.py"
+        plugin_file.write_text("""
+from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+
+class WeatherPlugin(Plugin):
+    manifest = PluginManifest(
+        id="weather",
+        name="Weather",
+        config_schema={"api_key": {"type": "string"}},
+    )
+
+    async def collect(self):
+        return PanelData(status="ok", summary="Weather works")
+""")
+        monkeypatch.setenv("BUOY_PLUGIN_WEATHER_API_KEY", "env-secret")
+
+        config = _make_config(
+            builtin={},
+            user={"weather": PluginEntry(settings={"api_key": "yaml-secret"})},
+        )
+        config.plugins.directory = str(tmp_path)
+        mgr = PluginManager(config)
+
+        await mgr._load_user_plugins()
+
+        assert mgr.plugins["weather"].config["api_key"] == "env-secret"
 
     @pytest.mark.asyncio
     async def test_ignores_underscore_files(self, tmp_path):

@@ -129,6 +129,7 @@ alerts:
 #   BUOY_PLUGIN_GITHUB_TOKEN         → plugins.builtin.github.token
 #   BUOY_PLUGIN_TRIGGER_DEV_API_KEY  → plugins.builtin.trigger_dev.api_key
 #   BUOY_PLUGIN_PROXMOX_TOKEN_SECRET → plugins.builtin.proxmox.token_secret
+# The same convention applies to drop-in plugins under plugins.user.<id> (see below).
 # Env present always wins over the YAML value.
 #
 # Plugins are discovered from three sources, in this order (later wins on id collision):
@@ -291,3 +292,14 @@ plugins:
     systemd_health:
       enabled: false
       units: []   # unit names to check; empty = auto-detect
+
+  # Config for drop-in plugins loaded from `directory` above, keyed by manifest id.
+  # Unlike builtin.*, these load unconditionally (no enabled flag) — just drop the
+  # .py file in. Same env-override convention: BUOY_PLUGIN_<ID>_<KEY> overrides a
+  # value here, but only for keys the plugin declares in its manifest config_schema.
+  user: {}
+  # Example:
+  # user:
+  #   weather:
+  #     url: "https://api.example.com"
+  #     api_key: ""   # or BUOY_PLUGIN_WEATHER_API_KEY

@@ -41,7 +41,8 @@ def resolve_plugin_env(
 
     Precedence: canonical env var wins, then per-key 'env' hint in schema, then YAML.
     Only string values are written; secrets are always strings so no coercion needed.
-    User plugins have no schema and are not affected (they call configure({}) directly).
+    Used by built-in, entry-point, and user plugins alike; a plugin with no
+    declared config_schema is simply unaffected by env overrides.
     """
     result = dict(settings)
     plugin_prefix = f"BUOY_PLUGIN_{plugin_id.upper()}_"
@@ -187,9 +188,14 @@ class PluginManager:
         for plugin_class in self._iter_dir_classes(plugin_dir):
             try:
                 instance = plugin_class()
-                # User plugins don't have config entries (yet)
-                instance.configure({})
                 plugin_id = instance.manifest.id
+                entry = self.config.plugins.user.get(plugin_id)
+                settings = resolve_plugin_env(
+                    plugin_id,
+                    plugin_class.manifest.config_schema,
+                    entry.settings if entry else {},
+                )
+                instance.configure(settings)
                 self._warn_on_collision(plugin_id, source="user directory")
                 self._plugins[plugin_id] = instance
             except Exception as e:

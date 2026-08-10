@@ -104,6 +104,7 @@ class PluginsConfig:
     enabled: bool = True
     directory: str = "/plugins"
     builtin: dict[str, PluginEntry] = field(default_factory=dict)
+    user: dict[str, PluginEntry] = field(default_factory=dict)
 
 
 @dataclass
@@ -308,6 +309,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         enabled=bool(plugins_raw.get("enabled", True)),
         directory=plugins_raw.get("directory", "/plugins"),
         builtin=_parse_plugins(plugins_raw.get("builtin", {})),
+        user=_parse_plugins(plugins_raw.get("user", {})),
     )
 
     alerts = AlertsConfig(

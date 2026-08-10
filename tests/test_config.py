@@ -102,6 +102,21 @@ class TestConfigFromYAML:
         assert config.plugins.builtin["github"].enabled is True
         assert config.plugins.builtin["github"].settings["token"] == "ghp_xxx"
 
+    def test_plugins_user(self):
+        raw = {
+            "plugins": {
+                "user": {
+                    "weather": {"url": "https://api.example.com"},
+                }
+            }
+        }
+        config = _build_config(raw)
+        assert config.plugins.user["weather"].settings["url"] == "https://api.example.com"
+
+    def test_plugins_user_defaults_empty(self):
+        config = _build_config({})
+        assert config.plugins.user == {}
+
     def test_theme_preset_light(self):
         config = _build_config({"theme": {"preset": "light"}})
         assert config.theme.preset == "light"
