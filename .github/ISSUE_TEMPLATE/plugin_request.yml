@@ -1,0 +1,45 @@
+name: Plugin Request
+description: Request a new integration/plugin, or propose one you'd like to contribute
+labels: ["plugin"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Plugins integrate with an external service and subclass `Plugin` from
+        `buoy.plugins.protocol`, implementing `collect()`. See
+        [CONTRIBUTING.md](../../CONTRIBUTING.md#for-new-plugins) for the authoring guide.
+
+  - type: input
+    id: service
+    attributes:
+      label: Integration / service name
+      placeholder: "Speedtest, Uptime Kuma, Pi-hole, ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: data
+    attributes:
+      label: What data would this plugin expose?
+      description: What would show up on the dashboard?
+    validations:
+      required: true
+
+  - type: textarea
+    id: api
+    attributes:
+      label: Upstream API / auth notes
+      description: Link to the service's API docs, and whether it requires auth (API key, token, etc.)
+    validations:
+      required: false
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you be willing to contribute this plugin yourself?
+      options:
+        - "Yes"
+        - "No"
+        - "Maybe, with some guidance"
+    validations:
+      required: true
