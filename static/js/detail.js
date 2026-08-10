@@ -13,6 +13,13 @@ export function initDetail() {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(gauge.dataset.detail); }
     });
   });
+
+  // Delegated listener: detail-close buttons are re-rendered into
+  // #detail-content on every openDetail() call, so bind once on the
+  // stable panel ancestor rather than after each render.
+  document.getElementById('detail-panel')?.addEventListener('click', (e) => {
+    if (e.target.closest('.detail-close')) closeDetail();
+  });
 }
 
 function closeDetail() {
@@ -63,7 +70,7 @@ function renderCpuDetail(d) {
   let html = `
     <div class="detail-header">
       <div class="detail-title">CPU — ${escapeHtml(cpu.model || 'unknown')}</div>
-      <button class="detail-close" onclick="this.closest('.detail-panel').classList.remove('open');document.querySelectorAll('.gauge.expanded').forEach(g=>g.classList.remove('expanded'))">&#10005; close</button>
+      <button class="detail-close">&#10005; close</button>
     </div>
     <div class="detail-grid">
       <div class="detail-stat"><div class="ds-label">Cores</div><div class="ds-value">${cpu.cores || 0}</div></div>
@@ -89,7 +96,7 @@ function renderMemoryDetail(d) {
   let html = `
     <div class="detail-header">
       <div class="detail-title">Memory — ${(m.total_mb / 1024).toFixed(1)} GB total</div>
-      <button class="detail-close" onclick="this.closest('.detail-panel').classList.remove('open');document.querySelectorAll('.gauge.expanded').forEach(g=>g.classList.remove('expanded'))">&#10005; close</button>
+      <button class="detail-close">&#10005; close</button>
     </div>
     <div class="detail-grid">
       <div class="detail-stat"><div class="ds-label">Used</div><div class="ds-value">${((m.used_mb||0) / 1024).toFixed(1)} GB</div></div>
@@ -106,7 +113,7 @@ function renderDiskDetail(d) {
   let html = `
     <div class="detail-header">
       <div class="detail-title">Disk — Mounted Filesystems</div>
-      <button class="detail-close" onclick="this.closest('.detail-panel').classList.remove('open');document.querySelectorAll('.gauge.expanded').forEach(g=>g.classList.remove('expanded'))">&#10005; close</button>
+      <button class="detail-close">&#10005; close</button>
     </div>`;
 
   if (disk.mounts?.length) {
@@ -127,7 +134,7 @@ function renderContainersDetail() {
   let html = `
     <div class="detail-header">
       <div class="detail-title">Running Containers (${containers.length})</div>
-      <button class="detail-close" onclick="this.closest('.detail-panel').classList.remove('open');document.querySelectorAll('.gauge.expanded').forEach(g=>g.classList.remove('expanded'))">&#10005; close</button>
+      <button class="detail-close">&#10005; close</button>
     </div>`;
 
   if (containers.length) {
@@ -246,6 +253,10 @@ async function inspectContainer(name) {
     panel.innerHTML = renderContainerInspect(d, name);
     panel.querySelector('.ctr-btn-restart')?.addEventListener('click', function () { restartContainer(name, this); });
     panel.querySelector('.ctr-btn-logs')?.addEventListener('click', () => showContainerLogs(name));
+    panel.querySelector('.ctr-inspect-close')?.addEventListener('click', () => {
+      panel.innerHTML = '';
+      panel.dataset.active = '';
+    });
   } catch (e) {
     panel.innerHTML = `<div class="ctr-inspect error"><span class="ctr-inspect-text">Failed to load: ${escapeHtml(e.message)}</span></div>`;
   }
@@ -272,7 +283,7 @@ function renderContainerInspect(d, name) {
   return `<div class="ctr-inspect">
     <div class="ctr-inspect-header">
       <div class="ctr-inspect-name"><div class="dot-sm" style="background:var(--${statusDot})"></div>${escapeHtml(name)}</div>
-      <button class="ctr-inspect-close" onclick="document.getElementById('container-inspect-panel').innerHTML='';document.getElementById('container-inspect-panel').dataset.active=''">&#10005;</button>
+      <button class="ctr-inspect-close">&#10005;</button>
     </div>
     <div class="ctr-inspect-grid">
       <div class="ctr-stat"><span class="ctr-stat-label">Status</span><span class="ctr-stat-value">${escapeHtml(status)}</span></div>
@@ -368,15 +379,10 @@ async function showContainerLogs(name) {
 
     const logsDiv = document.createElement('div');
     logsDiv.className = 'ctr-logs';
-    logsDiv.innerHTML = `<div class="ctr-logs-header">Logs — ${escapeHtml(name)} (last ${d.lines?.length || 0} lines)<button class="ctr-logs-close" onclick="this.closest('.ctr-logs').remove()">&#10005;</button></div><pre class="ctr-logs-pre">${escapeHtml(lines)}</pre>`;
+    logsDiv.innerHTML = `<div class="ctr-logs-header">Logs — ${escapeHtml(name)} (last ${d.lines?.length || 0} lines)<button class="ctr-logs-close">&#10005;</button></div><pre class="ctr-logs-pre">${escapeHtml(lines)}</pre>`;
+    logsDiv.querySelector('.ctr-logs-close')?.addEventListener('click', () => logsDiv.remove());
     panel.appendChild(logsDiv);
   } catch (e) {
     // Silently fail
   }
 }
-
-// Expose functions globally for inline onclick handlers
-window._buoyCloseDetail = closeDetail;
-window._buoyInspectContainer = inspectContainer;
-window._buoyRestartContainer = restartContainer;
-window._buoyContainerLogs = showContainerLogs;
