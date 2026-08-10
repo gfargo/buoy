@@ -57,6 +57,77 @@ def resolve_plugin_env(
     return result
 
 
+def _coerce(value: Any, declared_type: str | None) -> Any:
+    """Coerce *value* to *declared_type*.
+
+    Supports the 5 type names used across builtin manifests. Idempotent on
+    already-correct YAML-native values (e.g. a real ``bool``/``int`` passes
+    through unchanged rather than being re-stringified). Unknown/missing
+    types are left untouched. Raises ValueError/TypeError on failure, which
+    callers collect as a validation error rather than letting propagate.
+    """
+    if declared_type in ("boolean", "bool"):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ("true", "1", "yes")
+        return bool(value)
+    if declared_type == "integer":
+        return int(value)
+    if declared_type == "number":
+        return float(value)
+    if declared_type == "array":
+        if isinstance(value, list):
+            return list(value)
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        raise TypeError(f"cannot coerce {value!r} to array")
+    if declared_type == "string":
+        return value if isinstance(value, str) else str(value)
+    return value
+
+
+def validate_plugin_config(
+    plugin_id: str, schema: dict[str, Any], settings: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Apply defaults, coerce types, and check required fields against *schema*.
+
+    Runs once at registration, after env overlay (resolve_plugin_env) and
+    before instance.configure(). Fixes BUG-35 (env/YAML strings like "true"
+    or "30" not becoming bool/int) and turns a missing required field into an
+    actionable disabled-card message instead of a runtime error deep in
+    collect(). Plugins with an empty schema pass through untouched.
+
+    Returns (coerced_settings, errors). A non-empty errors list means the
+    plugin should be registered but not started (see _register_config_gated_plugin).
+    """
+    result = dict(settings)
+    errors: list[str] = []
+
+    for key, meta in schema.items():
+        if not isinstance(meta, dict):
+            continue
+
+        if key not in result and "default" in meta:
+            default = meta["default"]
+            result[key] = list(default) if isinstance(default, list) else default
+
+        if key in result and result[key] is not None:
+            declared_type = meta.get("type")
+            try:
+                result[key] = _coerce(result[key], declared_type)
+            except (ValueError, TypeError):
+                errors.append(f"invalid value for '{key}': expected {declared_type}")
+                continue
+
+        if meta.get("required"):
+            value = result.get(key)
+            if value is None or value == "":
+                errors.append(f"missing required field '{key}'")
+
+    return result, errors
+
+
 class PluginManager:
     """Manages the full plugin lifecycle: discover → configure → run → teardown."""
 
@@ -65,6 +136,7 @@ class PluginManager:
         self._plugins: dict[str, Plugin] = {}
         self._latest_data: dict[str, PanelData] = {}
         self._tasks: list[asyncio.Task] = []
+        self._disabled_ids: set[str] = set()
 
     @property
     def plugins(self) -> dict[str, Plugin]:
@@ -88,16 +160,20 @@ class PluginManager:
         # 3. Discover user plugins from directory
         await self._load_user_plugins()
 
-        # 4. Setup all configured plugins
+        # 4. Setup all configured plugins (skip those disabled by config validation)
         for plugin_id, plugin in list(self._plugins.items()):
+            if plugin_id in self._disabled_ids:
+                continue
             try:
                 await plugin.setup()
             except Exception as e:
                 print(f"[buoy:plugins] {plugin_id} setup failed: {e}")
                 del self._plugins[plugin_id]
 
-        # 5. Start collection loops
+        # 5. Start collection loops (skip those disabled by config validation)
         for plugin_id, plugin in self._plugins.items():
+            if plugin_id in self._disabled_ids:
+                continue
             task = asyncio.create_task(self._collect_loop(plugin_id, plugin))
             self._tasks.append(task)
 
@@ -227,8 +303,18 @@ class PluginManager:
             plugin_class.manifest.config_schema,
             entry.settings,
         )
-        instance.configure(settings)
+        settings, errors = validate_plugin_config(
+            plugin_id, plugin_class.manifest.config_schema, settings
+        )
         self._warn_on_collision(plugin_id, source=source)
+        if errors:
+            self._disabled_ids.add(plugin_id)
+            self._latest_data[plugin_id] = PanelData(
+                status="disabled",
+                summary=f"Config error: {'; '.join(errors)}",
+                detail={"errors": errors},
+            )
+        instance.configure(settings)
         self._plugins[plugin_id] = instance
         return True
 
