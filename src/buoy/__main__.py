@@ -1,13 +1,10 @@
 """Entry point for `python -m buoy` or the `buoy` CLI command."""
 
 import argparse
+import sys
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        prog="buoy",
-        description="A lightweight, per-node system dashboard for homelabs.",
-    )
+def _add_serve_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--config",
         default=None,
@@ -35,8 +32,8 @@ def main():
         help="Enable hot-reload and debug logging for local development",
     )
 
-    args = parser.parse_args()
 
+def _serve(args) -> None:
     from buoy.config import load_config
 
     config = load_config(path=args.config, demo=args.demo)
@@ -62,6 +59,69 @@ def main():
 
         app = create_app(config)
         uvicorn.run(app, host=args.host, port=port, log_level="info")
+
+
+def _plugin(args) -> int:
+    from buoy.config import load_config
+    from buoy.plugins import cli as plugin_cli
+
+    config = load_config(path=args.config, demo=False)
+
+    if args.plugin_command == "list":
+        return plugin_cli.cmd_list(config)
+    if args.plugin_command == "info":
+        return plugin_cli.cmd_info(config, args.plugin_id)
+    if args.plugin_command == "install":
+        return plugin_cli.cmd_install(config, args.spec)
+    args.plugin_parser.print_help()
+    return 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="buoy",
+        description="A lightweight, per-node system dashboard for homelabs.",
+    )
+    # Serve remains the default when no subcommand is given, so all its flags
+    # live on the top-level parser too (kept in sync with the `serve` subparser).
+    _add_serve_arguments(parser)
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    serve_parser = subparsers.add_parser("serve", help="Run the dashboard server (default)")
+    _add_serve_arguments(serve_parser)
+
+    plugin_parser = subparsers.add_parser("plugin", help="Inspect and manage plugins")
+    plugin_parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to buoy.yaml config file (default: ./buoy.yaml or /config/buoy.yaml)",
+    )
+    plugin_subparsers = plugin_parser.add_subparsers(dest="plugin_command")
+
+    plugin_subparsers.add_parser("list", help="List every discoverable plugin")
+
+    info_parser = plugin_subparsers.add_parser("info", help="Show a plugin's manifest")
+    info_parser.add_argument("plugin_id", help="Plugin id, e.g. 'github'")
+
+    install_parser = plugin_subparsers.add_parser(
+        "install", help="Install a plugin package via pip"
+    )
+    install_parser.add_argument("spec", help="pip requirement spec, e.g. 'buoy-plugin-weather'")
+
+    parser.set_defaults(plugin_parser=plugin_parser)
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if args.command == "plugin":
+        sys.exit(_plugin(args))
+    else:
+        # No subcommand, or explicit `serve` — both take the serve args.
+        _serve(args)
 
 
 if __name__ == "__main__":

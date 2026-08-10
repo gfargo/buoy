@@ -40,6 +40,16 @@ dev = [
 [project.scripts]
 buoy = "buoy.__main__:main"
 
+# Third-party plugin packages register themselves for discovery by declaring an entry
+# point under this group in their own pyproject.toml, pointing at a Plugin subclass
+# (or a module that defines one):
+#
+#   [project.entry-points."buoy.plugins"]
+#   weather = "buoy_plugin_weather:WeatherPlugin"
+#
+# Buoy's own built-in plugins are discovered by package scanning instead (see
+# buoy.plugins.loader) and do not need an entry point here.
+
 [project.urls]
 Homepage = "https://github.com/gfargo/buoy"
 Repository = "https://github.com/gfargo/buoy"

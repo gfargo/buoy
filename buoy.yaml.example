@@ -130,6 +130,14 @@ alerts:
 #   BUOY_PLUGIN_TRIGGER_DEV_API_KEY  → plugins.builtin.trigger_dev.api_key
 #   BUOY_PLUGIN_PROXMOX_TOKEN_SECRET → plugins.builtin.proxmox.token_secret
 # Env present always wins over the YAML value.
+#
+# Plugins are discovered from three sources, in this order (later wins on id collision):
+#   1. buoy.plugins.builtin  — shipped with buoy
+#   2. `buoy.plugins` importlib.metadata entry points — pip-installed third-party packages
+#      (e.g. `pip install buoy-plugin-weather`, or `buoy plugin install buoy-plugin-weather`)
+#   3. the `directory` below — plain .py files dropped in by hand
+# Entry-point plugins use the same `builtin.<id>.enabled` gate as built-ins.
+# Run `buoy plugin list` / `buoy plugin info <id>` to see everything currently discoverable.
 plugins:
   enabled: true
   directory: /plugins        # Mount point for user plugins

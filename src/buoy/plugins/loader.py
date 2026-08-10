@@ -1,8 +1,9 @@
 """Plugin loader — discovers, validates, and manages plugin lifecycle.
 
-Scans:
+Scans, in order (later sources win on id collision):
 1. buoy.plugins.builtin package (shipped with buoy)
-2. User plugin directory (configurable, default /plugins)
+2. buoy.plugins entry points (pip-installed third-party packages)
+3. User plugin directory (configurable, default /plugins)
 
 Each plugin is validated against its manifest, configured from buoy.yaml,
 and scheduled on its own refresh interval with error isolation.
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.metadata
 import importlib.util
 import inspect
 import os
@@ -25,6 +27,8 @@ from buoy.plugins.protocol import PanelData, Plugin
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+ENTRY_POINT_GROUP = "buoy.plugins"
 
 
 def resolve_plugin_env(
@@ -88,10 +92,13 @@ class PluginManager:
         # 1. Discover built-in plugins
         await self._load_builtins()
 
-        # 2. Discover user plugins from directory
+        # 2. Discover plugins registered via the buoy.plugins entry-point group
+        await self._load_entrypoint_plugins()
+
+        # 3. Discover user plugins from directory
         await self._load_user_plugins()
 
-        # 3. Setup all configured plugins
+        # 4. Setup all configured plugins
         for plugin_id, plugin in list(self._plugins.items()):
             try:
                 await plugin.setup()
@@ -99,7 +106,7 @@ class PluginManager:
                 print(f"[buoy:plugins] {plugin_id} setup failed: {e}")
                 del self._plugins[plugin_id]
 
-        # 4. Start collection loops
+        # 5. Start collection loops
         for plugin_id, plugin in self._plugins.items():
             task = asyncio.create_task(self._collect_loop(plugin_id, plugin))
             self._tasks.append(task)
@@ -204,6 +211,86 @@ class PluginManager:
         Discovers modules from the fixed in-repo buoy.plugins.builtin package only —
         never from a config/env/volume/user-writable path.
         """
+        for plugin_class in self._iter_builtin_classes():
+            try:
+                self._builtin_names[plugin_class.manifest.id] = plugin_class.manifest.name
+                self._register_config_gated_plugin(plugin_class, source="builtin")
+            except Exception as e:
+                print(
+                    f"[buoy:plugins] Failed to register builtin '{plugin_class.manifest.id}': {e}"
+                )
+
+    async def _load_entrypoint_plugins(self):
+        """Load plugins registered under the ``buoy.plugins`` entry-point group.
+
+        Lets a pip-installed third-party package register a plugin without
+        touching the in-repo ``buoy.plugins.builtin`` package or the user
+        plugin directory. Subject to the same enable gate and env overlay as
+        built-ins (``config.plugins.builtin.<id>.enabled``).
+        """
+        for plugin_class in self._iter_entrypoint_classes():
+            try:
+                self._register_config_gated_plugin(plugin_class, source="entry point")
+            except Exception as e:
+                print(
+                    f"[buoy:plugins] Failed to register entry point plugin "
+                    f"'{plugin_class.manifest.id}': {e}"
+                )
+
+    async def _load_user_plugins(self):
+        """Load user plugins from the plugins directory."""
+        plugin_dir = Path(self.config.plugins.directory)
+        for plugin_class in self._iter_dir_classes(plugin_dir):
+            try:
+                instance = plugin_class()
+                # User plugins don't have config entries (yet)
+                instance.configure({})
+                plugin_id = instance.manifest.id
+                self._warn_on_collision(plugin_id, source="user directory")
+                self._plugins[plugin_id] = instance
+            except Exception as e:
+                print(
+                    f"[buoy:plugins] Failed to register user plugin "
+                    f"'{plugin_class.manifest.id}': {e}"
+                )
+
+    def _warn_on_collision(self, plugin_id: str, source: str) -> None:
+        """Log when a plugin id from *source* overwrites an already-registered one.
+
+        Precedence is defined by load order in ``start()``: builtin < entry
+        point < user directory — later sources win, and this makes the
+        override visible instead of silently swapping plugins.
+        """
+        if plugin_id in self._plugins:
+            print(
+                f"[buoy:plugins] '{plugin_id}' from {source} overrides a previously loaded plugin with the same id"
+            )
+
+    def _register_config_gated_plugin(self, plugin_class: type[Plugin], source: str) -> bool:
+        """Instantiate, configure, and register *plugin_class* if enabled in config.
+
+        Shared by built-ins and entry points, which both gate on
+        ``config.plugins.builtin.<id>.enabled`` and resolve settings through
+        the same env overlay. Returns True if the plugin was registered.
+        """
+        plugin_id = plugin_class.manifest.id
+        entry = self.config.plugins.builtin.get(plugin_id)
+        if not entry or not entry.enabled:
+            return False
+        instance = plugin_class()
+        settings = resolve_plugin_env(
+            plugin_id,
+            plugin_class.manifest.config_schema,
+            entry.settings,
+        )
+        instance.configure(settings)
+        self._warn_on_collision(plugin_id, source=source)
+        self._plugins[plugin_id] = instance
+        return True
+
+    @staticmethod
+    def _iter_builtin_classes():
+        """Yield each Plugin subclass found in buoy.plugins.builtin, import errors isolated."""
         import buoy.plugins.builtin as _builtin_pkg
 
         for _, module_path, _ispkg in pkgutil.iter_modules(
@@ -213,31 +300,42 @@ class PluginManager:
             module_name = module_path.rsplit(".", 1)[-1]
             if module_name.startswith("_"):
                 continue
-
             try:
                 module = importlib.import_module(module_path)
-                plugin_class = self._find_plugin_class(module)
-                if plugin_class is None:
-                    continue
-                plugin_id = plugin_class.manifest.id
-                self._builtin_names[plugin_id] = plugin_class.manifest.name
-                entry = self.config.plugins.builtin.get(plugin_id)
-                if not entry or not entry.enabled:
-                    continue
-                instance = plugin_class()
-                settings = resolve_plugin_env(
-                    plugin_id,
-                    plugin_class.manifest.config_schema,
-                    entry.settings,
-                )
-                instance.configure(settings)
-                self._plugins[plugin_id] = instance
+                plugin_class = PluginManager._find_plugin_class(module)
+                if plugin_class is not None:
+                    yield plugin_class
             except Exception as e:
                 print(f"[buoy:plugins] Failed to load builtin '{module_path}': {e}")
 
-    async def _load_user_plugins(self):
-        """Load user plugins from the plugins directory."""
-        plugin_dir = Path(self.config.plugins.directory)
+    @staticmethod
+    def _iter_entrypoint_classes():
+        """Yield each Plugin subclass registered under the buoy.plugins entry-point group."""
+        try:
+            eps = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
+        except Exception as e:
+            print(f"[buoy:plugins] Failed to enumerate '{ENTRY_POINT_GROUP}' entry points: {e}")
+            return
+
+        for ep in eps:
+            try:
+                obj = ep.load()
+                if inspect.isclass(obj) and issubclass(obj, Plugin):
+                    plugin_class = obj
+                else:
+                    plugin_class = PluginManager._find_plugin_class(obj)
+                if plugin_class is None:
+                    print(
+                        f"[buoy:plugins] Entry point '{ep.name}' did not resolve to a Plugin subclass"
+                    )
+                    continue
+                yield plugin_class
+            except Exception as e:
+                print(f"[buoy:plugins] Failed to load entry point '{ep.name}': {e}")
+
+    @staticmethod
+    def _iter_dir_classes(plugin_dir: Path):
+        """Yield each Plugin subclass found in *.py files under plugin_dir."""
         if not plugin_dir.exists():
             return
 
@@ -254,15 +352,62 @@ class PluginManager:
                 sys.modules[module_name] = module
                 spec.loader.exec_module(module)
 
-                plugin_class = self._find_plugin_class(module)
-                if plugin_class:
-                    instance = plugin_class()
-                    # User plugins don't have config entries (yet)
-                    instance.configure({})
-                    plugin_id = instance.manifest.id
-                    self._plugins[plugin_id] = instance
+                plugin_class = PluginManager._find_plugin_class(module)
+                if plugin_class is not None:
+                    yield plugin_class
             except Exception as e:
                 print(f"[buoy:plugins] Failed to load user plugin '{py_file.name}': {e}")
+
+    @classmethod
+    def discover_all(cls, config: BuoyConfig) -> list[dict[str, Any]]:
+        """Enumerate every discoverable plugin without starting collection loops.
+
+        Scans the same three sources as ``start()`` (builtin, entry point,
+        user directory) but only imports/instantiates classes long enough to
+        read their manifest — no ``setup()``/``collect()`` is called. Used by
+        the ``buoy plugin list``/``info`` CLI, which needs to inspect
+        available plugins without booting the async plugin lifecycle.
+
+        Returns a list of dicts (one per unique plugin id, later sources win
+        on collision, mirroring ``start()``'s builtin < entrypoint < dir
+        precedence): id, name, icon, description, version, config_schema,
+        refresh_interval, source ("builtin" | "entrypoint" | "dir"), enabled.
+        """
+        seen: dict[str, dict[str, Any]] = {}
+
+        def _record(plugin_class: type[Plugin], source: str) -> None:
+            plugin_id = plugin_class.manifest.id
+            if source == "dir":
+                enabled = True
+            else:
+                entry = config.plugins.builtin.get(plugin_id)
+                enabled = bool(entry and entry.enabled)
+            if plugin_id in seen:
+                print(
+                    f"[buoy:plugins] '{plugin_id}' from {source} overrides a "
+                    "previously discovered plugin with the same id"
+                )
+            manifest = plugin_class.manifest
+            seen[plugin_id] = {
+                "id": plugin_id,
+                "name": manifest.name,
+                "icon": manifest.icon,
+                "description": manifest.description,
+                "version": manifest.version,
+                "config_schema": manifest.config_schema,
+                "refresh_interval": manifest.refresh_interval,
+                "source": source,
+                "enabled": enabled,
+            }
+
+        for plugin_class in cls._iter_builtin_classes():
+            _record(plugin_class, "builtin")
+        for plugin_class in cls._iter_entrypoint_classes():
+            _record(plugin_class, "entrypoint")
+        for plugin_class in cls._iter_dir_classes(Path(config.plugins.directory)):
+            _record(plugin_class, "dir")
+
+        return list(seen.values())
 
     @staticmethod
     def _find_plugin_class(module) -> type[Plugin] | None:
