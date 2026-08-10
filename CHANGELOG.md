@@ -35,6 +35,7 @@ All notable changes to Buoy are documented here.
 - Theme: persist toggle, `prefers-color-scheme` detection, and new presets (#216)
 
 ### Fixed
+- Content-Security-Policy header on all responses (SEC-6); removed remaining inline `onclick` handlers to keep `script-src` free of `unsafe-inline` (#81)
 - `Plugin.config` moved to per-instance `__init__` to prevent shared state (#207)
 - `theme.custom` CSS variable overrides now applied at page load (#150)
 - Rate limiting now always active, independent of `auth.enabled` (#213)

@@ -895,7 +895,7 @@ jobs:
 
 ## 13. Open Source Readiness Checklist
 
-> Status as of v2.1.0: repo prep is done except CODE_OF_CONDUCT.md, issue templates, and GitHub Discussions; the `docs/*.md` files in §13.2 were never created (README.md and CONTRIBUTING.md cover that ground instead). Checkboxes below reflect actual repo state, verified against the filesystem.
+> Status as of v2.1.0: repo prep is done except GitHub Discussions; the `docs/*.md` files in §13.2 were never created (README.md and CONTRIBUTING.md cover that ground instead). Checkboxes below reflect actual repo state, verified against the filesystem.
 
 ### 13.1 Repository Prep
 
@@ -904,8 +904,8 @@ jobs:
 - [x] Write public README with quick-start, feature list (no screenshots yet)
 - [x] Add CONTRIBUTING.md (dev setup, PR process, architecture overview)
 - [x] Add CHANGELOG.md (start from v2.0.0)
-- [ ] Add CODE_OF_CONDUCT.md
-- [ ] Set up GitHub issue templates (bug report, feature request)
+- [x] Add CODE_OF_CONDUCT.md
+- [x] Set up GitHub issue templates (bug report, feature request)
 - [ ] Set up GitHub Discussions for Q&A
 - [x] Create release workflow (tag → build → push to GHCR + create GitHub Release)
 

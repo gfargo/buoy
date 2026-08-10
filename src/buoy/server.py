@@ -9,6 +9,7 @@ import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -756,6 +757,55 @@ async def index(request: Request) -> Response:
 # ── App Factory ────────────────────────────────────────────────────────────────
 
 
+# 'unsafe-eval' is required by the plugin custom-JS renderer (new Function(),
+# static/js/plugins.js) and 'unsafe-inline' in style-src by the pervasive
+# inline style="..." attributes across the dashboard templates. Both are
+# tracked for removal under PP-5 (sandboxed plugin renderer), at which point
+# this policy should tighten to drop them. fonts.googleapis.com/gstatic.com
+# are allowlisted because index.html loads the JetBrains Mono / Outfit
+# webfonts from Google Fonts. connect-src includes configured fleet peer
+# origins since the fleet grid fetches each peer's /api/stats directly from
+# the browser (static/js/fleet.js).
+_CSP_NETLOC_RE = re.compile(r"^[A-Za-z0-9.\-\[\]:]+$")
+
+
+def _csp_origin(url: str) -> str | None:
+    """Reduce a peer URL to a bare scheme://host[:port] origin for connect-src.
+
+    Peer URLs come from operator-controlled config, not validated on input
+    (PeerConfig.url is a free-form string), so this strips paths/queries and
+    rejects non-http(s) schemes to prevent them from injecting extra CSP
+    directives when interpolated. urlsplit() also silently drops embedded
+    \\t\\r\\n from the netloc rather than rejecting the URL, so the netloc is
+    further restricted to a strict host[:port]/IPv6-bracket charset — this
+    blocks e.g. "https://evil.example\\nscript-src *" from smuggling a
+    space-separated extra source token (like a "*" wildcard) into connect-src.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return None
+    if not _CSP_NETLOC_RE.match(parts.netloc):
+        return None
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _build_csp_policy(peer_urls: list[str]) -> str:
+    origins = [origin for url in peer_urls if (origin := _csp_origin(url)) is not None]
+    connect_src = " ".join(["'self'"] + list(dict.fromkeys(origins)))
+    return (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        f"connect-src {connect_src}; "
+        "object-src 'none'; "
+        "base-uri 'none'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'"
+    )
+
+
 def create_app(config: BuoyConfig) -> Starlette:
     """Create the Starlette application."""
     global _config
@@ -807,12 +857,15 @@ def create_app(config: BuoyConfig) -> Starlette:
     # Security headers middleware
     from starlette.middleware.base import BaseHTTPMiddleware
 
+    csp_policy = _build_csp_policy([p.url for p in config.network.peers if p.url])
+
     class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             response = await call_next(request)
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            response.headers["Content-Security-Policy"] = csp_policy
             if not request.url.path.startswith("/static/"):
                 response.headers["Cache-Control"] = "no-cache"
             return response

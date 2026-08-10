@@ -1,0 +1,68 @@
+name: Bug Report
+description: Report something that's broken in buoy
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: buoy version
+      description: Output of `buoy --version` or the image tag you're running
+      placeholder: "2.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Docker/Compose version, how you're running buoy (native, Docker, Compose)
+      placeholder: |
+        - OS: Ubuntu 22.04
+        - Docker: 27.0.3
+        - Running via: docker-compose.yml
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you do?
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Config (redacted)
+      description: Your `buoy.yaml`, with any secrets/tokens/hostnames redacted
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Traceback / logs
+      description: For crashes, the full traceback. Otherwise any relevant log output.
+      render: shell
+    validations:
+      required: false

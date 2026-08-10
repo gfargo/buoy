@@ -10,6 +10,22 @@ let pluginRenderers = {};
 let jsLoaded = false;
 
 /**
+ * Convert an epoch-seconds timestamp into a human-readable "ago" string
+ * (e.g. "3m ago", "2h ago"). Returns '' when missing or in the future
+ * (guards against clock skew between server and browser).
+ */
+function formatAgo(epochSeconds) {
+  if (!epochSeconds) return '';
+  const ms = Date.now() - epochSeconds * 1000;
+  if (ms < 0) return 'just now';
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
+/**
  * Load custom plugin JS renderers from /api/plugins/js
  */
 async function loadPluginJS() {
@@ -83,6 +99,19 @@ function renderPluginCard(plugin) {
     }
   }
 
+  const ago = formatAgo(plugin.last_collect_at);
+  const agoHtml = ago
+    ? `<div style="margin-top:0.3rem;font-size:0.5rem;color:var(--text-dim)">updated ${ago}</div>`
+    : '';
+
+  let errorHtml = '';
+  if (plugin.consecutive_failures || plugin.last_error) {
+    const failCount = plugin.consecutive_failures
+      ? ` (${plugin.consecutive_failures})`
+      : '';
+    errorHtml = `<div style="margin-top:0.3rem;font-size:0.5rem;color:var(--red)">⚠ ${escapeHtml(plugin.last_error || 'failing')}${failCount}</div>`;
+  }
+
   return `<div class="svc" style="cursor:default">
     <div class="svc-header">
       <span class="svc-icon">${escapeHtml(plugin.icon || '🔌')}</span>
@@ -91,6 +120,8 @@ function renderPluginCard(plugin) {
     </div>
     <div class="svc-desc">${escapeHtml(plugin.summary)}</div>
     ${innerHtml}
+    ${agoHtml}
+    ${errorHtml}
   </div>`;
 }
 
