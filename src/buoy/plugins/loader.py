@@ -122,7 +122,8 @@ def validate_plugin_config(
 
         if meta.get("required"):
             value = result.get(key)
-            if value is None or value == "":
+            is_empty_collection = isinstance(value, (list, dict, tuple)) and not value
+            if value is None or value == "" or is_empty_collection:
                 errors.append(f"missing required field '{key}'")
 
     return result, errors

@@ -1045,6 +1045,28 @@ class TestValidatePluginConfig:
         assert errors == []
         assert result["url"] == "http://kuma.local"
 
+    def test_required_empty_coerced_array_reports_error(self):
+        """An empty string coerces to [] for an array field; that still counts as missing."""
+        schema = {"tags": {"type": "array", "required": True}}
+        result, errors = validate_plugin_config("smart_disk", schema, {"tags": ""})
+        assert result["tags"] == []
+        assert len(errors) == 1
+        assert "tags" in errors[0]
+
+    def test_required_zero_integer_is_not_missing(self):
+        """0 is a legitimate required value and must not be flagged as empty."""
+        schema = {"warn_days": {"type": "integer", "required": True}}
+        result, errors = validate_plugin_config("cert_expiry", schema, {"warn_days": 0})
+        assert result["warn_days"] == 0
+        assert errors == []
+
+    def test_required_false_boolean_is_not_missing(self):
+        """False is a legitimate required value and must not be flagged as empty."""
+        schema = {"strict": {"type": "boolean", "required": True}}
+        result, errors = validate_plugin_config("proxmox", schema, {"strict": False})
+        assert result["strict"] is False
+        assert errors == []
+
     def test_optional_field_without_default_stays_absent(self):
         """An optional secret (no default, not required) must not be defaulted to ''."""
         schema = {"api_key": {"type": "string"}}
