@@ -39,9 +39,15 @@ def _kv_row(row: tuple[str, str] | dict[str, Any]) -> dict[str, Any]:
     return {"label": label, "value": value, "status": None}
 
 
-def cell(value: Any, status: Status = None, truncate: bool = False) -> dict[str, Any]:
-    """A single table cell. Use inside `table()` rows for per-cell styling."""
-    return {"value": value, "status": status, "truncate": truncate}
+def cell(
+    value: Any, status: Status = None, truncate: bool = False, mono: bool = False
+) -> dict[str, Any]:
+    """A single table cell. Use inside `table()` rows for per-cell styling.
+
+    ``mono`` renders the value in a monospace font — use for hashes, keys,
+    addresses, and other values where character-width alignment matters.
+    """
+    return {"value": value, "status": status, "truncate": truncate, "mono": mono}
 
 
 def table(columns: list[str], rows: list[list[dict[str, Any]]]) -> dict[str, Any]:

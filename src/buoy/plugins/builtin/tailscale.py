@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 
 from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
@@ -116,8 +117,7 @@ class TailscalePlugin(Plugin):
             if p.get("exit_node"):
                 name += " (exit)"
             conn_type = p.get("conn_type", "unknown")
-            last_seen = p.get("last_seen") or ""
-            seen_label = last_seen.replace("T", " ").replace("Z", "") if last_seen else ""
+            seen_label = _format_relative_age(p.get("last_seen") or "")
             rows.append(
                 [
                     panel.cell(name),
@@ -132,3 +132,31 @@ class TailscalePlugin(Plugin):
                 ]
             )
         return [panel.table(["Peer", "Conn", "Status"], rows)]
+
+
+def _format_relative_age(last_seen: str) -> str:
+    """Format an RFC3339 LastSeen timestamp as a short relative age (e.g. "3m ago").
+
+    Falls back to "" on anything unparseable so a malformed/missing timestamp
+    degrades gracefully instead of surfacing a raw value.
+    """
+    if not last_seen:
+        return ""
+    try:
+        seen = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+        if seen.tzinfo is None:
+            seen = seen.replace(tzinfo=UTC)
+        seconds = max(0, (datetime.now(UTC) - seen).total_seconds())
+    except (ValueError, OverflowError):
+        return ""
+
+    if seconds < 60:
+        return "just now"
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    return f"{days}d ago"

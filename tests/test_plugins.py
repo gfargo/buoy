@@ -355,6 +355,7 @@ class TestLokiPlugin:
         assert item["primary"] == "ERROR: connection timeout"
         assert item["status"] == "error"
         assert "buoy" in item["secondary"]
+        assert "UTC" in item["secondary"]
 
     @pytest.mark.asyncio
     async def test_render_no_errors_shows_text(self):

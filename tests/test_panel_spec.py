@@ -45,8 +45,8 @@ class TestTable:
             "columns": ["Device", "Temp"],
             "rows": [
                 [
-                    {"value": "sda", "status": "ok", "truncate": False},
-                    {"value": 42, "status": None, "truncate": False},
+                    {"value": "sda", "status": "ok", "truncate": False, "mono": False},
+                    {"value": 42, "status": None, "truncate": False, "mono": False},
                 ]
             ],
         }
@@ -54,6 +54,11 @@ class TestTable:
     def test_cell_truncate(self):
         c = panel.cell("a very long message", truncate=True)
         assert c["truncate"] is True
+
+    def test_cell_mono(self):
+        c = panel.cell("a1b2c3", mono=True)
+        assert c["mono"] is True
+        assert panel.cell("plain")["mono"] is False
 
 
 class TestBadges:

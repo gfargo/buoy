@@ -242,4 +242,9 @@ class TestCertExpiryRender:
         assert blocks[0]["columns"] == ["Cert", "Expiry"]
         row = blocks[0]["rows"][0]
         assert row[0]["value"] == "example.com"
-        assert row[1] == {"value": "5d remaining", "status": "warn", "truncate": False}
+        assert row[1] == {
+            "value": "5d remaining",
+            "status": "warn",
+            "truncate": False,
+            "mono": False,
+        }

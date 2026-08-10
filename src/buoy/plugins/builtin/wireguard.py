@@ -93,7 +93,7 @@ class WireGuardPlugin(Plugin):
                 age_label = f"{age // 60}m"
             rows.append(
                 [
-                    panel.cell(p.get("public_key", ""), status=status),
+                    panel.cell(p.get("public_key", ""), status=status, mono=True),
                     panel.cell(p.get("endpoint", ""), status="dim"),
                     panel.cell(age_label, status=status),
                     panel.cell(

@@ -77,6 +77,6 @@ def _fmt_ns_timestamp(ts: str) -> str:
     """Format a Loki nanosecond-epoch timestamp string as HH:MM:SS UTC."""
     try:
         seconds = int(ts) / 1_000_000_000
-        return datetime.fromtimestamp(seconds, tz=UTC).strftime("%H:%M:%S")
+        return datetime.fromtimestamp(seconds, tz=UTC).strftime("%H:%M:%S UTC")
     except (ValueError, OverflowError, OSError):
         return ""

@@ -47,6 +47,9 @@ function renderTableCell(c) {
   } else {
     styles.push('white-space:nowrap');
   }
+  if (c.mono) {
+    styles.push("font-family:'JetBrains Mono',monospace");
+  }
   return `<td style="${styles.join(';')}">${escapeHtml(c.value ?? '')}</td>`;
 }
 

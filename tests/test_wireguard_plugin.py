@@ -101,6 +101,7 @@ class TestWireGuardPlugin:
         assert blocks[0]["type"] == "table"
         rows = blocks[0]["rows"]
         assert rows[0][0]["status"] == "ok"
+        assert rows[0][0]["mono"] is True
         assert rows[1][2]["value"] == "never"
         assert rows[1][0]["status"] == "error"
         assert rows[0][3]["value"] == "1.0K / 2.0K"

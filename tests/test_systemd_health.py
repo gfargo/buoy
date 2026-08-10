@@ -107,7 +107,12 @@ class TestSystemdHealthPlugin:
         assert blocks[0]["type"] == "table"
         rows_by_unit = {r[0]["value"]: r[1] for r in blocks[0]["rows"]}
         assert rows_by_unit["tailscaled"]["status"] == "ok"
-        assert rows_by_unit["caddy"] == {"value": "failed", "status": "error", "truncate": False}
+        assert rows_by_unit["caddy"] == {
+            "value": "failed",
+            "status": "error",
+            "truncate": False,
+            "mono": False,
+        }
 
     def test_render_no_units_shows_text(self):
         from buoy.plugins.protocol import PanelData
