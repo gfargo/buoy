@@ -600,6 +600,37 @@ class MyCustomPlugin(Plugin):
         await mgr._load_user_plugins()
         assert len(mgr.plugins) == 0
 
+    @pytest.mark.asyncio
+    async def test_user_plugin_override_clears_stale_disabled_state(self, tmp_path):
+        """A valid user-directory override must clear the disabled card left by a failed builtin.
+
+        The builtin registration for "uptime_kuma" fails config validation
+        (missing required "url") and gets flagged disabled. A user plugin
+        with the same id is then loaded from the plugins directory; the
+        stale disabled id/card must not survive the override.
+        """
+        (tmp_path / "override.py").write_text(
+            "from buoy.plugins.protocol import PanelData, Plugin, PluginManifest\n"
+            "class OverridingPlugin(Plugin):\n"
+            "    manifest = PluginManifest(id='uptime_kuma', name='Overriding Uptime Kuma')\n"
+            "    async def collect(self):\n"
+            "        return PanelData(status='ok', summary='')\n"
+        )
+
+        config = _make_config(builtin={"uptime_kuma": PluginEntry(enabled=True, settings={})})
+        config.plugins.directory = str(tmp_path)
+        mgr = PluginManager(config)
+
+        with patch(
+            "buoy.plugins.loader.importlib.metadata.entry_points",
+            return_value=[],
+        ):
+            await mgr.start()
+
+        assert mgr.plugins["uptime_kuma"].manifest.name == "Overriding Uptime Kuma"
+        assert "uptime_kuma" not in mgr._disabled_ids
+        assert "uptime_kuma" not in mgr.latest_data
+
 
 # =============================================================================
 # Collection and data access

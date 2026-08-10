@@ -271,6 +271,11 @@ class PluginManager:
                 instance.configure({})
                 plugin_id = instance.manifest.id
                 self._warn_on_collision(plugin_id, source="user directory")
+                # A user plugin can override a builtin/entry-point plugin that
+                # was disabled by config validation — clear any stale disabled
+                # state so the overriding plugin isn't silently skipped.
+                self._disabled_ids.discard(plugin_id)
+                self._latest_data.pop(plugin_id, None)
                 self._plugins[plugin_id] = instance
             except Exception as e:
                 print(
