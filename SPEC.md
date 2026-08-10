@@ -3,8 +3,11 @@
 > **Project:** Open-source homelab node dashboard  
 > **Name:** **Buoy**  
 > **Repo:** `gfargo/buoy`  
-> **Status:** Planning  
-> **Date:** 2026-06-24  
+> **Status:** Historical planning document — the v2 rebuild described here shipped (currently v2.1.0)  
+> **Date:** Originally drafted 2026-06-24  
+
+> [!NOTE]
+> This is the original rebuild spec, kept for historical context and because parts of it — the threat model (§7), plugin protocol (§4.1), and API contract (§5) — are still cited by section number from code and tests (e.g. `SPEC §7.2`, `SPEC §8.2`). Section numbering below is preserved for that reason; don't renumber. For current, authoritative documentation see `README.md` and `CONTRIBUTING.md`. The checklists, plugin table, and phase estimates below reflect the original plan at time of writing and are largely superseded — see the inline notes in §4.3, §12, §13.1, and §14.
 
 ## 1. Vision
 
@@ -349,6 +352,8 @@ class GitHubPlugin(Plugin):
 
 ### 4.3 Built-in Plugins (ship with hub)
 
+> Historical planning subset. As shipped, Buoy includes 22 built-in plugins (see `src/buoy/plugins/builtin/`) — the table below was the initial planning list and doesn't reflect the current set. `docker_updates` was planned but never implemented; several others (`dns_filter`, `jellyfin`, `journal_errors`, `portainer`, `proxmox`, `smart_disk`, `snapraid`, `speedtest`, `tailscale`, `trigger_dev`, and more) shipped later and aren't listed here. The plugin protocol (§4.1) remains accurate.
+
 | Plugin | What it does | Config needed |
 |--------|-------------|---------------|
 | `github` | Notifications + open PRs | `token` |
@@ -356,7 +361,6 @@ class GitHubPlugin(Plugin):
 | `loki` | Recent error log entries | `url` |
 | `plane` | Sprint/cycle progress bar | `api_key`, `url`, `workspace`, `project` |
 | `actual_budget` | Monthly burn rate | `url`, `password` (pending) |
-| `docker_updates` | Image freshness / available updates | (none — reads Docker socket) |
 | `cert_expiry` | TLS certificate days remaining | (none — reads host certs) |
 | `cron_health` | Recent cron job runs | (none — reads journald) |
 | `backup_status` | Backup health + age | `backup_dir` |
@@ -847,6 +851,8 @@ jobs:
 
 ## 12. Migration Path (v1 → v2)
 
+> ✅ **Completed.** The v1 → v2 migration described in this section is finished; kept for historical record.
+
 ### 12.1 For Current Setup (personal)
 
 1. The v2 `hub.yaml` replaces `services.json` + `.env`
@@ -873,22 +879,24 @@ jobs:
 
 ## 13. Open Source Readiness Checklist
 
+> Status as of v2.1.0: repo prep is done except CODE_OF_CONDUCT.md, issue templates, and GitHub Discussions; the `docs/*.md` files in §13.2 were never created (README.md and CONTRIBUTING.md cover that ground instead). Checkboxes below reflect actual repo state, verified against the filesystem.
+
 ### 13.1 Repository Prep
 
-- [ ] Remove all hardcoded personal data (tailnet domain, project IDs, GitHub username)
-- [ ] Add MIT LICENSE
-- [ ] Write public README with screenshots, quick-start, feature list
-- [ ] Add CONTRIBUTING.md (dev setup, PR process, architecture overview)
-- [ ] Add CHANGELOG.md (start from v2.0.0)
+- [x] Remove all hardcoded personal data (tailnet domain, project IDs, GitHub username)
+- [x] Add MIT LICENSE
+- [x] Write public README with quick-start, feature list (no screenshots yet)
+- [x] Add CONTRIBUTING.md (dev setup, PR process, architecture overview)
+- [x] Add CHANGELOG.md (start from v2.0.0)
 - [ ] Add CODE_OF_CONDUCT.md
 - [ ] Set up GitHub issue templates (bug report, feature request)
 - [ ] Set up GitHub Discussions for Q&A
-- [ ] Create release workflow (tag → build → push to GHCR + create GitHub Release)
+- [x] Create release workflow (tag → build → push to GHCR + create GitHub Release)
 
 ### 13.2 Documentation
 
-- [ ] `docs/configuration.md` — full config reference with examples
-- [ ] `docs/plugins.md` — plugin development guide with examples
+- [ ] `docs/configuration.md` — full config reference with examples (not created; config is documented in README.md)
+- [ ] `docs/plugins.md` — plugin development guide with examples (not created; see CONTRIBUTING.md's architecture section)
 - [ ] `docs/deployment.md` — deployment patterns (single node, fleet, with Caddy/Traefik)
 - [ ] `docs/screenshots/` — high-quality screenshots of all states (normal, warn, dark, light, demo)
 
@@ -924,6 +932,8 @@ The `oled-pages/` directory (Pironman5 OLED orchestrator v3) is **not part of bu
 ---
 
 ## 14. Implementation Phases
+
+> ✅ **Completed.** All six phases below shipped as part of the v2 rebuild (now v2.1.0). Task estimates were the original planning figures and are not actuals; kept for historical record.
 
 ### Phase 1: Foundation (Target: working replacement of v1)
 
