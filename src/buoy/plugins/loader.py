@@ -98,6 +98,9 @@ def validate_plugin_config(
     actionable disabled-card message instead of a runtime error deep in
     collect(). Plugins with an empty schema pass through untouched.
 
+    *plugin_id* prefixes each error message so the disabled card stays
+    unambiguous when a config includes multiple plugins that share a key name.
+
     Returns (coerced_settings, errors). A non-empty errors list means the
     plugin should be registered but not started (see _register_config_gated_plugin).
     """
@@ -117,14 +120,14 @@ def validate_plugin_config(
             try:
                 result[key] = _coerce(result[key], declared_type)
             except (ValueError, TypeError):
-                errors.append(f"invalid value for '{key}': expected {declared_type}")
+                errors.append(f"{plugin_id}: invalid value for '{key}': expected {declared_type}")
                 continue
 
         if meta.get("required"):
             value = result.get(key)
             is_empty_collection = isinstance(value, (list, dict, tuple)) and not value
             if value is None or value == "" or is_empty_collection:
-                errors.append(f"missing required field '{key}'")
+                errors.append(f"{plugin_id}: missing required field '{key}'")
 
     return result, errors
 
@@ -315,6 +318,12 @@ class PluginManager:
                 summary=f"Config error: {'; '.join(errors)}",
                 detail={"errors": errors},
             )
+        else:
+            # A later source (e.g. entry point) can override an earlier one
+            # (e.g. builtin) that was disabled — clear any stale disabled
+            # state so the overriding plugin isn't silently skipped.
+            self._disabled_ids.discard(plugin_id)
+            self._latest_data.pop(plugin_id, None)
         instance.configure(settings)
         self._plugins[plugin_id] = instance
         return True

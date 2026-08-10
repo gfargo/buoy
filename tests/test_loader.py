@@ -437,6 +437,38 @@ class TestLoadEntrypointPlugins:
 
         assert mgr.plugins["github"].manifest.name == "Overriding GitHub"
 
+    @pytest.mark.asyncio
+    async def test_entry_point_override_clears_stale_disabled_state(self):
+        """A valid override must clear the disabled card left by a failed builtin.
+
+        The builtin registration for "uptime_kuma" fails config validation
+        (missing required "url") and gets flagged disabled. An entry point
+        plugin then overrides it with a schema-less config that validates
+        cleanly; the stale disabled id/card must not survive the override.
+        """
+
+        class OverridingPlugin(Plugin):
+            manifest = PluginManifest(id="uptime_kuma", name="Overriding Uptime Kuma")
+
+            async def collect(self) -> PanelData:
+                return PanelData(status="ok", summary="")
+
+        config = _make_config(builtin={"uptime_kuma": PluginEntry(enabled=True, settings={})})
+        mgr = PluginManager(config)
+
+        with (
+            patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock),
+            patch(
+                "buoy.plugins.loader.importlib.metadata.entry_points",
+                return_value=[_fake_entry_point("uptime_kuma_override", OverridingPlugin)],
+            ),
+        ):
+            await mgr.start()
+
+        assert mgr.plugins["uptime_kuma"].manifest.name == "Overriding Uptime Kuma"
+        assert "uptime_kuma" not in mgr._disabled_ids
+        assert "uptime_kuma" not in mgr.latest_data
+
 
 # =============================================================================
 # discover_all: CLI-facing enumeration without starting collection loops
