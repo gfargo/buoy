@@ -305,6 +305,207 @@ class TestLoadBuiltins:
 
 
 # =============================================================================
+# Entry-point plugin loading
+# =============================================================================
+
+
+def _fake_entry_point(name: str, obj):
+    """Build a stand-in for importlib.metadata.EntryPoint with a fixed .load()."""
+    ep = MagicMock()
+    ep.name = name
+    ep.load.return_value = obj
+    return ep
+
+
+class EntrypointFakePlugin(Plugin):
+    """A Plugin subclass 'shipped' by a pip-installed third-party package."""
+
+    manifest = PluginManifest(id="ep_fake", name="Entrypoint Fake", refresh_interval=45)
+
+    async def collect(self) -> PanelData:
+        return PanelData(status="ok", summary="ep data")
+
+
+class TestLoadEntrypointPlugins:
+    """Test loading plugins registered under the buoy.plugins entry-point group."""
+
+    @pytest.mark.asyncio
+    async def test_loads_enabled_entrypoint_plugin_class(self):
+        config = _make_config(builtin={"ep_fake": PluginEntry(enabled=True, settings={})})
+        mgr = PluginManager(config)
+
+        with (
+            patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock),
+            patch(
+                "buoy.plugins.loader.importlib.metadata.entry_points",
+                return_value=[_fake_entry_point("ep_fake", EntrypointFakePlugin)],
+            ),
+        ):
+            await mgr.start()
+
+        assert "ep_fake" in mgr.plugins
+
+    @pytest.mark.asyncio
+    async def test_skips_disabled_entrypoint_plugin(self):
+        config = _make_config(builtin={"ep_fake": PluginEntry(enabled=False, settings={})})
+        mgr = PluginManager(config)
+
+        with (
+            patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock),
+            patch(
+                "buoy.plugins.loader.importlib.metadata.entry_points",
+                return_value=[_fake_entry_point("ep_fake", EntrypointFakePlugin)],
+            ),
+        ):
+            await mgr.start()
+
+        assert "ep_fake" not in mgr.plugins
+
+    @pytest.mark.asyncio
+    async def test_entry_point_module_form_is_resolved(self):
+        """An entry point may point at a module rather than a class directly."""
+        import types
+
+        fake_module = types.ModuleType("fake_ep_module")
+        EntrypointFakePlugin.__module__ = "fake_ep_module"
+        fake_module.EntrypointFakePlugin = EntrypointFakePlugin
+        import sys as _sys
+
+        _sys.modules["fake_ep_module"] = fake_module
+        try:
+            config = _make_config(builtin={"ep_fake": PluginEntry(enabled=True, settings={})})
+            mgr = PluginManager(config)
+
+            with (
+                patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock),
+                patch(
+                    "buoy.plugins.loader.importlib.metadata.entry_points",
+                    return_value=[_fake_entry_point("ep_fake", fake_module)],
+                ),
+            ):
+                await mgr.start()
+
+            assert "ep_fake" in mgr.plugins
+        finally:
+            _sys.modules.pop("fake_ep_module", None)
+            EntrypointFakePlugin.__module__ = __name__
+
+    @pytest.mark.asyncio
+    async def test_entry_point_load_failure_is_isolated(self):
+        config = _make_config(builtin={})
+        mgr = PluginManager(config)
+
+        broken_ep = MagicMock()
+        broken_ep.name = "broken"
+        broken_ep.load.side_effect = ImportError("missing dependency")
+
+        with (
+            patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock),
+            patch(
+                "buoy.plugins.loader.importlib.metadata.entry_points",
+                return_value=[broken_ep],
+            ),
+        ):
+            # Should not raise
+            await mgr.start()
+
+        assert mgr.plugins == {}
+
+    @pytest.mark.asyncio
+    async def test_entry_point_overrides_builtin_with_same_id(self):
+        """Later sources win: an entry point plugin overrides a builtin with the same id."""
+
+        class OverridingPlugin(Plugin):
+            manifest = PluginManifest(id="github", name="Overriding GitHub")
+
+            async def collect(self) -> PanelData:
+                return PanelData(status="ok", summary="")
+
+        config = _make_config(
+            builtin={"github": PluginEntry(enabled=True, settings={"token": "x"})}
+        )
+        mgr = PluginManager(config)
+
+        with (
+            patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock),
+            patch(
+                "buoy.plugins.loader.importlib.metadata.entry_points",
+                return_value=[_fake_entry_point("github_override", OverridingPlugin)],
+            ),
+        ):
+            await mgr.start()
+
+        assert mgr.plugins["github"].manifest.name == "Overriding GitHub"
+
+
+# =============================================================================
+# discover_all: CLI-facing enumeration without starting collection loops
+# =============================================================================
+
+
+class TestDiscoverAll:
+    """Test PluginManager.discover_all used by the `buoy plugin` CLI."""
+
+    def test_includes_builtins_with_enabled_state(self):
+        config = _make_config(builtin={"github": PluginEntry(enabled=True, settings={})})
+        result = {p["id"]: p for p in PluginManager.discover_all(config)}
+
+        assert "github" in result
+        assert result["github"]["source"] == "builtin"
+        assert result["github"]["enabled"] is True
+
+        assert "uptime_kuma" in result
+        assert result["uptime_kuma"]["enabled"] is False
+
+    def test_includes_entrypoint_plugins(self):
+        config = _make_config(builtin={"ep_fake": PluginEntry(enabled=True, settings={})})
+
+        with patch(
+            "buoy.plugins.loader.importlib.metadata.entry_points",
+            return_value=[_fake_entry_point("ep_fake", EntrypointFakePlugin)],
+        ):
+            result = {p["id"]: p for p in PluginManager.discover_all(config)}
+
+        assert "ep_fake" in result
+        assert result["ep_fake"]["source"] == "entrypoint"
+        assert result["ep_fake"]["enabled"] is True
+
+    def test_includes_dir_plugins_always_enabled(self, tmp_path):
+        (tmp_path / "custom.py").write_text(
+            "from buoy.plugins.protocol import PanelData, Plugin, PluginManifest\n"
+            "class CustomPlugin(Plugin):\n"
+            "    manifest = PluginManifest(id='custom', name='Custom')\n"
+            "    async def collect(self):\n"
+            "        return PanelData(status='ok', summary='')\n"
+        )
+        config = _make_config(builtin={})
+        config.plugins.directory = str(tmp_path)
+
+        with patch(
+            "buoy.plugins.loader.importlib.metadata.entry_points",
+            return_value=[],
+        ):
+            result = {p["id"]: p for p in PluginManager.discover_all(config)}
+
+        assert result["custom"]["source"] == "dir"
+        assert result["custom"]["enabled"] is True
+
+    def test_manifest_fields_present(self):
+        config = _make_config(builtin={})
+
+        with patch(
+            "buoy.plugins.loader.importlib.metadata.entry_points",
+            return_value=[],
+        ):
+            result = {p["id"]: p for p in PluginManager.discover_all(config)}
+
+        github = result["github"]
+        assert github["name"] == "GitHub"
+        assert "token" in github["config_schema"]
+        assert github["refresh_interval"] == 300
+
+
+# =============================================================================
 # User plugin loading
 # =============================================================================
 
