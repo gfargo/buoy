@@ -80,3 +80,47 @@ def test_csp_connect_src_self_only_without_peers():
         r = client.get("/api/health")
     connect_src = r.headers["content-security-policy"].split("connect-src")[1].split(";")[0]
     assert connect_src.strip() == "'self'"
+
+
+def test_csp_peer_url_injection_is_neutralized():
+    """A malicious/misconfigured peer URL must not inject extra CSP tokens
+    or directives when interpolated into connect-src."""
+    malicious = f"{PEER_URL}/api; script-src 'unsafe-inline'"
+    app = create_app(_make_config(peers=[PeerConfig(name="harbor", url=malicious)]))
+    with TestClient(app) as client:
+        r = client.get("/api/health")
+    csp = r.headers["content-security-policy"]
+    connect_src = csp.split("connect-src")[1].split(";")[0]
+    assert PEER_URL in connect_src
+    assert "'unsafe-inline'" not in csp.split("script-src")[1].split(";")[0]
+    assert csp.count("script-src") == 1
+
+
+def test_csp_non_http_peer_scheme_dropped():
+    app = create_app(_make_config(peers=[PeerConfig(name="evil", url="javascript:alert(1)")]))
+    with TestClient(app) as client:
+        r = client.get("/api/health")
+    connect_src = r.headers["content-security-policy"].split("connect-src")[1].split(";")[0]
+    assert connect_src.strip() == "'self'"
+
+
+def test_csp_peer_url_path_stripped():
+    app = create_app(_make_config(peers=[PeerConfig(name="harbor", url=f"{PEER_URL}/dashboard")]))
+    with TestClient(app) as client:
+        r = client.get("/api/health")
+    connect_src = r.headers["content-security-policy"].split("connect-src")[1].split(";")[0]
+    assert PEER_URL in connect_src
+    assert "/dashboard" not in connect_src
+
+
+def test_csp_peer_url_embedded_newline_dropped():
+    """urlsplit() silently strips \\t\\r\\n from netloc rather than rejecting
+    the URL, so a smuggled newline could otherwise merge into a trailing
+    space-separated token (e.g. a "*" wildcard) inside connect-src."""
+    malicious = PEER_URL + "\nscript-src *"
+    app = create_app(_make_config(peers=[PeerConfig(name="harbor", url=malicious)]))
+    with TestClient(app) as client:
+        r = client.get("/api/health")
+    connect_src = r.headers["content-security-policy"].split("connect-src")[1].split(";")[0]
+    assert connect_src.strip() == "'self'"
+    assert "*" not in connect_src
