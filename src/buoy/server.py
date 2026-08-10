@@ -755,6 +755,30 @@ async def index(request: Request) -> Response:
 
 # ── App Factory ────────────────────────────────────────────────────────────────
 
+# 'unsafe-eval' is required by the plugin custom-JS renderer (new Function(),
+# static/js/plugins.js) and 'unsafe-inline' in style-src by the pervasive
+# inline style="..." attributes across the dashboard templates. Both are
+# tracked for removal under PP-5 (sandboxed plugin renderer), at which point
+# this policy should tighten to drop them. fonts.googleapis.com/gstatic.com
+# are allowlisted because index.html loads the JetBrains Mono / Outfit
+# webfonts from Google Fonts. connect-src includes configured fleet peer
+# origins since the fleet grid fetches each peer's /api/stats directly from
+# the browser (static/js/fleet.js).
+def _build_csp_policy(peer_urls: list[str]) -> str:
+    connect_src = " ".join(["'self'"] + list(dict.fromkeys(peer_urls)))
+    return (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        f"connect-src {connect_src}; "
+        "object-src 'none'; "
+        "base-uri 'none'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'"
+    )
+
 
 def create_app(config: BuoyConfig) -> Starlette:
     """Create the Starlette application."""
@@ -807,12 +831,15 @@ def create_app(config: BuoyConfig) -> Starlette:
     # Security headers middleware
     from starlette.middleware.base import BaseHTTPMiddleware
 
+    csp_policy = _build_csp_policy([p.url for p in config.network.peers if p.url])
+
     class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             response = await call_next(request)
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            response.headers["Content-Security-Policy"] = csp_policy
             if not request.url.path.startswith("/static/"):
                 response.headers["Cache-Control"] = "no-cache"
             return response
