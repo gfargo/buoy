@@ -175,6 +175,25 @@ class WeatherPlugin(Plugin):
         return PanelData(status="ok", summary="72°F, Sunny")
 ```
 
+**Distributable plugins** can also be shipped as a pip-installable package. Register your `Plugin`
+subclass (or a module containing one) under the `buoy.plugins` entry-point group:
+
+```toml
+# pyproject.toml of your plugin package
+[project.entry-points."buoy.plugins"]
+weather = "buoy_plugin_weather:WeatherPlugin"
+```
+
+Once installed alongside Buoy, it's discovered automatically at startup — same enable gate as
+built-ins (`plugins.builtin.weather.enabled: true` in `buoy.yaml`). Use the `buoy plugin` CLI to
+inspect what's available:
+
+```bash
+buoy plugin list                 # every discoverable plugin: source, id, name, version, enabled
+buoy plugin info weather         # full manifest for one plugin
+buoy plugin install buoy-plugin-weather   # pip install + report newly-registered plugin(s)
+```
+
 ## Development
 
 ```bash

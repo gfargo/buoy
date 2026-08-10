@@ -297,7 +297,8 @@ plugins:
 
 ### 4.1 Plugin Protocol
 
-Plugins are Python files (or packages) that implement a simple interface:
+Plugins are Python files (or pip-installed packages, registered under the `buoy.plugins`
+entry-point group — see 4.2) that implement a simple interface:
 
 ```python
 from buoy.plugins.protocol import Plugin, PluginManifest, PanelData
@@ -344,11 +345,20 @@ class GitHubPlugin(Plugin):
 
 ### 4.2 Plugin Lifecycle
 
-1. **Discovery:** On startup, scan `plugins/` directory + `buoy.plugins.builtin` package
+1. **Discovery:** On startup, scan three sources in order — `buoy.plugins.builtin` package, then
+   packages registered under the `buoy.plugins` `importlib.metadata` entry-point group (pip-installed
+   third-party plugins), then the `plugins/` directory. If two sources register the same plugin id,
+   the later source wins and the override is logged (builtin < entry point < directory).
 2. **Validation:** Check manifest, validate config against schema
 3. **Init:** Call `plugin.setup()` (async) — for connection pooling, auth checks
 4. **Collect loop:** Every `max(manifest.refresh_interval, refresh.plugins_interval)` seconds, call `plugin.collect()` — the global `refresh.plugins_interval` config value acts as a floor so the operator can slow down all plugins without shortening intentionally long intervals (e.g. `github` at 300 s, `cert_expiry` at 3600 s)
 5. **Shutdown:** Call `plugin.teardown()` on graceful stop
+
+Built-in and entry-point plugins share the same enable gate: `plugins.builtin.<id>.enabled` in
+`buoy.yaml` (third-party plugins default off, same as built-ins). Directory plugins have no config
+entry and are always active once dropped in. The `buoy plugin list/info/install` CLI (see
+`README.md`) enumerates all three sources without booting the async plugin lifecycle, and can pip
+install a plugin package.
 
 ### 4.3 Built-in Plugins (ship with hub)
 
