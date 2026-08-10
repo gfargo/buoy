@@ -121,6 +121,38 @@ class TestConfigFromYAML:
         config = _build_config(raw)
         assert config.plugins.builtin["github"].refresh_interval is None
 
+    def test_plugins_user(self):
+        raw = {
+            "plugins": {
+                "user": {
+                    "weather": {"url": "https://api.example.com"},
+                }
+            }
+        }
+        config = _build_config(raw)
+        assert config.plugins.user["weather"].settings["url"] == "https://api.example.com"
+
+    def test_plugins_user_defaults_empty(self):
+        config = _build_config({})
+        assert config.plugins.user == {}
+
+    def test_plugins_user_defaults_enabled(self):
+        """User (drop-in) plugins are opt-out: no `enabled` key means enabled."""
+        raw = {"plugins": {"user": {"weather": {"url": "https://api.example.com"}}}}
+        config = _build_config(raw)
+        assert config.plugins.user["weather"].enabled is True
+
+    def test_plugins_user_explicit_disabled(self):
+        raw = {"plugins": {"user": {"weather": {"enabled": False}}}}
+        config = _build_config(raw)
+        assert config.plugins.user["weather"].enabled is False
+
+    def test_plugins_builtin_defaults_disabled(self):
+        """Builtin plugins are opt-in: no `enabled` key means disabled."""
+        raw = {"plugins": {"builtin": {"github": {"token": "ghp_xxx"}}}}
+        config = _build_config(raw)
+        assert config.plugins.builtin["github"].enabled is False
+
     def test_theme_preset_light(self):
         config = _build_config({"theme": {"preset": "light"}})
         assert config.theme.preset == "light"

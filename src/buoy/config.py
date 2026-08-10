@@ -107,6 +107,7 @@ class PluginsConfig:
     enabled: bool = True
     directory: str = "/plugins"
     builtin: dict[str, PluginEntry] = field(default_factory=dict)
+    user: dict[str, PluginEntry] = field(default_factory=dict)
 
 
 @dataclass
@@ -236,11 +237,18 @@ def _parse_overrides(raw_overrides: dict[str, dict]) -> dict[str, ServiceOverrid
     return overrides
 
 
-def _parse_plugins(raw_plugins: dict[str, dict]) -> dict[str, PluginEntry]:
-    """Parse builtin plugin config entries."""
+def _parse_plugins(
+    raw_plugins: dict[str, dict], default_enabled: bool = False
+) -> dict[str, PluginEntry]:
+    """Parse plugin config entries.
+
+    Builtins are opt-in (``default_enabled=False``): omitting a plugin, or
+    omitting ``enabled``, leaves it off. User drop-in plugins are opt-out
+    (``default_enabled=True``): they load unless explicitly disabled.
+    """
     entries = {}
     for plugin_id, cfg in raw_plugins.items():
-        enabled = cfg.pop("enabled", False) if isinstance(cfg, dict) else False
+        enabled = cfg.pop("enabled", default_enabled) if isinstance(cfg, dict) else default_enabled
         raw_interval = cfg.pop("refresh_interval", None) if isinstance(cfg, dict) else None
         refresh_interval = int(raw_interval) if raw_interval is not None else None
         settings = cfg if isinstance(cfg, dict) else {}
@@ -315,6 +323,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         enabled=bool(plugins_raw.get("enabled", True)),
         directory=plugins_raw.get("directory", "/plugins"),
         builtin=_parse_plugins(plugins_raw.get("builtin", {})),
+        user=_parse_plugins(plugins_raw.get("user", {}), default_enabled=True),
     )
 
     alerts = AlertsConfig(

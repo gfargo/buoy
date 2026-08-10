@@ -17,7 +17,11 @@ from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 @dataclass
 class PluginEntry:
-    enabled: bool = False
+    # Mirrors buoy.config.PluginEntry post-parse: builtin entries are opt-in
+    # (tests always pass enabled= explicitly for those), user entries are
+    # opt-out, so this stub defaults to True to match _parse_plugins'
+    # default_enabled=True for the user map.
+    enabled: bool = True
     refresh_interval: int | None = None
     settings: dict = field(default_factory=dict)
 
@@ -27,9 +31,10 @@ class PluginsConfig:
     enabled: bool = True
     directory: str = "/plugins"
     builtin: dict = field(default_factory=dict)
+    user: dict = field(default_factory=dict)
 
 
-def _make_config(plugins_enabled=True, builtin=None):
+def _make_config(plugins_enabled=True, builtin=None, user=None):
     config = BuoyConfig()
     config.node = NodeConfig(name="test")
     config.network = NetworkConfig()
@@ -37,6 +42,7 @@ def _make_config(plugins_enabled=True, builtin=None):
     config.plugins = PluginsConfig(
         enabled=plugins_enabled,
         builtin=builtin or {},
+        user=user or {},
     )
     return config
 
@@ -304,6 +310,18 @@ class TestLoadBuiltins:
 
         assert len(mgr.plugins) == 0
 
+    @pytest.mark.asyncio
+    async def test_records_manifest_name_even_when_unconfigured(self):
+        """_builtin_names is populated for every discovered module, not just
+        configured+enabled ones, so _configured_not_loaded can show a real
+        name if the plugin is later enabled but fails to start."""
+        config = _make_config(builtin={})
+        mgr = PluginManager(config)
+
+        await mgr._load_builtins()
+
+        assert mgr._builtin_names.get("github") == "GitHub"
+
 
 # =============================================================================
 # Entry-point plugin loading
@@ -471,7 +489,7 @@ class TestDiscoverAll:
         assert result["ep_fake"]["source"] == "entrypoint"
         assert result["ep_fake"]["enabled"] is True
 
-    def test_includes_dir_plugins_always_enabled(self, tmp_path):
+    def test_includes_dir_plugins_enabled_by_default(self, tmp_path):
         (tmp_path / "custom.py").write_text(
             "from buoy.plugins.protocol import PanelData, Plugin, PluginManifest\n"
             "class CustomPlugin(Plugin):\n"
@@ -490,6 +508,26 @@ class TestDiscoverAll:
 
         assert result["custom"]["source"] == "dir"
         assert result["custom"]["enabled"] is True
+
+    def test_includes_dir_plugins_respecting_explicit_disable(self, tmp_path):
+        (tmp_path / "custom.py").write_text(
+            "from buoy.plugins.protocol import PanelData, Plugin, PluginManifest\n"
+            "class CustomPlugin(Plugin):\n"
+            "    manifest = PluginManifest(id='custom', name='Custom')\n"
+            "    async def collect(self):\n"
+            "        return PanelData(status='ok', summary='')\n"
+        )
+        config = _make_config(builtin={}, user={"custom": PluginEntry(enabled=False, settings={})})
+        config.plugins.directory = str(tmp_path)
+
+        with patch(
+            "buoy.plugins.loader.importlib.metadata.entry_points",
+            return_value=[],
+        ):
+            result = {p["id"]: p for p in PluginManager.discover_all(config)}
+
+        assert result["custom"]["source"] == "dir"
+        assert result["custom"]["enabled"] is False
 
     def test_manifest_fields_present(self):
         config = _make_config(builtin={})
@@ -534,6 +572,110 @@ class MyCustomPlugin(Plugin):
         await mgr._load_user_plugins()
 
         assert "my_custom" in mgr.plugins
+        assert mgr.plugins["my_custom"].config == {}
+
+    @pytest.mark.asyncio
+    async def test_user_plugin_receives_yaml_settings(self, tmp_path):
+        plugin_file = tmp_path / "weather_plugin.py"
+        plugin_file.write_text("""
+from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+
+class WeatherPlugin(Plugin):
+    manifest = PluginManifest(
+        id="weather",
+        name="Weather",
+        config_schema={"url": {"type": "string"}, "api_key": {"type": "string"}},
+    )
+
+    async def collect(self):
+        return PanelData(status="ok", summary="Weather works")
+""")
+
+        config = _make_config(
+            builtin={},
+            user={"weather": PluginEntry(settings={"url": "https://api.example.com"})},
+        )
+        config.plugins.directory = str(tmp_path)
+        mgr = PluginManager(config)
+
+        await mgr._load_user_plugins()
+
+        assert mgr.plugins["weather"].config["url"] == "https://api.example.com"
+
+    @pytest.mark.asyncio
+    async def test_user_plugin_env_override(self, tmp_path, monkeypatch):
+        plugin_file = tmp_path / "weather_plugin.py"
+        plugin_file.write_text("""
+from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+
+class WeatherPlugin(Plugin):
+    manifest = PluginManifest(
+        id="weather",
+        name="Weather",
+        config_schema={"api_key": {"type": "string"}},
+    )
+
+    async def collect(self):
+        return PanelData(status="ok", summary="Weather works")
+""")
+        monkeypatch.setenv("BUOY_PLUGIN_WEATHER_API_KEY", "env-secret")
+
+        config = _make_config(
+            builtin={},
+            user={"weather": PluginEntry(settings={"api_key": "yaml-secret"})},
+        )
+        config.plugins.directory = str(tmp_path)
+        mgr = PluginManager(config)
+
+        await mgr._load_user_plugins()
+
+        assert mgr.plugins["weather"].config["api_key"] == "env-secret"
+
+    @pytest.mark.asyncio
+    async def test_user_plugin_no_entry_still_loads(self, tmp_path):
+        """User plugins are opt-out: no config entry at all still loads the drop-in."""
+        plugin_file = tmp_path / "custom_plugin.py"
+        plugin_file.write_text("""
+from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+
+class CustomPlugin(Plugin):
+    manifest = PluginManifest(id="custom", name="Custom")
+
+    async def collect(self):
+        return PanelData(status="ok", summary="Custom works")
+""")
+
+        config = _make_config(builtin={}, user={})
+        config.plugins.directory = str(tmp_path)
+        mgr = PluginManager(config)
+
+        await mgr._load_user_plugins()
+
+        assert "custom" in mgr.plugins
+
+    @pytest.mark.asyncio
+    async def test_user_plugin_enabled_false_skips(self, tmp_path):
+        plugin_file = tmp_path / "weather_plugin.py"
+        plugin_file.write_text("""
+from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+
+class WeatherPlugin(Plugin):
+    manifest = PluginManifest(id="weather", name="Weather")
+
+    async def collect(self):
+        return PanelData(status="ok", summary="Weather works")
+""")
+
+        config = _make_config(
+            builtin={},
+            user={"weather": PluginEntry(enabled=False, settings={})},
+        )
+        config.plugins.directory = str(tmp_path)
+        mgr = PluginManager(config)
+
+        await mgr._load_user_plugins()
+
+        assert "weather" not in mgr.plugins
 
     @pytest.mark.asyncio
     async def test_ignores_underscore_files(self, tmp_path):
@@ -660,6 +802,112 @@ class TestPluginCollection:
         assert result["another"]["name"] == "Another"
         assert result["another"]["status"] == "pending"
         assert result["another"]["detail"] == {}
+
+    @pytest.mark.asyncio
+    async def test_safe_collect_success_records_health(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        plugin = FakePlugin()
+
+        await mgr._safe_collect("fake", plugin)
+
+        health = mgr._health["fake"]
+        assert isinstance(health["last_collect_at"], float)
+        assert health["last_error"] is None
+        assert health["consecutive_failures"] == 0
+
+    @pytest.mark.asyncio
+    async def test_safe_collect_failure_records_health(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        plugin = FailingPlugin()
+
+        await mgr._safe_collect("failing", plugin)
+        await mgr._safe_collect("failing", plugin)
+
+        health = mgr._health["failing"]
+        assert health["consecutive_failures"] == 2
+        assert "Something broke" in health["last_error"]
+        assert health["last_collect_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_safe_collect_failure_after_success_keeps_last_collect_at(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        await mgr._safe_collect("fake", FakePlugin())
+        first_collect_at = mgr._health["fake"]["last_collect_at"]
+
+        await mgr._safe_collect("fake", FailingPlugin())
+
+        health = mgr._health["fake"]
+        assert health["last_collect_at"] == first_collect_at
+        assert health["consecutive_failures"] == 1
+        assert "Something broke" in health["last_error"]
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_includes_health_fields(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok", summary="Fake data")}
+        mgr._health = {
+            "fake": {"last_collect_at": 123.0, "last_error": None, "consecutive_failures": 0}
+        }
+
+        result = await mgr.collect_all_now()
+
+        assert result["fake"]["loaded"] is True
+        assert result["fake"]["last_collect_at"] == 123.0
+        assert result["fake"]["last_error"] is None
+        assert result["fake"]["consecutive_failures"] == 0
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_reports_configured_but_not_loaded(self):
+        config = _make_config(builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        # "broken" is configured+enabled but never made it into self._plugins
+        # (e.g. import or setup() failure).
+
+        result = await mgr.collect_all_now()
+
+        assert "broken" in result
+        assert result["broken"]["loaded"] is False
+        assert result["broken"]["status"] == "error"
+        assert result["broken"]["last_collect_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_configured_not_loaded_empty_when_plugins_disabled(self):
+        config = _make_config(plugins_enabled=False, builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+
+        result = await mgr.collect_all_now()
+
+        assert "broken" not in result
+
+    @pytest.mark.asyncio
+    async def test_configured_not_loaded_uses_discovered_manifest_name(self):
+        config = _make_config(builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        mgr._builtin_names = {"broken": "Broken Plugin"}
+        # "broken" is configured+enabled, its module imported fine (hence the
+        # name being known), but it never made it into self._plugins (e.g. a
+        # setup() failure).
+
+        result = await mgr.collect_all_now()
+
+        assert result["broken"]["name"] == "Broken Plugin"
+
+    @pytest.mark.asyncio
+    async def test_configured_not_loaded_falls_back_to_id_when_name_unknown(self):
+        config = _make_config(builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        # No entry in mgr._builtin_names (e.g. the module itself failed to
+        # import, so its manifest was never discovered).
+
+        result = await mgr.collect_all_now()
+
+        assert result["broken"]["name"] == "broken"
 
 
 # =============================================================================

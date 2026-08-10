@@ -29,12 +29,16 @@ export async function refreshServices(config) {
       const icon = s.icon ? `<span class="svc-icon">${escapeHtml(s.icon)}</span>` : `<div class="dot"></div>`;
       const displayUrl = s.url ? s.url.replace(/^https?:\/\//, '') : '';
       const href = s.url || '#';
-      return `<a class="svc" href="${escapeHtml(safeUrl(href))}" ${s.url ? '' : 'onclick="return false"'}>
+      return `<a class="svc" href="${escapeHtml(safeUrl(href))}" ${s.url ? '' : 'data-no-url="1"'}>
         <div class="svc-header">${icon}<div class="svc-name">${escapeHtml(s.name)}</div></div>
         <div class="svc-desc">${escapeHtml(s.desc)}</div>
         ${displayUrl ? `<div class="svc-url">${escapeHtml(displayUrl)}</div>` : ''}
       </a>`;
     }).join('');
+
+    localEl.querySelectorAll('.svc[data-no-url="1"]').forEach(a => {
+      a.addEventListener('click', (e) => e.preventDefault());
+    });
 
     // Store network entries for fleet module
     window._networkEntries = data.network || [];
