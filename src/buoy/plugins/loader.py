@@ -160,7 +160,9 @@ class PluginManager:
             try:
                 self._register_config_gated_plugin(plugin_class, source="builtin")
             except Exception as e:
-                print(f"[buoy:plugins] Failed to register builtin '{plugin_class.manifest.id}': {e}")
+                print(
+                    f"[buoy:plugins] Failed to register builtin '{plugin_class.manifest.id}': {e}"
+                )
 
     async def _load_entrypoint_plugins(self):
         """Load plugins registered under the ``buoy.plugins`` entry-point group.
@@ -204,7 +206,9 @@ class PluginManager:
         override visible instead of silently swapping plugins.
         """
         if plugin_id in self._plugins:
-            print(f"[buoy:plugins] '{plugin_id}' from {source} overrides a previously loaded plugin with the same id")
+            print(
+                f"[buoy:plugins] '{plugin_id}' from {source} overrides a previously loaded plugin with the same id"
+            )
 
     def _register_config_gated_plugin(self, plugin_class: type[Plugin], source: str) -> bool:
         """Instantiate, configure, and register *plugin_class* if enabled in config.

@@ -15,10 +15,13 @@ def cmd_list(config) -> int:
         print("No plugins discovered.")
         return 0
 
-    rows = [("SOURCE", "ID", "NAME", "VERSION", "ENABLED"), *(
-        (p["source"], p["id"], p["name"], p["version"], "yes" if p["enabled"] else "no")
-        for p in plugins
-    )]
+    rows = [
+        ("SOURCE", "ID", "NAME", "VERSION", "ENABLED"),
+        *(
+            (p["source"], p["id"], p["name"], p["version"], "yes" if p["enabled"] else "no")
+            for p in plugins
+        ),
+    ]
     widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
     for row in rows:
         print("  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)))
@@ -66,6 +69,6 @@ def cmd_install(config, spec: str) -> int:
     else:
         print(
             "\nInstall succeeded but no new 'buoy.plugins' entry point was detected. "
-            "Check that the package declares one under [project.entry-points.\"buoy.plugins\"]."
+            'Check that the package declares one under [project.entry-points."buoy.plugins"].'
         )
     return 0
