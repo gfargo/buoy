@@ -392,7 +392,7 @@ class PluginManager:
             else:
                 entry = config.plugins.builtin.get(plugin_id)
                 enabled = bool(entry and entry.enabled)
-            override = entry.refresh_interval if entry else None
+            override = entry.refresh_interval if entry and source != "dir" else None
             if plugin_id in seen:
                 print(
                     f"[buoy:plugins] '{plugin_id}' from {source} overrides a "

@@ -529,6 +529,33 @@ class TestDiscoverAll:
         assert result["custom"]["source"] == "dir"
         assert result["custom"]["enabled"] is False
 
+    def test_dir_plugins_never_report_refresh_interval_override(self, tmp_path):
+        # A user config entry can carry a refresh_interval, but dir-sourced
+        # plugins have no way to have it honored by _resolve_interval (which
+        # only consults plugins.builtin) - discover_all must not claim an
+        # override is active for them.
+        (tmp_path / "custom.py").write_text(
+            "from buoy.plugins.protocol import PanelData, Plugin, PluginManifest\n"
+            "class CustomPlugin(Plugin):\n"
+            "    manifest = PluginManifest(id='custom', name='Custom')\n"
+            "    async def collect(self):\n"
+            "        return PanelData(status='ok', summary='')\n"
+        )
+        config = _make_config(
+            builtin={},
+            user={"custom": PluginEntry(enabled=True, refresh_interval=600, settings={})},
+        )
+        config.plugins.directory = str(tmp_path)
+
+        with patch(
+            "buoy.plugins.loader.importlib.metadata.entry_points",
+            return_value=[],
+        ):
+            result = {p["id"]: p for p in PluginManager.discover_all(config)}
+
+        assert result["custom"]["source"] == "dir"
+        assert result["custom"]["refresh_interval_override"] is None
+
     def test_manifest_fields_present(self):
         config = _make_config(builtin={})
 
