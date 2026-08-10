@@ -66,6 +66,11 @@ class PluginManager:
         # collect), last_error (cleared on success), consecutive_failures (reset
         # on success).
         self._health: dict[str, dict[str, Any]] = {}
+        # id -> manifest display name for every builtin module discovered during
+        # _load_builtins, regardless of whether it's configured/enabled or its
+        # setup() later failed. Lets _configured_not_loaded show a real name
+        # instead of reusing the config key.
+        self._builtin_names: dict[str, str] = {}
 
     @property
     def plugins(self) -> dict[str, Plugin]:
@@ -168,9 +173,16 @@ class PluginManager:
         module failed to import or its setup() raised (see _load_builtins and
         start()). User plugins have no config entry and are always loaded when
         present, so they're unaffected by this check.
+
+        Returns nothing when the plugin subsystem itself is globally disabled
+        (``plugins.enabled: false``) — in that case ``start()`` never runs, so
+        every configured builtin would otherwise show up mislabeled as "Failed
+        to load" instead of intentionally off.
         """
+        if not self.config.plugins.enabled:
+            return []
         return [
-            (plugin_id, plugin_id)
+            (plugin_id, self._builtin_names.get(plugin_id, plugin_id))
             for plugin_id, entry in self.config.plugins.builtin.items()
             if entry.enabled and plugin_id not in self._plugins
         ]
@@ -208,6 +220,7 @@ class PluginManager:
                 if plugin_class is None:
                     continue
                 plugin_id = plugin_class.manifest.id
+                self._builtin_names[plugin_id] = plugin_class.manifest.name
                 entry = self.config.plugins.builtin.get(plugin_id)
                 if not entry or not entry.enabled:
                     continue

@@ -303,6 +303,18 @@ class TestLoadBuiltins:
 
         assert len(mgr.plugins) == 0
 
+    @pytest.mark.asyncio
+    async def test_records_manifest_name_even_when_unconfigured(self):
+        """_builtin_names is populated for every discovered module, not just
+        configured+enabled ones, so _configured_not_loaded can show a real
+        name if the plugin is later enabled but fails to start."""
+        config = _make_config(builtin={})
+        mgr = PluginManager(config)
+
+        await mgr._load_builtins()
+
+        assert mgr._builtin_names.get("github") == "GitHub"
+
 
 # =============================================================================
 # User plugin loading
@@ -531,6 +543,39 @@ class TestPluginCollection:
         assert result["broken"]["loaded"] is False
         assert result["broken"]["status"] == "error"
         assert result["broken"]["last_collect_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_configured_not_loaded_empty_when_plugins_disabled(self):
+        config = _make_config(plugins_enabled=False, builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+
+        result = await mgr.collect_all_now()
+
+        assert "broken" not in result
+
+    @pytest.mark.asyncio
+    async def test_configured_not_loaded_uses_discovered_manifest_name(self):
+        config = _make_config(builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        mgr._builtin_names = {"broken": "Broken Plugin"}
+        # "broken" is configured+enabled, its module imported fine (hence the
+        # name being known), but it never made it into self._plugins (e.g. a
+        # setup() failure).
+
+        result = await mgr.collect_all_now()
+
+        assert result["broken"]["name"] == "Broken Plugin"
+
+    @pytest.mark.asyncio
+    async def test_configured_not_loaded_falls_back_to_id_when_name_unknown(self):
+        config = _make_config(builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        # No entry in mgr._builtin_names (e.g. the module itself failed to
+        # import, so its manifest was never discovered).
+
+        result = await mgr.collect_all_now()
+
+        assert result["broken"]["name"] == "broken"
 
 
 # =============================================================================
