@@ -755,6 +755,7 @@ async def index(request: Request) -> Response:
 
 # ── App Factory ────────────────────────────────────────────────────────────────
 
+
 # 'unsafe-eval' is required by the plugin custom-JS renderer (new Function(),
 # static/js/plugins.js) and 'unsafe-inline' in style-src by the pervasive
 # inline style="..." attributes across the dashboard templates. Both are
