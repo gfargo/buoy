@@ -459,6 +459,79 @@ class TestPluginCollection:
         assert result["another"]["status"] == "pending"
         assert result["another"]["detail"] == {}
 
+    @pytest.mark.asyncio
+    async def test_safe_collect_success_records_health(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        plugin = FakePlugin()
+
+        await mgr._safe_collect("fake", plugin)
+
+        health = mgr._health["fake"]
+        assert isinstance(health["last_collect_at"], float)
+        assert health["last_error"] is None
+        assert health["consecutive_failures"] == 0
+
+    @pytest.mark.asyncio
+    async def test_safe_collect_failure_records_health(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        plugin = FailingPlugin()
+
+        await mgr._safe_collect("failing", plugin)
+        await mgr._safe_collect("failing", plugin)
+
+        health = mgr._health["failing"]
+        assert health["consecutive_failures"] == 2
+        assert "Something broke" in health["last_error"]
+        assert health["last_collect_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_safe_collect_failure_after_success_keeps_last_collect_at(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        await mgr._safe_collect("fake", FakePlugin())
+        first_collect_at = mgr._health["fake"]["last_collect_at"]
+
+        await mgr._safe_collect("fake", FailingPlugin())
+
+        health = mgr._health["fake"]
+        assert health["last_collect_at"] == first_collect_at
+        assert health["consecutive_failures"] == 1
+        assert "Something broke" in health["last_error"]
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_includes_health_fields(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok", summary="Fake data")}
+        mgr._health = {
+            "fake": {"last_collect_at": 123.0, "last_error": None, "consecutive_failures": 0}
+        }
+
+        result = await mgr.collect_all_now()
+
+        assert result["fake"]["loaded"] is True
+        assert result["fake"]["last_collect_at"] == 123.0
+        assert result["fake"]["last_error"] is None
+        assert result["fake"]["consecutive_failures"] == 0
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_reports_configured_but_not_loaded(self):
+        config = _make_config(builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        # "broken" is configured+enabled but never made it into self._plugins
+        # (e.g. import or setup() failure).
+
+        result = await mgr.collect_all_now()
+
+        assert "broken" in result
+        assert result["broken"]["loaded"] is False
+        assert result["broken"]["status"] == "error"
+        assert result["broken"]["last_collect_at"] is None
+
 
 # =============================================================================
 # Frontend JS

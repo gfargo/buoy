@@ -17,6 +17,7 @@ import inspect
 import os
 import pkgutil
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -61,6 +62,10 @@ class PluginManager:
         self._plugins: dict[str, Plugin] = {}
         self._latest_data: dict[str, PanelData] = {}
         self._tasks: list[asyncio.Task] = []
+        # Per-plugin health: last_collect_at (epoch seconds of last *successful*
+        # collect), last_error (cleared on success), consecutive_failures (reset
+        # on success).
+        self._health: dict[str, dict[str, Any]] = {}
 
     @property
     def plugins(self) -> dict[str, Plugin]:
@@ -116,12 +121,18 @@ class PluginManager:
         Plugins that have not completed their first collect() yet are reported
         with status "pending" rather than omitted, so a slow or failing initial
         collect surfaces as a pending/errored card instead of disappearing.
+
+        Also includes a stub entry (``loaded: False``) for every builtin that is
+        configured+enabled but failed to load (import or setup() error), so a
+        misconfigured plugin surfaces on the dashboard instead of silently
+        vanishing.
         """
         result = {}
         for plugin_id, plugin in self._plugins.items():
             data = self._latest_data.get(plugin_id)
             if data is None:
                 data = PanelData(status="pending", summary="Collecting…")
+            health = self._health.get(plugin_id, {})
             result[plugin_id] = {
                 "id": plugin_id,
                 "name": plugin.manifest.name,
@@ -129,8 +140,40 @@ class PluginManager:
                 "status": data.status,
                 "summary": data.summary,
                 "detail": data.detail,
+                "loaded": True,
+                "last_collect_at": health.get("last_collect_at"),
+                "last_error": health.get("last_error"),
+                "consecutive_failures": health.get("consecutive_failures", 0),
+            }
+
+        for plugin_id, name in self._configured_not_loaded():
+            result[plugin_id] = {
+                "id": plugin_id,
+                "name": name,
+                "icon": "🔌",
+                "status": "error",
+                "summary": "Failed to load",
+                "detail": {},
+                "loaded": False,
+                "last_collect_at": None,
+                "last_error": None,
+                "consecutive_failures": 0,
             }
         return result
+
+    def _configured_not_loaded(self) -> list[tuple[str, str]]:
+        """Return (id, name) for builtins that are enabled in config but not loaded.
+
+        A builtin can be configured+enabled yet absent from self._plugins if its
+        module failed to import or its setup() raised (see _load_builtins and
+        start()). User plugins have no config entry and are always loaded when
+        present, so they're unaffected by this check.
+        """
+        return [
+            (plugin_id, plugin_id)
+            for plugin_id, entry in self.config.plugins.builtin.items()
+            if entry.enabled and plugin_id not in self._plugins
+        ]
 
     def get_plugin_frontend_js(self) -> dict[str, str]:
         """Return custom frontend JS for plugins that provide it."""
@@ -270,11 +313,28 @@ class PluginManager:
         try:
             data = await asyncio.wait_for(plugin.collect(), timeout=30)
             self._latest_data[plugin_id] = data
+            self._record_success(plugin_id)
         except TimeoutError:
             self._latest_data[plugin_id] = PanelData(
                 status="error", summary="Timeout", detail={"error": "collect timed out"}
             )
+            self._record_failure(plugin_id, "collect timed out")
         except Exception as e:
             self._latest_data[plugin_id] = PanelData(
                 status="error", summary="Error", detail={"error": str(e)}
             )
+            self._record_failure(plugin_id, str(e))
+
+    def _record_success(self, plugin_id: str) -> None:
+        self._health[plugin_id] = {
+            "last_collect_at": time.time(),
+            "last_error": None,
+            "consecutive_failures": 0,
+        }
+
+    def _record_failure(self, plugin_id: str, error: str) -> None:
+        health = self._health.setdefault(
+            plugin_id, {"last_collect_at": None, "last_error": None, "consecutive_failures": 0}
+        )
+        health["last_error"] = error
+        health["consecutive_failures"] += 1
