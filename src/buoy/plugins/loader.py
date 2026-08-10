@@ -187,9 +187,11 @@ class PluginManager:
         plugin_dir = Path(self.config.plugins.directory)
         for plugin_class in self._iter_dir_classes(plugin_dir):
             try:
-                instance = plugin_class()
-                plugin_id = instance.manifest.id
+                plugin_id = plugin_class.manifest.id
                 entry = self.config.plugins.user.get(plugin_id)
+                if entry and not entry.enabled:
+                    continue
+                instance = plugin_class()
                 settings = resolve_plugin_env(
                     plugin_id,
                     plugin_class.manifest.config_schema,
@@ -328,7 +330,8 @@ class PluginManager:
         def _record(plugin_class: type[Plugin], source: str) -> None:
             plugin_id = plugin_class.manifest.id
             if source == "dir":
-                enabled = True
+                entry = config.plugins.user.get(plugin_id)
+                enabled = entry.enabled if entry else True
             else:
                 entry = config.plugins.builtin.get(plugin_id)
                 enabled = bool(entry and entry.enabled)

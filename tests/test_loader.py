@@ -17,7 +17,11 @@ from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 @dataclass
 class PluginEntry:
-    enabled: bool = False
+    # Mirrors buoy.config.PluginEntry post-parse: builtin entries are opt-in
+    # (tests always pass enabled= explicitly for those), user entries are
+    # opt-out, so this stub defaults to True to match _parse_plugins'
+    # default_enabled=True for the user map.
+    enabled: bool = True
     settings: dict = field(default_factory=dict)
 
 
@@ -472,7 +476,7 @@ class TestDiscoverAll:
         assert result["ep_fake"]["source"] == "entrypoint"
         assert result["ep_fake"]["enabled"] is True
 
-    def test_includes_dir_plugins_always_enabled(self, tmp_path):
+    def test_includes_dir_plugins_enabled_by_default(self, tmp_path):
         (tmp_path / "custom.py").write_text(
             "from buoy.plugins.protocol import PanelData, Plugin, PluginManifest\n"
             "class CustomPlugin(Plugin):\n"
@@ -491,6 +495,26 @@ class TestDiscoverAll:
 
         assert result["custom"]["source"] == "dir"
         assert result["custom"]["enabled"] is True
+
+    def test_includes_dir_plugins_respecting_explicit_disable(self, tmp_path):
+        (tmp_path / "custom.py").write_text(
+            "from buoy.plugins.protocol import PanelData, Plugin, PluginManifest\n"
+            "class CustomPlugin(Plugin):\n"
+            "    manifest = PluginManifest(id='custom', name='Custom')\n"
+            "    async def collect(self):\n"
+            "        return PanelData(status='ok', summary='')\n"
+        )
+        config = _make_config(builtin={}, user={"custom": PluginEntry(enabled=False, settings={})})
+        config.plugins.directory = str(tmp_path)
+
+        with patch(
+            "buoy.plugins.loader.importlib.metadata.entry_points",
+            return_value=[],
+        ):
+            result = {p["id"]: p for p in PluginManager.discover_all(config)}
+
+        assert result["custom"]["source"] == "dir"
+        assert result["custom"]["enabled"] is False
 
     def test_manifest_fields_present(self):
         config = _make_config(builtin={})
@@ -593,6 +617,52 @@ class WeatherPlugin(Plugin):
         await mgr._load_user_plugins()
 
         assert mgr.plugins["weather"].config["api_key"] == "env-secret"
+
+    @pytest.mark.asyncio
+    async def test_user_plugin_no_entry_still_loads(self, tmp_path):
+        """User plugins are opt-out: no config entry at all still loads the drop-in."""
+        plugin_file = tmp_path / "custom_plugin.py"
+        plugin_file.write_text("""
+from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+
+class CustomPlugin(Plugin):
+    manifest = PluginManifest(id="custom", name="Custom")
+
+    async def collect(self):
+        return PanelData(status="ok", summary="Custom works")
+""")
+
+        config = _make_config(builtin={}, user={})
+        config.plugins.directory = str(tmp_path)
+        mgr = PluginManager(config)
+
+        await mgr._load_user_plugins()
+
+        assert "custom" in mgr.plugins
+
+    @pytest.mark.asyncio
+    async def test_user_plugin_enabled_false_skips(self, tmp_path):
+        plugin_file = tmp_path / "weather_plugin.py"
+        plugin_file.write_text("""
+from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+
+class WeatherPlugin(Plugin):
+    manifest = PluginManifest(id="weather", name="Weather")
+
+    async def collect(self):
+        return PanelData(status="ok", summary="Weather works")
+""")
+
+        config = _make_config(
+            builtin={},
+            user={"weather": PluginEntry(enabled=False, settings={})},
+        )
+        config.plugins.directory = str(tmp_path)
+        mgr = PluginManager(config)
+
+        await mgr._load_user_plugins()
+
+        assert "weather" not in mgr.plugins
 
     @pytest.mark.asyncio
     async def test_ignores_underscore_files(self, tmp_path):

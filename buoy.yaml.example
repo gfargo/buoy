@@ -294,8 +294,9 @@ plugins:
       units: []   # unit names to check; empty = auto-detect
 
   # Config for drop-in plugins loaded from `directory` above, keyed by manifest id.
-  # Unlike builtin.*, these load unconditionally (no enabled flag) — just drop the
-  # .py file in. Same env-override convention: BUOY_PLUGIN_<ID>_<KEY> overrides a
+  # Unlike builtin.*, these are opt-out: just drop the .py file in and it loads,
+  # even with no entry here. Set `enabled: false` to disable one without removing
+  # the file. Same env-override convention: BUOY_PLUGIN_<ID>_<KEY> overrides a
   # value here, but only for keys the plugin declares in its manifest config_schema.
   user: {}
   # Example:
@@ -303,3 +304,5 @@ plugins:
   #   weather:
   #     url: "https://api.example.com"
   #     api_key: ""   # or BUOY_PLUGIN_WEATHER_API_KEY
+  #   old_plugin:
+  #     enabled: false   # drop-in file stays but won't load
