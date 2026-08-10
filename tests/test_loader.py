@@ -803,6 +803,61 @@ class TestPluginCollection:
         assert result["another"]["detail"] == {}
 
     @pytest.mark.asyncio
+    async def test_collect_all_now_includes_panel_from_render(self):
+        class PanelPlugin(Plugin):
+            manifest = PluginManifest(id="panel_plugin", name="Panel Plugin")
+
+            async def collect(self) -> PanelData:
+                return PanelData(status="ok", summary="ok")
+
+            def render(self, data):
+                return [{"type": "text", "value": data.summary, "status": None}]
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"panel_plugin": PanelPlugin()}
+        mgr._latest_data = {"panel_plugin": PanelData(status="ok", summary="ok")}
+
+        result = await mgr.collect_all_now()
+
+        assert result["panel_plugin"]["panel"] == [{"type": "text", "value": "ok", "status": None}]
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_panel_is_none_when_render_not_overridden(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok", summary="Fake data")}
+
+        result = await mgr.collect_all_now()
+
+        assert result["fake"]["panel"] is None
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_isolates_render_errors(self):
+        class BrokenRenderPlugin(Plugin):
+            manifest = PluginManifest(id="broken_render", name="Broken Render")
+
+            async def collect(self) -> PanelData:
+                return PanelData(status="ok")
+
+            def render(self, data):
+                raise RuntimeError("boom")
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"broken_render": BrokenRenderPlugin(), "fake": FakePlugin()}
+        mgr._latest_data = {
+            "broken_render": PanelData(status="ok"),
+            "fake": PanelData(status="ok", summary="Fake data"),
+        }
+
+        result = await mgr.collect_all_now()
+
+        assert result["broken_render"]["panel"] is None
+        assert result["fake"]["status"] == "ok"
+
+    @pytest.mark.asyncio
     async def test_safe_collect_success_records_health(self):
         config = _make_config()
         mgr = PluginManager(config)

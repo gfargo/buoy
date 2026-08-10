@@ -6,6 +6,7 @@ import asyncio
 import re
 from pathlib import Path
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -75,27 +76,26 @@ class SnapraidPlugin(Plugin):
         except (TimeoutError, FileNotFoundError):
             return None
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_snapraid(data) {
-  const d = data.detail || {};
-  const status = data.status;
-  const color = status === 'ok' ? 'var(--green)' : status === 'warn' ? 'var(--amber)' : status === 'error' ? 'var(--red)' : 'var(--text-dim)';
-  let html = '<div style="font-size:0.6rem">';
-  html += '<div style="margin-bottom:0.3rem;color:' + color + ';font-weight:bold">' + (data.summary || '') + '</div>';
-  const rows = [];
-  if (d.last_sync_age_hours != null) rows.push(['Last sync', d.last_sync_age_hours + 'h ago']);
-  if (d.unsynced_count != null) rows.push(['Unsynced', d.unsynced_count.toLocaleString()]);
-  if (d.scrub_pct != null) rows.push(['Scrubbed', d.scrub_pct + '%']);
-  rows.push(['Disk errors', d.disk_errors ? 'YES' : 'none']);
-  html += '<table style="width:100%;border-collapse:collapse">';
-  rows.forEach(([k, v]) => {
-    html += '<tr><td style="padding:0.1rem 0.3rem;color:var(--text-dim)">' + k + '</td><td style="padding:0.1rem 0.3rem;color:var(--text)">' + v + '</td></tr>';
-  });
-  html += '</table></div>';
-  return html;
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        d = data.detail or {}
+        rows: list[dict] = []
+        if d.get("last_sync_age_hours") is not None:
+            rows.append(
+                {"label": "Last sync", "value": f"{d['last_sync_age_hours']}h ago", "status": None}
+            )
+        if d.get("unsynced_count") is not None:
+            rows.append({"label": "Unsynced", "value": f"{d['unsynced_count']:,}", "status": None})
+        if d.get("scrub_pct") is not None:
+            rows.append({"label": "Scrubbed", "value": f"{d['scrub_pct']}%", "status": None})
+        disk_errors = bool(d.get("disk_errors"))
+        rows.append(
+            {
+                "label": "Disk errors",
+                "value": "YES" if disk_errors else "none",
+                "status": "error" if disk_errors else None,
+            }
+        )
+        return [panel.keyvalue(rows)]
 
 
 def _parse_status(text: str) -> dict:

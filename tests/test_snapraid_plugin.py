@@ -124,8 +124,18 @@ class TestSnapraidPlugin:
         assert result.status == "error"
         assert "error" in result.summary.lower()
 
-    def test_has_frontend_js(self):
-        plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_snapraid" in js
+    @pytest.mark.asyncio
+    async def test_render_produces_keyvalue_with_disk_errors_highlighted(self, tmp_path):
+        f = tmp_path / "snapraid.status"
+        f.write_text(_DISK_ERROR_OUTPUT)
+        plugin = self._make_plugin(status_file=str(f))
+        result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "keyvalue"
+        rows_by_label = {r["label"]: r for r in blocks[0]["rows"]}
+        assert rows_by_label["Disk errors"] == {
+            "label": "Disk errors",
+            "value": "YES",
+            "status": "error",
+        }

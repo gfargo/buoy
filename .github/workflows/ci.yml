@@ -18,6 +18,10 @@ jobs:
       - run: pytest --cov=buoy --cov-report=term-missing
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node --test tests/js/*.test.mjs
 
   build:
     runs-on: ubuntu-latest

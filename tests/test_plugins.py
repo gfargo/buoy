@@ -7,6 +7,7 @@ Each plugin's collect() method is tested by mocking external calls
 import importlib
 import json
 import time
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -176,11 +177,71 @@ class TestGitHubPlugin:
         assert result.status == "error"
         assert "API error" in result.summary
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_notification_and_pr_lists(self):
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_github" in js
+
+        notifications_response = json.dumps(
+            [
+                {
+                    "subject": {"title": "Fix CI", "type": "PullRequest"},
+                    "repository": {"full_name": "gfargo/buoy"},
+                }
+            ]
+        ).encode()
+        prs_response = json.dumps(
+            {
+                "total_count": 1,
+                "items": [
+                    {"title": "Add tests", "html_url": "https://github.com/gfargo/buoy/pull/12"}
+                ],
+            }
+        ).encode()
+
+        call_count = [0]
+
+        def mock_urlopen(req, timeout=None, **kwargs):
+            cm = MagicMock()
+            if call_count[0] == 0:
+                cm.__enter__ = lambda s: MagicMock(read=lambda: notifications_response)
+            else:
+                cm.__enter__ = lambda s: MagicMock(read=lambda: prs_response)
+            cm.__exit__ = lambda s, *a: None
+            call_count[0] += 1
+            return cm
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "list"
+        assert blocks[0]["items"][0]["primary"] == "PullRequest: Fix CI"
+        assert blocks[1]["type"] == "list"
+        assert blocks[1]["items"][0]["href"] == "https://github.com/gfargo/buoy/pull/12"
+
+    @pytest.mark.asyncio
+    async def test_render_all_clear_shows_text(self):
+        plugin = self._make_plugin()
+        empty_notifications = json.dumps([]).encode()
+        no_prs = json.dumps({"total_count": 0, "items": []}).encode()
+
+        call_count = [0]
+
+        def mock_urlopen(req, timeout=None, **kwargs):
+            cm = MagicMock()
+            if call_count[0] == 0:
+                cm.__enter__ = lambda s: MagicMock(read=lambda: empty_notifications)
+            else:
+                cm.__enter__ = lambda s: MagicMock(read=lambda: no_prs)
+            cm.__exit__ = lambda s, *a: None
+            call_count[0] += 1
+            return cm
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks == [{"type": "text", "value": "All clear", "status": "dim"}]
 
 
 # =============================================================================
@@ -264,9 +325,51 @@ class TestLokiPlugin:
         assert result.status == "error"
         assert "Unreachable" in result.summary
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_list_of_error_lines(self):
         plugin = self._make_plugin()
-        assert "render_loki" in plugin.frontend_js()
+
+        loki_response = json.dumps(
+            {
+                "data": {
+                    "result": [
+                        {
+                            "stream": {"job": "buoy"},
+                            "values": [["1719300000000000000", "ERROR: connection timeout"]],
+                        }
+                    ]
+                }
+            }
+        ).encode()
+
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: loki_response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "list"
+        item = blocks[0]["items"][0]
+        assert item["primary"] == "ERROR: connection timeout"
+        assert item["status"] == "error"
+        assert "buoy" in item["secondary"]
+        assert "UTC" in item["secondary"]
+
+    @pytest.mark.asyncio
+    async def test_render_no_errors_shows_text(self):
+        plugin = self._make_plugin()
+        loki_response = json.dumps({"data": {"result": []}}).encode()
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: loki_response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks == [{"type": "text", "value": "No recent errors", "status": "dim"}]
 
 
 # =============================================================================
@@ -350,9 +453,30 @@ class TestUptimeKumaPlugin:
         assert result.status == "error"
         assert "Unreachable" in result.summary
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_badges_with_up_down_status(self):
         plugin = self._make_plugin()
-        assert "render_uptime_kuma" in plugin.frontend_js()
+
+        response = json.dumps(
+            {
+                "heartbeatList": {
+                    "1": [{"status": 1, "msg": "web"}],
+                    "2": [{"status": 0, "msg": "db"}],
+                }
+            }
+        ).encode()
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "badges"
+        statuses = {b["label"]: b["status"] for b in blocks[0]["items"]}
+        assert statuses["web"] == "ok"
+        assert statuses["db"] == "error"
 
 
 # =============================================================================
@@ -461,9 +585,48 @@ class TestPlanePlugin:
 
         assert result.status == "error"
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_cycle_name_and_bar(self):
         plugin = self._make_plugin()
-        assert "render_plane" in plugin.frontend_js()
+        today = date.today()
+        cycles_response = json.dumps(
+            {
+                "results": [
+                    {
+                        "name": "Sprint 1",
+                        "start_date": (today - timedelta(days=2)).isoformat(),
+                        "end_date": (today + timedelta(days=5)).isoformat(),
+                        "total_issues": 10,
+                        "completed_issues": 4,
+                    }
+                ]
+            }
+        ).encode()
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: cycles_response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0] == {"type": "text", "value": "Sprint 1", "status": None}
+        assert blocks[1]["type"] == "bar"
+        assert blocks[1]["pct"] == 40
+
+    @pytest.mark.asyncio
+    async def test_render_no_active_cycle_shows_text(self):
+        plugin = self._make_plugin()
+        cycles_response = json.dumps({"results": []}).encode()
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: cycles_response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks == [{"type": "text", "value": "No active cycle", "status": "dim"}]
 
 
 # =============================================================================
@@ -624,11 +787,29 @@ class TestCronHealthPlugin:
         assert result.status == "ok"
         assert "No cron activity" in result.summary
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_table_of_cron_entries(self):
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert "render_cron_health" in js
-        assert "<table" in js
+        journal_output = (
+            b"Jun 26 14:05:01 compass CRON[1234]: (root) CMD (/backup/scripts/nightly-plane.sh)\n"
+        )
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(journal_output, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "table"
+        assert blocks[0]["columns"] == ["Time", "User", "Command"]
+        row = blocks[0]["rows"][0]
+        assert row[1]["value"] == "root"
+        assert row[2]["value"] == "/backup/scripts/nightly-plane.sh"
+
+    def test_render_no_entries_shows_text(self):
+        plugin = self._make_plugin()
+        blocks = plugin.render(PanelData(status="ok", detail={"entries": []}))
+        assert blocks == [{"type": "text", "value": "No cron activity in 24h", "status": "dim"}]
 
 
 # =============================================================================
@@ -1010,11 +1191,33 @@ class TestSpeedtestPlugin:
         assert entry["ok"] is False
         assert "not found" in entry.get("error", "")
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_sparkline_and_keyvalue(self):
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_speedtest" in js
+        plugin._history = [
+            {
+                "ts": float(i),
+                "download_mbps": 400.0 + i,
+                "upload_mbps": 20.0,
+                "ping_ms": 10.0,
+                "server": "Test",
+                "ok": True,
+            }
+            for i in range(3)
+        ]
+        result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "sparkline"
+        assert blocks[0]["values"] == [400.0, 401.0, 402.0]
+        assert blocks[1]["type"] == "keyvalue"
+
+    @pytest.mark.asyncio
+    async def test_render_measuring_shows_text(self):
+        plugin = self._make_plugin()
+        result = await plugin.collect()
+        blocks = plugin.render(result)
+        assert blocks == [{"type": "text", "value": "Measuring…", "status": "dim"}]
 
     # ── New tests for optional-dependency behaviour ────────────────────────────
 
@@ -1160,11 +1363,27 @@ class TestJournalErrorsPlugin:
 
         assert len(result.detail["entries"]) <= 5
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_table_with_error_colored_message(self):
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_journal_errors" in js
+        journal_output = b"Jun 26 14:05:01 compass kernel: oom-kill event\n"
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(journal_output, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "table"
+        row = blocks[0]["rows"][0]
+        assert row[1]["value"] == "kernel"
+        assert row[2]["status"] == "error"
+        assert row[2]["truncate"] is True
+
+    def test_render_no_entries_shows_text(self):
+        plugin = self._make_plugin()
+        blocks = plugin.render(PanelData(status="ok", detail={"entries": []}))
+        assert blocks == [{"type": "text", "value": "No journal errors in 24h", "status": "dim"}]
 
 
 # =============================================================================
@@ -1265,11 +1484,43 @@ class TestActualBudgetPlugin:
         assert "Unreachable" in result.summary
         assert "error" in result.detail
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_bar_and_category_breakdown(self):
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_actual_budget" in js
+        response = json.dumps(
+            {
+                "categoryGroups": [
+                    {
+                        "categories": [
+                            {"name": "Groceries", "budgeted": 500000, "spent": -480000},
+                        ]
+                    }
+                ]
+            }
+        ).encode()
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "bar"
+        assert blocks[1]["type"] == "keyvalue"
+        row = blocks[1]["rows"][0]
+        assert row["label"] == "Groceries"
+        assert row["status"] == "error"  # 96% > 90% threshold
+
+    @pytest.mark.asyncio
+    async def test_render_not_configured_shows_text(self):
+        from buoy.plugins.builtin.actual_budget import ActualBudgetPlugin
+
+        plugin = ActualBudgetPlugin()
+        plugin.configure({})
+        result = await plugin.collect()
+        blocks = plugin.render(result)
+        assert blocks == [{"type": "text", "value": "Not configured", "status": "dim"}]
 
 
 # =============================================================================
