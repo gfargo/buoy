@@ -4,6 +4,7 @@
  */
 
 import { escapeHtml } from './escape.js';
+import { renderPanelSpec } from './panel.js';
 
 let pluginRenderers = {};
 let jsLoaded = false;
@@ -63,17 +64,23 @@ function renderPluginCard(plugin) {
     pending: 'var(--text-dim)',
   }[plugin.status] || 'var(--text-dim)';
 
-  // Check for custom renderer
-  const renderFn = pluginRenderers[`render_${plugin.id}`];
+  // Prefer the declarative panel spec (trusted, escaping renderer). Fall back
+  // to legacy custom JS (new Function, deprecated) only when a plugin still
+  // ships frontend_js() instead, then to the generic key-value renderer.
   let innerHtml;
-  if (renderFn) {
-    try {
-      innerHtml = renderFn(plugin);
-    } catch (e) {
+  if (Array.isArray(plugin.panel) && plugin.panel.length) {
+    innerHtml = renderPanelSpec(plugin.panel);
+  } else {
+    const renderFn = pluginRenderers[`render_${plugin.id}`];
+    if (renderFn) {
+      try {
+        innerHtml = renderFn(plugin);
+      } catch (e) {
+        innerHtml = renderDefaultPlugin(plugin);
+      }
+    } else {
       innerHtml = renderDefaultPlugin(plugin);
     }
-  } else {
-    innerHtml = renderDefaultPlugin(plugin);
   }
 
   return `<div class="svc" style="cursor:default">

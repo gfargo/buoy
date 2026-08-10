@@ -90,8 +90,28 @@ class TestSystemdHealthPlugin:
         assert result.status in ("error", "disabled", "warn")
         assert result.detail["units"][0]["state"] == "unknown"
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_table_with_state_status(self):
+        plugin = self._make_plugin(["tailscaled", "caddy"])
+
+        with patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=[
+                self._make_proc(b"active\n"),
+                self._make_proc(b"failed\n"),
+            ],
+        ):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "table"
+        rows_by_unit = {r[0]["value"]: r[1] for r in blocks[0]["rows"]}
+        assert rows_by_unit["tailscaled"]["status"] == "ok"
+        assert rows_by_unit["caddy"] == {"value": "failed", "status": "error", "truncate": False}
+
+    def test_render_no_units_shows_text(self):
+        from buoy.plugins.protocol import PanelData
+
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert "render_systemd_health" in js
-        assert "<table" in js
+        blocks = plugin.render(PanelData(status="disabled", detail={}))
+        assert blocks == [{"type": "text", "value": "No units configured", "status": "dim"}]

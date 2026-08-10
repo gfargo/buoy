@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import urllib.request
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -80,25 +81,34 @@ class GitHubPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="API error", detail={"error": str(e)})
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_github(data) {
-  let html = '';
-  if (data.detail.notification_count > 0) {
-    html += '<div style="font-size:0.6rem;color:var(--amber);margin-bottom:0.4rem">' + data.detail.notification_count + ' notifications</div>';
-    (data.detail.notifications || []).forEach(n => {
-      html += '<div style="font-size:0.55rem;color:var(--text);margin-bottom:0.2rem">' + n.type + ': ' + n.title + ' <span style="color:var(--text-dim)">' + n.repo + '</span></div>';
-    });
-  }
-  if (data.detail.pr_count > 0) {
-    html += '<div style="font-size:0.55rem;color:var(--text-dim);margin-top:0.4rem">' + data.detail.pr_count + ' open PRs</div>';
-    (data.detail.open_prs || []).forEach(p => {
-      html += '<div style="font-size:0.55rem;margin-bottom:0.2rem"><a href="' + p.url + '" style="color:var(--cyan);text-decoration:none">' + p.title + '</a></div>';
-    });
-  }
-  if (!data.detail.notification_count && !data.detail.pr_count) {
-    html += '<div style="font-size:0.6rem;color:var(--text-dim)">All clear</div>';
-  }
-  return html;
-}
-"""
+    def render(self, data: PanelData) -> list[dict] | None:
+        d = data.detail or {}
+        notif_count = d.get("notification_count", 0)
+        pr_count = d.get("pr_count", 0)
+
+        if not notif_count and not pr_count:
+            return [panel.text("All clear", status="dim")]
+
+        blocks: list[dict] = []
+        if notif_count:
+            blocks.append(
+                panel.list_(
+                    [
+                        panel.list_item(
+                            f"{n.get('type', '')}: {n.get('title', '')}",
+                            secondary=n.get("repo", ""),
+                        )
+                        for n in d.get("notifications") or []
+                    ]
+                )
+            )
+        if pr_count:
+            blocks.append(
+                panel.list_(
+                    [
+                        panel.list_item(p.get("title", ""), status="info", href=p.get("url"))
+                        for p in d.get("open_prs") or []
+                    ]
+                )
+            )
+        return blocks

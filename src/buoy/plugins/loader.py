@@ -129,6 +129,11 @@ class PluginManager:
             data = self._latest_data.get(plugin_id)
             if data is None:
                 data = PanelData(status="pending", summary="Collecting…")
+            try:
+                panel = plugin.render(data)
+            except Exception as e:
+                print(f"[buoy:plugins] {plugin_id} render() failed: {e}")
+                panel = None
             result[plugin_id] = {
                 "id": plugin_id,
                 "name": plugin.manifest.name,
@@ -136,6 +141,7 @@ class PluginManager:
                 "status": data.status,
                 "summary": data.summary,
                 "detail": data.detail,
+                "panel": panel,
             }
         return result
 

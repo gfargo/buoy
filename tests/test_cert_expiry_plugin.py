@@ -217,13 +217,29 @@ class TestCertExpiryCollect:
 
 
 # ---------------------------------------------------------------------------
-# frontend_js
+# render
 # ---------------------------------------------------------------------------
 
 
-class TestCertExpiryFrontendJs:
-    def test_has_frontend_js(self):
+class TestCertExpiryRender:
+    def test_no_certs_renders_text(self):
+        from buoy.plugins.protocol import PanelData
+
         plugin = _make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_cert_expiry" in js
+        blocks = plugin.render(PanelData(status="disabled", detail={}))
+        assert blocks == [{"type": "text", "value": "No certs found", "status": "dim"}]
+
+    def test_renders_table_with_per_cert_status(self):
+        from buoy.plugins.protocol import PanelData
+
+        plugin = _make_plugin()
+        data = PanelData(
+            status="warn",
+            detail={"certs": [{"name": "example.com", "days": 5, "status": "warn"}]},
+        )
+        blocks = plugin.render(data)
+        assert blocks[0]["type"] == "table"
+        assert blocks[0]["columns"] == ["Cert", "Expiry"]
+        row = blocks[0]["rows"][0]
+        assert row[0]["value"] == "example.com"
+        assert row[1] == {"value": "5d remaining", "status": "warn", "truncate": False}

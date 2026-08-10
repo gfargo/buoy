@@ -5,12 +5,16 @@ Scans:
   - static/css/**/*.css (excluding static/css/themes/, which only defines
     properties) — every stylesheet shipped with the app, not just buoy.css,
     so a new component sheet is covered automatically.
-  - src/buoy/plugins/builtin/*.py (inline JS in frontend_js() methods)
+  - static/js/*.js — status→color mappings (e.g. panel.js, plugins.js) and
+    any remaining inline JS (frontend_js() methods on third-party plugins
+    execute client-side but aren't shipped in this repo, so they're out of
+    scope here).
 
 Out of scope: user-contributed plugins loaded from an external
-`config.plugins.directory` at runtime. Those live outside the repo, so they
-can't be statically scanned in CI — plugin authors are responsible for only
-using custom properties defined in static/css/themes/.
+`config.plugins.directory` at runtime, and any frontend_js() a third-party
+plugin ships. Those live outside the repo, so they can't be statically
+scanned in CI — plugin authors are responsible for only using custom
+properties defined in static/css/themes/.
 
 Definitions are collected from all static/css/themes/*.css files.
 """
@@ -29,7 +33,7 @@ REPO_ROOT = Path(__file__).parent.parent
 
 CSS_DIR = REPO_ROOT / "static" / "css"
 THEMES_DIR = CSS_DIR / "themes"
-PLUGINS_DIR = REPO_ROOT / "src" / "buoy" / "plugins" / "builtin"
+JS_DIR = REPO_ROOT / "static" / "js"
 
 # Match var(--foo) or var(--foo, fallback) — capture the property name only
 _VAR_RE = re.compile(r"var\(\s*(--[\w-]+)")
@@ -80,9 +84,9 @@ def _all_referenced_vars() -> dict[str, set[str]]:
         for var in _collect_referenced(css_file):
             _add(var, css_file.relative_to(REPO_ROOT).as_posix())
 
-    for py_file in PLUGINS_DIR.glob("*.py"):
-        for var in _collect_referenced(py_file):
-            _add(var, py_file.name)
+    for js_file in JS_DIR.glob("*.js"):
+        for var in _collect_referenced(js_file):
+            _add(var, js_file.relative_to(REPO_ROOT).as_posix())
 
     return refs
 

@@ -175,6 +175,21 @@ class WeatherPlugin(Plugin):
         return PanelData(status="ok", summary="72°F, Sunny")
 ```
 
+For a richer panel than the default key-value grid, implement `render()` and return blocks from
+`buoy.plugins.panel` (`text`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`) — trusted,
+escaping frontend code turns them into HTML, so untrusted data (names, log lines, URLs) can never
+inject markup. `frontend_js()` (raw JS executed via `new Function()`) is still supported but is a
+deprecated escape hatch — it can't run under a strict CSP and requires escaping every value by hand.
+
+```python
+from buoy.plugins import panel
+
+class WeatherPlugin(Plugin):
+    ...
+    def render(self, data: PanelData) -> list[dict] | None:
+        return [panel.keyvalue([("Temp", "72°F"), ("Condition", "Sunny")])]
+```
+
 **Distributable plugins** can also be shipped as a pip-installable package. Register your `Plugin`
 subclass (or a module containing one) under the `buoy.plugins` entry-point group:
 

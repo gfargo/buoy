@@ -71,10 +71,25 @@ class Plugin:
         """
         raise NotImplementedError("Plugins must implement collect()")
 
-    def frontend_js(self) -> str | None:
-        """Optional: return JS that renders this plugin's panel.
+    def render(self, data: PanelData) -> list[dict[str, Any]] | None:
+        """Preferred rendering path: return a declarative panel spec.
 
-        If None, the default key-value renderer is used.
+        Build the list from the helpers in ``buoy.plugins.panel`` (``text``,
+        ``table``, ``keyvalue``, ``badges``, ``bar``, ``sparkline``, ``list_``).
+        Trusted, escaping frontend code (``static/js/panel.js``) turns the
+        spec into HTML, so no plugin-authored markup ever reaches the page.
+        If None, ``frontend_js()`` (if any) or the default renderer is used.
+        """
+        return None
+
+    def frontend_js(self) -> str | None:
+        """Deprecated escape hatch: return JS that renders this plugin's panel.
+
+        Prefer ``render()``. This JS is executed via `new Function()` on the
+        frontend and must build its own HTML, which is the root cause behind
+        SEC-3/SEC-6 — plugins must escape every value themselves and no
+        strict Content-Security-Policy is possible while it's in use.
+        If None, ``render()``/the default renderer is used.
         The JS should define a function: render_{manifest.id}(data) → HTML string.
         """
         return None
