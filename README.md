@@ -146,6 +146,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Prometheus | `prometheus_exporter` | `/metrics` endpoint | (none) |
 | SnapRAID | `snapraid` | Parity sync age & disk health | `status_file` |
 | Jellyfin | `jellyfin` | Active streams, libraries, transcoding | `url`, `api_key` |
+| Home Assistant | `home_assistant` | Entity/automation counts, unavailable entities, updates | `url`, `token` |
 | Portainer | `portainer` | Remote container stats | `url`, `api_key`, `endpoint_id` |
 | Smart Disk | `smart_disk` | SMART health for SATA + NVMe drives | (none) |
 | Cert Expiry | `cert_expiry` | TLS certificate days remaining | (none) |
