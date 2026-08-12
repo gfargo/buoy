@@ -164,7 +164,7 @@ class DiskCollector:
                     if len(parts) < 3:
                         continue
                     device, mount_point, fstype = parts[0], parts[1], parts[2]
-                    if fstype in _VIRTUAL_FSTYPES or not device.startswith("/"):
+                    if fstype in _VIRTUAL_FSTYPES:
                         continue
                     if not os.path.isdir(mount_point):
                         continue
