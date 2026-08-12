@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: {{ if eq .Values.workloadKind "daemonset" }}DaemonSet{{ else }}Deployment{{ end }}
+metadata:
+  name: {{ include "buoy.fullname" . }}
+  labels:
+    {{- include "buoy.labels" . | nindent 4 }}
+spec:
+  {{- if ne .Values.workloadKind "daemonset" }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "buoy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "buoy.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- if or .Values.hostPID (eq .Values.workloadKind "daemonset") }}
+      hostPID: true
+      {{- end }}
+      containers:
+        - name: buoy
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/config/buoy.yaml"]
+          {{- if or .Values.privileged (eq .Values.workloadKind "daemonset") }}
+          securityContext:
+            privileged: true
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            {{- if eq .Values.workloadKind "daemonset" }}
+            - name: BUOY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            {{- end }}
+            {{- if or .Values.auth.token .Values.auth.existingSecret }}
+            - name: BUOY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "buoy.authSecretName" . }}
+                  key: {{ .Values.auth.existingSecretKey }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            {{- if .Values.dockerSocket.enabled }}
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+              readOnly: true
+            {{- end }}
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "buoy.fullname" . }}-config
+        {{- if .Values.dockerSocket.enabled }}
+        - name: docker-sock
+          hostPath:
+            path: {{ .Values.dockerSocket.path }}
+            type: Socket
+        {{- end }}
+        - name: data
+          {{- if and .Values.persistence.enabled (ne .Values.workloadKind "daemonset") }}
+          persistentVolumeClaim:
+            claimName: {{ include "buoy.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
