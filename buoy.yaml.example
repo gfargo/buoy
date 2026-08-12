@@ -196,6 +196,13 @@ plugins:
       url: ""                # e.g., http://localhost:8096
       api_key: ""            # Jellyfin API key (Dashboard → API Keys)
 
+    # Home Assistant entity/automation counts, unavailable entities, updates
+    home_assistant:
+      enabled: false
+      url: ""                # e.g., http://localhost:8123
+      token: ""               # Long-lived access token (Profile → Security)
+      verify_ssl: true
+
     # Proxmox VE node + guest status
     # Note: verify_ssl defaults to false — PVE uses self-signed certs by default
     proxmox:
