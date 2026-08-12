@@ -21,6 +21,14 @@ StateDirectory=buoy
 StateDirectoryMode=0750
 SupplementaryGroups=docker
 
+# Uncomment to let smartctl's NVMe admin-passthrough ioctl succeed for
+# /dev/nvme0n1 SMART data (see docs/deployment/privilege-matrix.md) — the
+# kernel requires CAP_SYS_ADMIN for it regardless of file permissions, so
+# nothing else below grants access to it. Everything except NVMe SMART
+# works fine without this.
+#AmbientCapabilities=CAP_SYS_ADMIN
+#CapabilityBoundingSet=CAP_SYS_ADMIN
+
 # Hardening. Buoy needs real read access to host /proc and /sys for CPU/mem/
 # temperature metrics and to the Docker socket for service discovery — the
 # options below keep everything else locked down.

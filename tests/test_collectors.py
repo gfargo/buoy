@@ -224,6 +224,53 @@ class TestDockerListContainersCache:
         coll._fetch_containers.assert_called_once()
 
 
+class TestDiskCollectorLocalMounts:
+    """Tests for the real DiskCollector's nsenter-less /proc/mounts fallback."""
+
+    def test_filters_virtual_fs_and_dedupes_bind_mounts(self, tmp_path):
+        """Virtual filesystems are skipped, and bind mounts of a real mount
+        point (e.g. Docker's per-container /etc/hosts) collapse to the
+        shortest (real) path on that device instead of listing both."""
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        bind_dir = real_dir / "bind"
+        bind_dir.mkdir()
+
+        proc_mounts = (
+            "overlay / overlay rw 0 0\n"
+            "tmpfs /dev tmpfs rw 0 0\n"
+            f"/dev/sda1 {real_dir} ext4 rw 0 0\n"
+            f"/dev/sda1 {bind_dir} ext4 rw 0 0\n"
+        )
+
+        coll = DiskCollector(_make_config())
+        with patch("builtins.open", mock_open(read_data=proc_mounts)):
+            mounts = coll._local_mounts()
+
+        assert len(mounts) == 1
+        assert mounts[0]["mount"] == str(real_dir)
+
+    def test_falls_back_to_root_when_nothing_real_found(self):
+        """If every /proc/mounts line is virtual (e.g. an overlay-rooted
+        container with no other real mount), fall back to root usage."""
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        proc_mounts = "overlay / overlay rw 0 0\ntmpfs /dev tmpfs rw 0 0\n"
+
+        coll = DiskCollector(_make_config())
+        with patch("builtins.open", mock_open(read_data=proc_mounts)):
+            mounts = coll._local_mounts()
+
+        assert len(mounts) == 1
+        assert mounts[0]["mount"] == "/"
+
+
 class TestDiskCollectorNvme:
     """Tests for real DiskCollector NVMe SMART path."""
 

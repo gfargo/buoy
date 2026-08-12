@@ -16,6 +16,13 @@ RestartSec=5
 
 EnvironmentFile=-{{ buoy_config_dir }}/buoy.env
 
+# Uncomment to let smartctl's NVMe admin-passthrough ioctl succeed for
+# /dev/nvme0n1 SMART data (see docs/deployment/privilege-matrix.md) — the
+# kernel requires CAP_SYS_ADMIN for it regardless of file permissions.
+# Everything except NVMe SMART works fine without this.
+#AmbientCapabilities=CAP_SYS_ADMIN
+#CapabilityBoundingSet=CAP_SYS_ADMIN
+
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths={{ buoy_data_dir }}

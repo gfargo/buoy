@@ -19,7 +19,10 @@ buoy_group: buoy
 
 # Add the service user to the docker group so it can reach
 # /var/run/docker.sock without running as root. Set false if this host
-# has no Docker daemon / buoy shouldn't do service discovery.
+# has no Docker daemon / buoy shouldn't do service discovery. The role
+# doesn't install Docker itself — if this is true but no "docker" group
+# exists yet (Docker Engine not installed), the task is skipped with a
+# warning rather than aborting the play.
 buoy_docker_group: true
 
 # Host packages buoy's collectors shell out to (all optional — collectors

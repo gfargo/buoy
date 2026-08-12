@@ -1,11 +1,14 @@
 # Native install (pip + systemd)
 
 Run Buoy directly on the host instead of in a container. This is the
-**least-privileged** way to get full metrics: a native process already has
-real access to `/proc`, `/sys`, and (via group membership) the Docker
-socket, so it needs none of the `privileged: true` / `pid: host` flags the
-[Docker Compose](../../README.md#docker-compose) path requires. See the
-[privilege matrix](./privilege-matrix.md) for the full breakdown.
+**least-privileged** way to get nearly every metric: a native process
+already has real access to `/proc`, `/sys`, and (via group membership) the
+Docker socket, so it needs none of the `privileged: true` / `pid: host`
+flags the [Docker Compose](../../README.md#docker-compose) path requires.
+The one exception is NVMe SMART health, which needs `CAP_SYS_ADMIN` for its
+admin-passthrough ioctl regardless of container boundaries — see the
+[privilege matrix](./privilege-matrix.md) for the full breakdown, including
+how to opt into that capability if you want NVMe SMART data natively.
 
 > **PyPI status:** Buoy is not yet published to PyPI (tracked upstream).
 > Install from source/git for now; switch to `pip install buoy` once a
@@ -99,6 +102,13 @@ The unit ([`deploy/systemd/buoy.service`](../../deploy/systemd/buoy.service)):
 - Reads secrets (e.g. `BUOY_AUTH_TOKEN=...`) from `/etc/buoy/buoy.env` if
   present (`EnvironmentFile=-/etc/buoy/buoy.env` — the leading `-` makes a
   missing file non-fatal).
+- Does **not** grant `CAP_SYS_ADMIN`, so `smartctl`'s NVMe admin-passthrough
+  ioctl fails and the `nvme` block is omitted from `/api/stats` — this is
+  the one metric the unprivileged default can't reach natively (see the
+  [privilege matrix](./privilege-matrix.md#tier-0--native--systemd) for why,
+  and how to opt in if you need it). The full host mount list works fine
+  without it: Buoy reads `/proc/mounts` directly, which a native process
+  already sees in full.
 
 Verify the unit is well-formed before installing it, if `systemd-analyze`
 is available:
