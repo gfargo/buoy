@@ -131,7 +131,16 @@ volumes:
   buoy-data:
 ```
 
-> **Note:** `privileged` + `pid: host` enables full system metrics (temperature, all disk mounts, NVMe SMART). If you only need container stats, you can drop `privileged` and keep just `pid: host`.
+> **Note:** `privileged` + `pid: host` enables full system metrics (temperature, all disk mounts, NVMe SMART). If you only need container stats, you can drop `privileged` and keep just `pid: host`. See the [privilege matrix](docs/deployment/privilege-matrix.md) for the full breakdown, or the [native install](docs/deployment/native.md) to get full metrics without any container privilege flags at all.
+
+## Other Deployment Paths
+
+Docker Compose isn't the only option:
+
+- [Native install (pip + systemd)](docs/deployment/native.md) — run buoy directly on the host, no container required
+- [Kubernetes](docs/deployment/kubernetes.md) — plain manifests or a Helm chart, unprivileged `Deployment` or full-metrics `DaemonSet`
+- [Ansible](docs/deployment/ansible.md) — a role that automates the native install
+- [Privilege / metrics matrix](docs/deployment/privilege-matrix.md) — what each privilege level gains or costs you, across every deployment path
 
 ## Plugins
 
@@ -248,7 +257,10 @@ ruff check src/ tests/
 
 - [Configuration Reference](https://github.com/gfargo/buoy/wiki/Configuration) — full YAML config guide
 - [Plugin Development](https://github.com/gfargo/buoy/wiki/Plugins) — create custom plugins
-- [Deployment Guide](https://github.com/gfargo/buoy/wiki/Deployment) — single node, fleet, reverse proxy patterns
+- [Native Install](docs/deployment/native.md) — pip + systemd, no Docker required
+- [Kubernetes](docs/deployment/kubernetes.md) — plain manifests and a Helm chart
+- [Ansible](docs/deployment/ansible.md) — automated native install
+- [Privilege / Metrics Matrix](docs/deployment/privilege-matrix.md) — what each privilege level gains or costs
 - [Changelog](CHANGELOG.md) — release history
 - [Contributing](CONTRIBUTING.md) — dev setup, PR process
 

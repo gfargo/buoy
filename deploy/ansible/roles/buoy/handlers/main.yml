@@ -1,0 +1,11 @@
+---
+- name: Restart buoy
+  ansible.builtin.systemd:
+    name: buoy
+    state: restarted
+
+- name: Reload systemd and restart buoy
+  ansible.builtin.systemd:
+    name: buoy
+    daemon_reload: true
+    state: restarted

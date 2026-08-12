@@ -1,0 +1,34 @@
+{{ ansible_managed | comment }}
+node:
+  name: {{ buoy_node_name }}
+  tier: "{{ buoy_node_tier }}"
+  role: "{{ buoy_node_role }}"
+
+network:
+  listen_port: {{ buoy_listen_port }}
+  tailnet_domain: "{{ buoy_tailnet_domain }}"
+  peers:
+{% for peer in buoy_peers %}
+    - name: {{ peer.name }}
+      url: {{ peer.url }}
+      tier: "{{ peer.tier | default('') }}"
+{% else %}
+    []
+{% endfor %}
+
+auth:
+  enabled: {{ buoy_auth_enabled | lower }}
+  type: {{ buoy_auth_type }}
+  # token is supplied via BUOY_AUTH_TOKEN in buoy.env, not written here.
+
+features:
+  websocket: {{ buoy_features.websocket | lower }}
+  history: {{ buoy_features.history | lower }}
+  demo_mode: {{ buoy_features.demo_mode | lower }}
+  night_mode: {{ buoy_features.night_mode }}
+  keyboard_shortcuts: {{ buoy_features.keyboard_shortcuts | lower }}
+  image_updates: {{ buoy_features.image_updates | lower }}
+{% if buoy_extra_config %}
+
+{{ buoy_extra_config }}
+{% endif %}

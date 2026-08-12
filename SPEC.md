@@ -913,7 +913,7 @@ jobs:
 
 - [ ] `docs/configuration.md` — full config reference with examples (not created; config is documented in README.md)
 - [ ] `docs/plugins.md` — plugin development guide with examples (not created; see CONTRIBUTING.md's architecture section)
-- [ ] `docs/deployment.md` — deployment patterns (single node, fleet, with Caddy/Traefik)
+- [ ] `docs/deployment.md` — deployment patterns (single node, fleet, with Caddy/Traefik); non-Docker install paths now covered separately under `docs/deployment/` (native/systemd, Kubernetes, Ansible, privilege matrix)
 - [ ] `docs/screenshots/` — high-quality screenshots of all states (normal, warn, dark, light, demo)
 
 ### 13.3 Branding / Naming

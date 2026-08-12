@@ -1,0 +1,10 @@
+---
+# Example usage — see docs/deployment/ansible.md for the full variable
+# reference. Run with: ansible-playbook -i inventory.ini deploy/ansible/playbook.yml
+- name: Deploy buoy
+  hosts: buoy_nodes
+  become: true
+  roles:
+    - role: buoy
+      vars:
+        buoy_node_tier: "Tier 1B"
