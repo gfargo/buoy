@@ -266,6 +266,13 @@ class TestEnvOverrides:
         assert "BUOY_NETWORK_LISTEN_PORT" in str(exc_info.value)
         assert "eighty-ninety" in str(exc_info.value)
 
+    def test_port_override_empty_string_raises(self, monkeypatch):
+        """An explicitly-set but empty env var is an invalid int, not "unset"."""
+        monkeypatch.setenv("BUOY_NETWORK_LISTEN_PORT", "")
+        with pytest.raises(ConfigError) as exc_info:
+            _apply_env_overrides({})
+        assert "BUOY_NETWORK_LISTEN_PORT" in str(exc_info.value)
+
     def test_stats_interval_env(self, monkeypatch):
         monkeypatch.setenv("BUOY_REFRESH_STATS_INTERVAL", "10")
         result = _apply_env_overrides({})

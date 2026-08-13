@@ -214,6 +214,10 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "plugins_interval",
             "image_updates_interval",
         ):
+            # An empty string (e.g. `BUOY_NETWORK_LISTEN_PORT=`) is treated as an
+            # explicit invalid value, not "unset" — only a missing env var (checked
+            # above) falls back to the YAML/default. There's no sensible int for "",
+            # so we surface the same ConfigError as any other unparsable value.
             try:
                 raw[section][key] = int(value)
             except ValueError as exc:
