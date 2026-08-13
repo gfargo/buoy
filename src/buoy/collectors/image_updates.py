@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import urllib.error
 import urllib.parse
@@ -23,6 +24,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.collectors.image_updates")
 
 # Validate image ref components (no shell metacharacters)
 _IMAGE_REF_RE = re.compile(r"^[a-zA-Z0-9][\w.\-/:@]*$")
@@ -85,6 +88,7 @@ async def _run(*args: str, timeout: float = 10) -> tuple[int, str]:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return proc.returncode, stdout.decode().strip()
     except Exception:
+        logger.debug("failed to run command %r", args, exc_info=True)
         return 1, ""
 
 
@@ -113,6 +117,7 @@ def _docker_hub_token(repo: str) -> str | None:
         with urllib.request.urlopen(url, timeout=10) as r:  # noqa: S310
             return json.loads(r.read())["token"]
     except Exception:
+        logger.debug("failed to fetch Docker Hub token for '%s'", repo, exc_info=True)
         return None
 
 
@@ -123,6 +128,7 @@ def _ghcr_token(repo: str) -> str | None:
         with urllib.request.urlopen(url, timeout=10) as r:  # noqa: S310
             return json.loads(r.read())["token"]
     except Exception:
+        logger.debug("failed to fetch GHCR token for '%s'", repo, exc_info=True)
         return None
 
 
@@ -158,11 +164,15 @@ async def _remote_digest(ref: dict) -> str | None:
             except urllib.error.HTTPError:
                 return None
             except Exception:
+                logger.debug("failed to HEAD manifest for %s", url, exc_info=True)
                 return None
 
         digest = await loop.run_in_executor(None, _head)
         return digest or None
     except Exception:
+        logger.debug(
+            "failed to resolve remote digest for %s/%s:%s", registry, repo, tag, exc_info=True
+        )
         return None
 
 

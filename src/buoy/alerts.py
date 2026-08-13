@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import urllib.request
 from collections.abc import Callable
@@ -17,6 +18,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.alerts")
 
 # Default thresholds (can be overridden in config in the future)
 DEFAULT_THRESHOLDS = {
@@ -198,4 +201,5 @@ class AlertEngine:
         try:
             await asyncio.to_thread(_post)
         except Exception:
-            pass  # Best-effort, don't crash on webhook failure
+            # Best-effort, don't crash on webhook failure
+            logger.warning("webhook delivery failed", exc_info=True)

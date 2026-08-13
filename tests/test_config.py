@@ -38,6 +38,10 @@ class TestConfigDefaults:
         assert config.refresh.fleet_interval == 15
         assert config.refresh.image_updates_interval == 21600
 
+    def test_default_logging_level(self):
+        config = _build_config({})
+        assert config.logging.level == "INFO"
+
 
 class TestConfigFromYAML:
     """Config loaded from a YAML dict."""
@@ -175,6 +179,10 @@ class TestConfigFromYAML:
         assert config.theme.custom["bg"] == "#ff0000"
         assert config.theme.custom["amber"] == "#00ff00"
 
+    def test_logging_level_from_yaml(self):
+        config = _build_config({"logging": {"level": "DEBUG"}})
+        assert config.logging.level == "DEBUG"
+
 
 class TestEnvOverrides:
     """Environment variables override YAML values."""
@@ -257,6 +265,17 @@ class TestEnvOverrides:
         raw = _apply_env_overrides({})
         config = _build_config(raw)
         assert config.alerts.webhook_url == "https://hooks.example/test"
+
+    def test_log_level_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOG_LEVEL", "DEBUG")
+        raw = _apply_env_overrides({})
+        assert raw["logging"]["level"] == "DEBUG"
+
+    def test_log_level_env_builds_config(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOG_LEVEL", "WARNING")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.logging.level == "WARNING"
 
 
 class TestLoadConfig:

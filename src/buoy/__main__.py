@@ -1,6 +1,7 @@
 """Entry point for `python -m buoy` or the `buoy` CLI command."""
 
 import argparse
+import os
 import sys
 
 
@@ -35,15 +36,23 @@ def _add_serve_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _serve(args) -> None:
     from buoy.config import load_config
+    from buoy.logging_setup import setup_logging
+
+    # Bootstrap logging before config load so the config-loading log messages
+    # are visible; re-applied below once the configured/--dev level is known.
+    setup_logging(os.environ.get("BUOY_LOG_LEVEL", "INFO"))
+
+    if args.dev:
+        # --dev raises the *application* log level to DEBUG, not just uvicorn's.
+        os.environ["BUOY_LOG_LEVEL"] = "DEBUG"
 
     config = load_config(path=args.config, demo=args.demo)
+    setup_logging(config.logging.level)
     port = args.port or config.network.listen_port
 
     import uvicorn
 
     if args.dev:
-        import os
-
         os.environ["BUOY_CONFIG"] = args.config or ""
         os.environ["BUOY_DEMO"] = "1" if args.demo else "0"
         uvicorn.run(

@@ -16,6 +16,7 @@ import importlib
 import importlib.metadata
 import importlib.util
 import inspect
+import logging
 import os
 import pkgutil
 import sys
@@ -27,6 +28,8 @@ from buoy.plugins.protocol import PanelData, Plugin
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.plugins")
 
 ENTRY_POINT_GROUP = "buoy.plugins"
 
@@ -182,7 +185,7 @@ class PluginManager:
             try:
                 await plugin.setup()
             except Exception as e:
-                print(f"[buoy:plugins] {plugin_id} setup failed: {e}")
+                logger.warning("%s setup failed: %s", plugin_id, e, exc_info=True)
                 del self._plugins[plugin_id]
 
         # 5. Start collection loops (skip those disabled by config validation)
@@ -192,9 +195,7 @@ class PluginManager:
             task = asyncio.create_task(self._collect_loop(plugin_id, plugin))
             self._tasks.append(task)
 
-        print(
-            f"[buoy:plugins] {len(self._plugins)} plugin(s) active: {', '.join(self._plugins.keys())}"
-        )
+        logger.info("%d plugin(s) active: %s", len(self._plugins), ", ".join(self._plugins.keys()))
 
     async def stop(self):
         """Teardown all plugins and cancel tasks."""
@@ -206,7 +207,7 @@ class PluginManager:
             try:
                 await plugin.teardown()
             except Exception:
-                pass
+                logger.debug("%s teardown failed", plugin_id, exc_info=True)
 
     async def collect_all_now(self) -> dict[str, dict]:
         """Return current panel data for every registered plugin.
@@ -228,7 +229,7 @@ class PluginManager:
             try:
                 panel = plugin.render(data)
             except Exception as e:
-                print(f"[buoy:plugins] {plugin_id} render() failed: {e}")
+                logger.warning("%s render() failed: %s", plugin_id, e, exc_info=True)
                 panel = None
             health = self._health.get(plugin_id, {})
             result[plugin_id] = {
@@ -304,8 +305,11 @@ class PluginManager:
                 self._builtin_names[plugin_class.manifest.id] = plugin_class.manifest.name
                 self._register_config_gated_plugin(plugin_class, source="builtin")
             except Exception as e:
-                print(
-                    f"[buoy:plugins] Failed to register builtin '{plugin_class.manifest.id}': {e}"
+                logger.warning(
+                    "Failed to register builtin '%s': %s",
+                    plugin_class.manifest.id,
+                    e,
+                    exc_info=True,
                 )
 
     async def _load_entrypoint_plugins(self):
@@ -320,9 +324,11 @@ class PluginManager:
             try:
                 self._register_config_gated_plugin(plugin_class, source="entry point")
             except Exception as e:
-                print(
-                    f"[buoy:plugins] Failed to register entry point plugin "
-                    f"'{plugin_class.manifest.id}': {e}"
+                logger.warning(
+                    "Failed to register entry point plugin '%s': %s",
+                    plugin_class.manifest.id,
+                    e,
+                    exc_info=True,
                 )
 
     async def _load_user_plugins(self):
@@ -349,9 +355,11 @@ class PluginManager:
                 self._latest_data.pop(plugin_id, None)
                 self._plugins[plugin_id] = instance
             except Exception as e:
-                print(
-                    f"[buoy:plugins] Failed to register user plugin "
-                    f"'{plugin_class.manifest.id}': {e}"
+                logger.warning(
+                    "Failed to register user plugin '%s': %s",
+                    plugin_class.manifest.id,
+                    e,
+                    exc_info=True,
                 )
 
     def _warn_on_collision(self, plugin_id: str, source: str) -> None:
@@ -362,8 +370,10 @@ class PluginManager:
         override visible instead of silently swapping plugins.
         """
         if plugin_id in self._plugins:
-            print(
-                f"[buoy:plugins] '{plugin_id}' from {source} overrides a previously loaded plugin with the same id"
+            logger.info(
+                "'%s' from %s overrides a previously loaded plugin with the same id",
+                plugin_id,
+                source,
             )
 
     def _register_config_gated_plugin(self, plugin_class: type[Plugin], source: str) -> bool:
@@ -422,7 +432,7 @@ class PluginManager:
                 if plugin_class is not None:
                     yield plugin_class
             except Exception as e:
-                print(f"[buoy:plugins] Failed to load builtin '{module_path}': {e}")
+                logger.warning("Failed to load builtin '%s': %s", module_path, e, exc_info=True)
 
     @staticmethod
     def _iter_entrypoint_classes():
@@ -430,7 +440,9 @@ class PluginManager:
         try:
             eps = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
         except Exception as e:
-            print(f"[buoy:plugins] Failed to enumerate '{ENTRY_POINT_GROUP}' entry points: {e}")
+            logger.warning(
+                "Failed to enumerate '%s' entry points: %s", ENTRY_POINT_GROUP, e, exc_info=True
+            )
             return
 
         for ep in eps:
@@ -441,13 +453,11 @@ class PluginManager:
                 else:
                     plugin_class = PluginManager._find_plugin_class(obj)
                 if plugin_class is None:
-                    print(
-                        f"[buoy:plugins] Entry point '{ep.name}' did not resolve to a Plugin subclass"
-                    )
+                    logger.warning("Entry point '%s' did not resolve to a Plugin subclass", ep.name)
                     continue
                 yield plugin_class
             except Exception as e:
-                print(f"[buoy:plugins] Failed to load entry point '{ep.name}': {e}")
+                logger.warning("Failed to load entry point '%s': %s", ep.name, e, exc_info=True)
 
     @staticmethod
     def _iter_dir_classes(plugin_dir: Path):
@@ -472,7 +482,9 @@ class PluginManager:
                 if plugin_class is not None:
                     yield plugin_class
             except Exception as e:
-                print(f"[buoy:plugins] Failed to load user plugin '{py_file.name}': {e}")
+                logger.warning(
+                    "Failed to load user plugin '%s': %s", py_file.name, e, exc_info=True
+                )
 
     @classmethod
     def discover_all(cls, config: BuoyConfig) -> list[dict[str, Any]]:
@@ -502,9 +514,10 @@ class PluginManager:
                 enabled = bool(entry and entry.enabled)
             override = entry.refresh_interval if entry and source != "dir" else None
             if plugin_id in seen:
-                print(
-                    f"[buoy:plugins] '{plugin_id}' from {source} overrides a "
-                    "previously discovered plugin with the same id"
+                logger.info(
+                    "'%s' from %s overrides a previously discovered plugin with the same id",
+                    plugin_id,
+                    source,
                 )
             manifest = plugin_class.manifest
             seen[plugin_id] = {
@@ -606,11 +619,13 @@ class PluginManager:
                 status="error", summary="Timeout", detail={"error": "collect timed out"}
             )
             self._record_failure(plugin_id, "collect timed out")
+            logger.debug("%s collect() timed out", plugin_id)
         except Exception as e:
             self._latest_data[plugin_id] = PanelData(
                 status="error", summary="Error", detail={"error": str(e)}
             )
             self._record_failure(plugin_id, str(e))
+            logger.debug("%s collect() failed: %s", plugin_id, e, exc_info=True)
 
     def _record_success(self, plugin_id: str) -> None:
         self._health[plugin_id] = {

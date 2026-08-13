@@ -315,8 +315,10 @@ class TestAlertEngineWebhooks:
         assert captured["data"]["value"] == 92
 
     @pytest.mark.asyncio
-    async def test_webhook_failure_is_swallowed(self, monkeypatch):
-        """A network error during webhook dispatch does not crash _send_webhooks."""
+    async def test_webhook_failure_is_swallowed(self, monkeypatch, caplog):
+        """A network error during webhook dispatch does not crash _send_webhooks,
+        but is logged instead of vanishing silently."""
+        import logging
         import urllib.request
 
         config = _make_config()
@@ -331,4 +333,7 @@ class TestAlertEngineWebhooks:
         alert = Alert(metric="disk", level="crit", value=92, threshold=90, message="DISK crit: 92")
         # Await directly so the failure-swallow path is deterministically exercised
         # (no dangling create_task), and confirm no exception escapes.
-        await engine._send_webhooks(alert)
+        with caplog.at_level(logging.WARNING, logger="buoy.alerts"):
+            await engine._send_webhooks(alert)
+
+        assert any("webhook delivery failed" in r.message for r in caplog.records)
