@@ -44,6 +44,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      # load: true only supports a single platform, so this can't reuse the
+      # multi-arch manifest from the build job; it re-resolves amd64 layers
+      # from the shared GHA cache instead (fast, since build already
+      # populated that cache for amd64).
       - uses: docker/build-push-action@v6
         with:
           context: .
