@@ -165,7 +165,16 @@ class ProxyHeadersMiddleware:
 
         if peer_ip and self._is_trusted(peer_ip):
             headers: list[tuple[bytes, bytes]] = list(scope.get("headers", []))
-            headers_lower = {k.lower(): v for k, v in headers}
+            # Duplicate header fields with the same name are equivalent to a
+            # single comma-joined value (RFC 7230 §3.2.2) — join them instead
+            # of silently keeping only the last one.
+            headers_lower: dict[bytes, bytes] = {}
+            for k, v in headers:
+                key = k.lower()
+                if key in headers_lower:
+                    headers_lower[key] = headers_lower[key] + b", " + v
+                else:
+                    headers_lower[key] = v
 
             # Make a mutable copy of scope once for all rewrites
             scope = dict(scope)

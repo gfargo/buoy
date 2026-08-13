@@ -256,6 +256,60 @@ class TestProxyHeadersMiddlewareDirect:
         assert received[0]["client"] == ("192.168.1.1", 1000)
 
     @pytest.mark.asyncio
+    async def test_trusted_ipv6_peer_xff_rewrites_client(self):
+        """A trusted proxy peering over IPv6 (e.g. ::1) must still be honored."""
+        received: list[dict] = []
+
+        async def capturing_app(scope, receive, send):
+            received.append(dict(scope))
+
+        mw = ProxyHeadersMiddleware(capturing_app, trusted_proxies=["::1/128"])
+        scope = _make_scope(
+            client=("::1", 1000),
+            headers=[(b"x-forwarded-for", b"203.0.113.5")],
+        )
+        await mw(scope, None, None)
+        assert received[0]["client"] == ("203.0.113.5", 0)
+
+    @pytest.mark.asyncio
+    async def test_multi_hop_xff_uses_leftmost_original_client(self):
+        """A multi-hop chain (client -> proxy1 -> proxy2 -> us) must resolve to
+        the left-most (original client) entry, not an intermediate hop."""
+        received: list[dict] = []
+
+        async def capturing_app(scope, receive, send):
+            received.append(dict(scope))
+
+        mw = ProxyHeadersMiddleware(capturing_app, trusted_proxies=["*"])
+        scope = _make_scope(
+            client=("10.0.0.1", 1000),
+            headers=[(b"x-forwarded-for", b"203.0.113.5, 198.51.100.9, 10.0.0.1")],
+        )
+        await mw(scope, None, None)
+        assert received[0]["client"] == ("203.0.113.5", 0)
+
+    @pytest.mark.asyncio
+    async def test_duplicate_xff_headers_are_joined_not_collapsed(self):
+        """Multiple X-Forwarded-For header fields are equivalent to one
+        comma-joined value (RFC 7230 3.2.2) — the left-most entry of the
+        *first* header must win, not whichever header happened to be last."""
+        received: list[dict] = []
+
+        async def capturing_app(scope, receive, send):
+            received.append(dict(scope))
+
+        mw = ProxyHeadersMiddleware(capturing_app, trusted_proxies=["*"])
+        scope = _make_scope(
+            client=("10.0.0.1", 1000),
+            headers=[
+                (b"x-forwarded-for", b"203.0.113.5, 198.51.100.9"),
+                (b"x-forwarded-for", b"10.0.0.1"),
+            ],
+        )
+        await mw(scope, None, None)
+        assert received[0]["client"] == ("203.0.113.5", 0)
+
+    @pytest.mark.asyncio
     async def test_non_http_scope_passes_through(self):
         """lifespan or other scope types must be forwarded unchanged."""
         received: list[dict] = []
