@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import hmac
 import json
@@ -32,6 +33,7 @@ _plugin_manager = None
 _metric_store = None
 _alert_engine = None
 _image_update_cache: dict = {}  # {container_name: {"status": ..., "image": ..., "checked_at": ts}}
+_background_tasks: list[asyncio.Task] = []
 
 
 # ── API Handlers ───────────────────────────────────────────────────────────────
@@ -632,11 +634,11 @@ async def on_startup():
 
     # Start WebSocket broadcast loop
     if _config.features.websocket:
-        asyncio.create_task(_stats_loop())
+        _background_tasks.append(asyncio.create_task(_stats_loop()))
 
     # Start latency collection loop (only when network collector and history are both present)
     if _collectors.get("network") and _metric_store:
-        asyncio.create_task(_latency_loop())
+        _background_tasks.append(asyncio.create_task(_latency_loop()))
 
     # Start image update checker (if enabled)
     if _config.features.image_updates:
@@ -648,7 +650,7 @@ async def on_startup():
             from buoy.collectors.image_updates import ImageUpdateChecker
 
             _image_checker = ImageUpdateChecker(_config)
-        asyncio.create_task(_image_update_loop(_image_checker))
+        _background_tasks.append(asyncio.create_task(_image_update_loop(_image_checker)))
         print(
             f"[buoy] Image update checker enabled (interval: {_config.refresh.image_updates_interval}s)"
         )
@@ -658,6 +660,39 @@ async def on_startup():
 
     _plugin_manager = PluginManager(_config)
     await _plugin_manager.start()
+
+
+async def on_shutdown():
+    """Cancel background loops, tear down plugins, and close storage."""
+    global _plugin_manager, _metric_store, _alert_engine
+
+    for task in _background_tasks:
+        task.cancel()
+    if _background_tasks:
+        await asyncio.gather(*_background_tasks, return_exceptions=True)
+    _background_tasks.clear()
+
+    if _plugin_manager:
+        await _plugin_manager.stop()
+    if _metric_store:
+        _metric_store.close()
+
+    _plugin_manager = None
+    _metric_store = None
+    _alert_engine = None
+    _collectors.clear()
+    _ws_clients.clear()
+    _image_update_cache.clear()
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: Starlette):
+    """Starlette lifespan: run startup, then guarantee shutdown teardown."""
+    await on_startup()
+    try:
+        yield
+    finally:
+        await on_shutdown()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -905,7 +940,7 @@ def create_app(config: BuoyConfig) -> Starlette:
     app = Starlette(
         routes=routes,
         middleware=middleware,
-        on_startup=[on_startup],
+        lifespan=lifespan,
     )
 
     return app
