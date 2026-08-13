@@ -40,7 +40,11 @@ _image_update_cache: dict = {}  # {container_name: {"status": ..., "image": ...,
 def _is_tailscale(request: Request) -> bool:
     """Return True when the request's Host header indicates a Tailscale network."""
     host = request.headers.get("host", "").split(":", 1)[0].lower()
-    return host == "ts.net" or host.endswith(".ts.net")
+    if host == "ts.net" or host.endswith(".ts.net"):
+        return True
+
+    tailnet_domain = (_config.network.tailnet_domain if _config else "").strip(".").lower()
+    return bool(tailnet_domain) and (host == tailnet_domain or host.endswith(f".{tailnet_domain}"))
 
 
 async def api_health(request: Request) -> JSONResponse:

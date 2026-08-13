@@ -450,6 +450,79 @@ class TestTailnetHostRewrite:
             srv._collectors.pop("docker", None)
 
 
+class TestIsTailscaleCustomDomain:
+    """_is_tailscale() also honors a configured non-.ts.net tailnet_domain."""
+
+    @staticmethod
+    def _request_for_host(host: str):
+        from starlette.requests import Request
+
+        scope = {
+            "type": "http",
+            "path": "/",
+            "headers": [(b"host", host.encode())],
+            "client": ("127.0.0.1", 50000),
+            "scheme": "http",
+        }
+        return Request(scope)
+
+    def test_custom_tailnet_domain_detected(self):
+        from buoy import server as srv
+
+        original_config = srv._config
+        try:
+            cfg = BuoyConfig()
+            cfg.network = NetworkConfig(tailnet_domain="corp.example.internal")
+            srv._config = cfg
+
+            request = self._request_for_host("node.corp.example.internal:8090")
+            assert srv._is_tailscale(request) is True
+        finally:
+            srv._config = original_config
+
+    def test_unrelated_host_with_custom_domain_configured_not_detected(self):
+        from buoy import server as srv
+
+        original_config = srv._config
+        try:
+            cfg = BuoyConfig()
+            cfg.network = NetworkConfig(tailnet_domain="corp.example.internal")
+            srv._config = cfg
+
+            request = self._request_for_host("node.example.com:8090")
+            assert srv._is_tailscale(request) is False
+        finally:
+            srv._config = original_config
+
+    def test_no_tailnet_domain_configured_falls_back_to_ts_net_only(self):
+        from buoy import server as srv
+
+        original_config = srv._config
+        try:
+            cfg = BuoyConfig()
+            cfg.network = NetworkConfig(tailnet_domain="")
+            srv._config = cfg
+
+            request = self._request_for_host("node.corp.example.internal:8090")
+            assert srv._is_tailscale(request) is False
+        finally:
+            srv._config = original_config
+
+    def test_ts_net_still_detected_when_custom_domain_configured(self):
+        from buoy import server as srv
+
+        original_config = srv._config
+        try:
+            cfg = BuoyConfig()
+            cfg.network = NetworkConfig(tailnet_domain="corp.example.internal")
+            srv._config = cfg
+
+            request = self._request_for_host("node.example.ts.net:8090")
+            assert srv._is_tailscale(request) is True
+        finally:
+            srv._config = original_config
+
+
 # ── Config tests ───────────────────────────────────────────────────────────────
 
 
