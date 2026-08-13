@@ -126,7 +126,9 @@ async def _collect_scope(middleware: ProxyHeadersMiddleware, scope: dict) -> dic
         async def __call__(self, s, receive, send):
             captured_box.append(dict(s))
 
-    mw = ProxyHeadersMiddleware(CapturingApp(), trusted_proxies=middleware._networks and ["*"] or [])
+    mw = ProxyHeadersMiddleware(
+        CapturingApp(), trusted_proxies=middleware._networks and ["*"] or []
+    )
     # Re-run with capture app; copy trust settings
     mw._trust_all = middleware._trust_all
     mw._networks = middleware._networks
@@ -300,9 +302,7 @@ class TestRateLimitBucketingWithProxy:
         with TestClient(app, raise_server_exceptions=False) as client:
             # Exhaust the limit for client A
             for _ in range(RATE_LIMIT_MAX):
-                r = client.get(
-                    "/api/config/debug", headers={"X-Forwarded-For": "1.1.1.1"}
-                )
+                r = client.get("/api/config/debug", headers={"X-Forwarded-For": "1.1.1.1"})
                 assert r.status_code == 401  # auth rejects, but bucket consumed
 
             # Client A is now rate-limited
@@ -319,9 +319,7 @@ class TestRateLimitBucketingWithProxy:
         with TestClient(app, raise_server_exceptions=False) as client:
             # Exhaust the limit as one IP (the testclient peer)
             for _ in range(RATE_LIMIT_MAX):
-                r = client.get(
-                    "/api/config/debug", headers={"X-Forwarded-For": "1.1.1.1"}
-                )
+                r = client.get("/api/config/debug", headers={"X-Forwarded-For": "1.1.1.1"})
                 assert r.status_code == 401
 
             # Even a different XFF is rate-limited (it's the same real peer)
@@ -407,9 +405,7 @@ class TestTrustedProxiesConfig:
     def test_from_yaml(self):
         from buoy.config import _build_config
 
-        config = _build_config(
-            {"network": {"trusted_proxies": ["127.0.0.1", "172.16.0.0/12"]}}
-        )
+        config = _build_config({"network": {"trusted_proxies": ["127.0.0.1", "172.16.0.0/12"]}})
         assert config.network.trusted_proxies == ["127.0.0.1", "172.16.0.0/12"]
 
     def test_default_empty(self):
@@ -421,9 +417,7 @@ class TestTrustedProxiesConfig:
     def test_from_env(self, monkeypatch):
         from buoy.config import _apply_env_overrides
 
-        monkeypatch.setenv(
-            "BUOY_NETWORK_TRUSTED_PROXIES", "10.0.0.1, 192.168.0.0/16, *"
-        )
+        monkeypatch.setenv("BUOY_NETWORK_TRUSTED_PROXIES", "10.0.0.1, 192.168.0.0/16, *")
         raw = _apply_env_overrides({})
         assert raw["network"]["trusted_proxies"] == ["10.0.0.1", "192.168.0.0/16", "*"]
 
