@@ -34,9 +34,13 @@ def _add_serve_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _serve(args) -> None:
-    from buoy.config import load_config
+    from buoy.config import ConfigError, load_config
 
-    config = load_config(path=args.config, demo=args.demo)
+    try:
+        config = load_config(path=args.config, demo=args.demo)
+    except ConfigError as exc:
+        print(f"[buoy] {exc}", file=sys.stderr)
+        sys.exit(2)
     port = args.port or config.network.listen_port
 
     import uvicorn
@@ -62,10 +66,14 @@ def _serve(args) -> None:
 
 
 def _plugin(args) -> int:
-    from buoy.config import load_config
+    from buoy.config import ConfigError, load_config
     from buoy.plugins import cli as plugin_cli
 
-    config = load_config(path=args.config, demo=False)
+    try:
+        config = load_config(path=args.config, demo=False)
+    except ConfigError as exc:
+        print(f"[buoy] {exc}", file=sys.stderr)
+        sys.exit(2)
 
     if args.plugin_command == "list":
         return plugin_cli.cmd_list(config)

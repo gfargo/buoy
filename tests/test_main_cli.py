@@ -2,7 +2,10 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import buoy.__main__ as main_mod
+from buoy.config import ConfigError
 
 
 class TestBuildParserBackwardCompat:
@@ -114,3 +117,15 @@ class TestPluginDispatch:
 
         assert rc == 1
         assert "usage" in capsys.readouterr().out.lower()
+
+    def test_config_error_exits_cleanly(self, capsys):
+        args = self._args(["list"])
+        with patch(
+            "buoy.config.load_config",
+            side_effect=ConfigError("Invalid value for BUOY_NETWORK_LISTEN_PORT: 'nope'"),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main_mod._plugin(args)
+
+        assert exc_info.value.code == 2
+        assert "Invalid value for BUOY_NETWORK_LISTEN_PORT" in capsys.readouterr().err
