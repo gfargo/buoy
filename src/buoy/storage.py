@@ -141,6 +141,31 @@ class MetricStore:
             return
         self.record("latency", {"peer": peer, "latency_ms": latency_ms})
 
+    def record_latency_batch(self, readings: list[tuple[str, float]]):
+        """Batch-insert latency readings for multiple peers in one commit.
+
+        Args:
+            readings: List of (peer, latency_ms) tuples. Only online readings
+                (latency_ms > 0) are persisted; self (0) and offline (-1) are skipped.
+        """
+        if not self._conn:
+            return
+
+        rows = [(peer, latency_ms) for peer, latency_ms in readings if latency_ms > 0]
+        if not rows:
+            return
+
+        ts = int(time.time())
+        with self._lock:
+            try:
+                self._conn.executemany(
+                    "INSERT INTO metrics (ts, collector, data) VALUES (?, 'latency', ?)",
+                    [(ts, json.dumps({"peer": peer, "latency_ms": latency_ms})) for peer, latency_ms in rows],
+                )
+                self._conn.commit()
+            except sqlite3.Error:
+                pass
+
     def query_latency(self, peer: str, period_seconds: int) -> list[tuple[int, float]]:
         """Query latency history for a specific peer.
 
@@ -159,7 +184,7 @@ class MetricStore:
             try:
                 cursor = self._conn.execute(
                     "SELECT ts, json_extract(data, '$.latency_ms') FROM metrics "
-                    "WHERE collector = 'latency' AND ts >= ? AND json_valid(data) "
+                    "WHERE collector = 'latency' AND json_valid(data) AND ts >= ? "
                     "AND json_extract(data, '$.peer') = ? "
                     "AND json_extract(data, '$.latency_ms') IS NOT NULL "
                     "ORDER BY ts ASC",
@@ -238,6 +263,14 @@ class MetricStore:
         """)
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_metrics_collector_ts ON metrics(collector, ts)
+        """)
+        # json_valid(data) is part of the partial-index predicate (not just a query
+        # filter): it keeps malformed rows out of the index so the json_extract
+        # expression below is never evaluated against non-JSON data.
+        self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_metrics_latency_peer
+            ON metrics(json_extract(data, '$.peer'), ts)
+            WHERE collector = 'latency' AND json_valid(data)
         """)
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS container_states (

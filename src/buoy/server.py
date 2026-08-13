@@ -566,9 +566,8 @@ async def _stats_loop():
 
 
 def _record_latency_batch(results: list[dict]):
-    """Sync helper: persist a batch of latency readings in one thread hop."""
-    for r in results:
-        _metric_store.record_latency(r["name"], r["latency_ms"])
+    """Sync helper: persist a batch of latency readings in one thread hop and one commit."""
+    _metric_store.record_latency_batch([(r["name"], r["latency_ms"]) for r in results])
 
 
 async def _latency_loop():

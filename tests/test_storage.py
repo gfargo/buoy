@@ -1,9 +1,11 @@
 """Tests for Buoy SQLite ring buffer (MetricStore)."""
 
+import sqlite3
 import time
 
 import pytest
 
+import buoy.storage as storage_module
 from buoy.config import BuoyConfig, FeaturesConfig, NodeConfig
 from buoy.storage import RETENTION_SECONDS, MetricStore
 
@@ -467,6 +469,63 @@ class TestMetricStoreLatency:
         assert len(results) == 1
         assert results[0][1] == 10.0
         store.close()
+
+    def test_record_latency_batch_stores_all_peers_in_one_commit(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+
+        commit_calls = []
+
+        class CountingConnection(sqlite3.Connection):
+            def commit(self):
+                commit_calls.append(1)
+                return super().commit()
+
+        original_connect = storage_module.sqlite3.connect
+        monkeypatch.setattr(
+            storage_module.sqlite3,
+            "connect",
+            lambda *a, **kw: original_connect(*a, factory=CountingConnection, **kw),
+        )
+
+        store.open()
+        commit_calls.clear()  # discard the commit(s) issued by _create_tables during open()
+        store.record_latency_batch([("harbor", 10.0), ("bastion", 20.0), ("skiff", 30.0)])
+
+        assert len(commit_calls) == 1
+        cursor = store._conn.execute("SELECT COUNT(*) FROM metrics WHERE collector='latency'")
+        assert cursor.fetchone()[0] == 3
+        store.close()
+
+    def test_record_latency_batch_skips_offline_and_self_readings(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        store.record_latency_batch([("harbor", 10.0), ("bastion", -1), ("self", 0)])
+
+        cursor = store._conn.execute("SELECT COUNT(*) FROM metrics WHERE collector='latency'")
+        assert cursor.fetchone()[0] == 1
+        store.close()
+
+    def test_record_latency_batch_empty_list_is_noop(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        store.record_latency_batch([])
+
+        cursor = store._conn.execute("SELECT COUNT(*) FROM metrics WHERE collector='latency'")
+        assert cursor.fetchone()[0] == 0
+        store.close()
+
+    def test_record_latency_batch_without_open_is_noop(self):
+        config = _make_config()
+        store = MetricStore(config)
+        store.record_latency_batch([("harbor", 10.0)])
 
     def test_query_latency_ignores_rows_missing_latency_ms(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
