@@ -672,24 +672,31 @@ async def on_shutdown():
         await asyncio.gather(*_background_tasks, return_exceptions=True)
     _background_tasks.clear()
 
-    if _plugin_manager:
-        await _plugin_manager.stop()
-    if _metric_store:
-        _metric_store.close()
+    try:
+        if _plugin_manager:
+            await _plugin_manager.stop()
+    finally:
+        if _metric_store:
+            _metric_store.close()
 
-    _plugin_manager = None
-    _metric_store = None
-    _alert_engine = None
-    _collectors.clear()
-    _ws_clients.clear()
-    _image_update_cache.clear()
+        _plugin_manager = None
+        _metric_store = None
+        _alert_engine = None
+        _collectors.clear()
+        _ws_clients.clear()
+        _image_update_cache.clear()
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: Starlette):
-    """Starlette lifespan: run startup, then guarantee shutdown teardown."""
-    await on_startup()
+    """Starlette lifespan: run startup, then guarantee shutdown teardown.
+
+    ``on_startup`` runs inside the ``try`` so a partial failure (e.g. the
+    metric store opens but a later step raises) still triggers
+    ``on_shutdown`` to release whatever was already acquired.
+    """
     try:
+        await on_startup()
         yield
     finally:
         await on_shutdown()

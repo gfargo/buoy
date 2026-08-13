@@ -83,3 +83,46 @@ def test_lifespan_emits_no_deprecation_warning():
     assert not any(
         "on_startup" in str(w.message) or "on_shutdown" in str(w.message) for w in caught
     )
+
+
+def test_partial_startup_failure_still_closes_store(monkeypatch):
+    """If on_startup raises after the store is opened, shutdown must still run."""
+
+    async def failing_start(self):
+        raise RuntimeError("plugin discovery boom")
+
+    monkeypatch.setattr(PluginManager, "start", failing_start)
+
+    app = create_app(_make_config())
+    with pytest.raises(RuntimeError, match="plugin discovery boom"):
+        with TestClient(app):
+            pass
+
+    assert srv._metric_store is None
+    assert srv._plugin_manager is None
+    assert srv._background_tasks == []
+
+
+def test_shutdown_closes_store_when_plugin_manager_stop_raises(monkeypatch):
+    close_called = []
+
+    original_close = MetricStore.close
+
+    async def failing_stop(self):
+        raise RuntimeError("teardown boom")
+
+    def spy_close(self):
+        close_called.append(True)
+        original_close(self)
+
+    monkeypatch.setattr(PluginManager, "stop", failing_stop)
+    monkeypatch.setattr(MetricStore, "close", spy_close)
+
+    app = create_app(_make_config())
+    with pytest.raises(RuntimeError, match="teardown boom"):
+        with TestClient(app) as client:
+            client.get("/api/health")
+
+    assert close_called == [True]
+    assert srv._metric_store is None
+    assert srv._plugin_manager is None
