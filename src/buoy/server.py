@@ -39,7 +39,8 @@ _image_update_cache: dict = {}  # {container_name: {"status": ..., "image": ...,
 
 def _is_tailscale(request: Request) -> bool:
     """Return True when the request's Host header indicates a Tailscale network."""
-    return ".ts.net" in request.headers.get("host", "")
+    host = request.headers.get("host", "").split(":", 1)[0].lower()
+    return host == "ts.net" or host.endswith(".ts.net")
 
 
 async def api_health(request: Request) -> JSONResponse:
