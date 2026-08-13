@@ -30,11 +30,6 @@ jobs:
         with:
           args: >-
             --config ./.lychee.toml
-            README.md
-            SPEC.md
-            CHANGELOG.md
-            CONTRIBUTING.md
-            CODE_OF_CONDUCT.md
-            SECURITY.md
+            *.md
             buoy.yaml.example
           fail: true
