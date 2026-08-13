@@ -183,10 +183,9 @@ def _kv_int(output: str, key: str) -> int | None:
         if key in line and ":" in line:
             after = line.split(":", 1)[1].strip()
             for token in after.split():
-                try:
-                    return int(token.replace(",", ""))
-                except ValueError:
-                    pass
+                digits = token.replace(",", "")
+                if digits.isdigit():
+                    return int(digits)
     return None
 
 
@@ -196,8 +195,5 @@ def _sata_attr(output: str, attr_id: int) -> int | None:
     for line in output.split("\n"):
         m = pattern.match(line)
         if m:
-            try:
-                return int(m.group(1))
-            except ValueError:
-                pass
+            return int(m.group(1))
     return None

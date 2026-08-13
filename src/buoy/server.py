@@ -164,7 +164,7 @@ async def api_deploy_info(request: Request) -> JSONResponse:
                 boot_ts, tz=datetime.UTC
             ).isoformat()
     except Exception:
-        pass
+        logger.debug("api_deploy_info: container start time probe failed", exc_info=True)
 
     # Git HEAD from host strut repo (optional, best-effort)
     try:
@@ -184,7 +184,7 @@ async def api_deploy_info(request: Request) -> JSONResponse:
         if stdout and stdout.strip():
             info["git_head"] = stdout.decode().strip()
     except Exception:
-        pass
+        logger.debug("api_deploy_info: git HEAD probe failed", exc_info=True)
 
     return JSONResponse(info)
 

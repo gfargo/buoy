@@ -9,6 +9,7 @@ Storage location: /data/buoy.db (Docker volume) or ./buoy.db (local dev).
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 from pathlib import Path
@@ -16,6 +17,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.storage")
 
 RETENTION_SECONDS = 86400  # 24 hours
 DB_FILENAME = "buoy.db"
@@ -66,7 +69,7 @@ class MetricStore:
             )
             self._conn.commit()
         except sqlite3.Error:
-            pass
+            logger.warning("storage: failed to record %s metric", collector, exc_info=True)
 
     def prune(self):
         """Delete entries older than 24h."""
@@ -79,7 +82,7 @@ class MetricStore:
             self._conn.execute("DELETE FROM container_states WHERE ts < ?", (cutoff,))
             self._conn.commit()
         except sqlite3.Error:
-            pass
+            logger.warning("storage: failed to prune old entries", exc_info=True)
 
     def record_container_states(self, states: list[dict]):
         """Batch-insert container state samples.
@@ -97,7 +100,7 @@ class MetricStore:
             )
             self._conn.commit()
         except sqlite3.Error:
-            pass
+            logger.warning("storage: failed to record container states", exc_info=True)
 
     def query_container_history(self, name: str, period_seconds: int) -> list[tuple[int, str, int]]:
         """Return time-ordered (ts, status, restart_count) samples for a container.
@@ -121,6 +124,7 @@ class MetricStore:
             )
             return list(cursor)
         except sqlite3.Error:
+            logger.debug("storage: failed to query container history for %s", name, exc_info=True)
             return []
 
     def record_latency(self, peer: str, latency_ms: float):
@@ -162,6 +166,7 @@ class MetricStore:
                     continue
             return results
         except sqlite3.Error:
+            logger.debug("storage: failed to query latency history for %s", peer, exc_info=True)
             return []
 
     def query(self, metric: str, period_seconds: int) -> list[tuple[int, float]]:
@@ -195,6 +200,7 @@ class MetricStore:
                     continue
             return results
         except sqlite3.Error:
+            logger.debug("storage: failed to query %s history", metric, exc_info=True)
             return []
 
     def _extract_metric(self, data: dict, metric: str) -> float | None:

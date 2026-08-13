@@ -1,5 +1,7 @@
 """Tests for buoy.__main__ argument parsing and subcommand dispatch."""
 
+import argparse
+import os
 from unittest.mock import MagicMock, patch
 
 import buoy.__main__ as main_mod
@@ -114,3 +116,40 @@ class TestPluginDispatch:
 
         assert rc == 1
         assert "usage" in capsys.readouterr().out.lower()
+
+
+class TestServeDevLogLevel:
+    """--dev must force DEBUG logging end-to-end: env override -> config -> setup_logging."""
+
+    def _args(self, dev: bool) -> argparse.Namespace:
+        return argparse.Namespace(config=None, demo=True, host="0.0.0.0", port=None, dev=dev)
+
+    def test_dev_flag_forces_debug_through_config_pipeline(self, monkeypatch):
+        monkeypatch.delenv("BUOY_LOG_LEVEL", raising=False)
+
+        try:
+            with (
+                patch("buoy.logging_setup.setup_logging") as mock_setup_logging,
+                patch("uvicorn.run"),
+            ):
+                main_mod._serve(self._args(dev=True))
+
+            assert os.environ["BUOY_LOG_LEVEL"] == "DEBUG"
+            # setup_logging is called once to bootstrap, then again with the level
+            # resolved from the real config pipeline (env override -> config.logging.level).
+            assert mock_setup_logging.call_args_list[-1].args[0] == "DEBUG"
+        finally:
+            # _serve sets this directly on os.environ, outside monkeypatch's tracking.
+            monkeypatch.delenv("BUOY_LOG_LEVEL", raising=False)
+
+    def test_without_dev_flag_does_not_force_debug(self, monkeypatch):
+        monkeypatch.delenv("BUOY_LOG_LEVEL", raising=False)
+
+        with (
+            patch("buoy.logging_setup.setup_logging") as mock_setup_logging,
+            patch("uvicorn.run"),
+        ):
+            main_mod._serve(self._args(dev=False))
+
+        assert "BUOY_LOG_LEVEL" not in os.environ
+        assert mock_setup_logging.call_args_list[-1].args[0] == "INFO"
