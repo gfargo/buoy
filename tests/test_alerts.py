@@ -260,7 +260,7 @@ class TestAlertEngineWebhooks:
     """Test webhook dispatch from _send_webhooks."""
 
     @pytest.mark.asyncio
-    async def test_no_webhook_when_unconfigured(self, monkeypatch):
+    async def test_no_webhook_when_unconfigured(self):
         """No HTTP request is made when webhook_url is empty (the default)."""
         from unittest.mock import AsyncMock, patch
 
@@ -280,7 +280,7 @@ class TestAlertEngineWebhooks:
         mock_client.post.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_webhook_posts_when_configured(self, monkeypatch):
+    async def test_webhook_posts_when_configured(self):
         """A POST is attempted with the correct URL and JSON payload."""
         from unittest.mock import AsyncMock, patch
 
@@ -313,7 +313,7 @@ class TestAlertEngineWebhooks:
         assert kwargs["json"]["value"] == 92
 
     @pytest.mark.asyncio
-    async def test_webhook_failure_is_swallowed(self, monkeypatch):
+    async def test_webhook_failure_is_swallowed(self):
         """A network error during webhook dispatch does not crash _send_webhooks."""
         from unittest.mock import AsyncMock, patch
 
