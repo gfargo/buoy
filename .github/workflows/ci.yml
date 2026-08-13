@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: pytest --cov=buoy --cov-report=term-missing
+      - run: pytest --cov=buoy --cov-report=term-missing --cov-fail-under=75
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
       - uses: actions/setup-node@v4
