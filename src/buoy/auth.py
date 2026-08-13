@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import ipaddress
 import time
 from typing import TYPE_CHECKING
 
@@ -60,6 +61,135 @@ def check_rate_limit(client_ip: str) -> bool:
 
     _rate_limit[client_ip].append(now)
     return True
+
+
+def _parse_trusted_networks(
+    trusted_proxies: list[str],
+) -> tuple[bool, list[ipaddress.IPv4Network | ipaddress.IPv6Network]]:
+    """Parse a trusted_proxies list into a (trust_all, networks) tuple.
+
+    - ``"*"`` sets the trust_all flag (every peer is trusted).
+    - Each other entry is parsed as an IP network (CIDR or plain IP).
+      Unparseable entries are silently skipped (operator misconfiguration
+      should not crash the server).
+    """
+    trust_all = False
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for entry in trusted_proxies:
+        if entry == "*":
+            trust_all = True
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            pass  # ignore unparseable entries
+    return trust_all, networks
+
+
+def _extract_forwarded_ip(xff_value: str) -> str | None:
+    """Return the left-most (original client) IP from an X-Forwarded-For value.
+
+    Handles bracketed IPv6, ``ip:port`` forms, and whitespace.
+    Returns None if the value is empty or unparseable.
+    """
+    if not xff_value:
+        return None
+    # Take the leftmost entry (original client)
+    raw = xff_value.split(",")[0].strip()
+    # Strip brackets for IPv6: [::1] → ::1
+    if raw.startswith("["):
+        raw = raw.lstrip("[").split("]")[0]
+    elif ":" in raw:
+        # Could be ip:port (IPv4) — try to detect by counting colons
+        parts = raw.rsplit(":", 1)
+        if len(parts) == 2:
+            try:
+                ipaddress.ip_address(parts[0])
+                raw = parts[0]  # valid ip before colon, strip port
+            except ValueError:
+                pass  # keep raw as-is (might be plain IPv6 without brackets)
+    try:
+        ipaddress.ip_address(raw)
+        return raw
+    except ValueError:
+        return None
+
+
+class ProxyHeadersMiddleware:
+    """Pure-ASGI middleware that rewrites ``scope["client"]`` and the ``host``
+    header when the immediate TCP peer is a trusted proxy.
+
+    With ``trusted_proxies=[]`` (the default) the middleware is a no-op: every
+    request passes through unchanged and X-Forwarded-* headers from clients are
+    completely ignored (safe default — clients cannot spoof their IP or Host).
+
+    When the peer IP matches the trusted list:
+    - ``scope["client"]`` is replaced with the left-most ``X-Forwarded-For``
+      entry so each real client gets its own rate-limit bucket.
+    - The ``host`` header is replaced with ``X-Forwarded-Host`` (when present)
+      so tailnet URL detection in handlers works correctly.
+    - The ``x-forwarded-proto`` header (when present) is used to set
+      ``scope["scheme"]`` so any scheme-aware logic sees the correct protocol.
+
+    **Security notes:**
+    - ``trusted_proxies=["*"]`` trusts ALL peers — convenient for development
+      or fully-isolated networks, but allows any client to forge their IP/Host.
+    - CIDR ranges like ``172.16.0.0/12`` cover Docker bridge subnets.
+    - Taking the *left-most* X-Forwarded-For entry assumes a single trusted
+      proxy; with chained proxies the left-most entry can be client-controlled.
+      Acceptable for a private-network dashboard.
+    """
+
+    def __init__(self, app, trusted_proxies: list[str] | None = None):
+        self.app = app
+        self._trust_all, self._networks = _parse_trusted_networks(trusted_proxies or [])
+
+    def _is_trusted(self, peer_ip: str) -> bool:
+        if self._trust_all:
+            return True
+        if not self._networks:
+            return False
+        try:
+            addr = ipaddress.ip_address(peer_ip)
+        except ValueError:
+            return False
+        return any(addr in net for net in self._networks)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+
+        client = scope.get("client")
+        peer_ip = client[0] if client else None
+
+        if peer_ip and self._is_trusted(peer_ip):
+            headers: list[tuple[bytes, bytes]] = list(scope.get("headers", []))
+            headers_lower = {k.lower(): v for k, v in headers}
+
+            # Make a mutable copy of scope once for all rewrites
+            scope = dict(scope)
+
+            # Rewrite client from X-Forwarded-For
+            xff = headers_lower.get(b"x-forwarded-for", b"").decode("latin-1")
+            real_ip = _extract_forwarded_ip(xff)
+            if real_ip:
+                scope["client"] = (real_ip, 0)
+
+            # Rewrite host header from X-Forwarded-Host
+            xfh = headers_lower.get(b"x-forwarded-host", b"").decode("latin-1").strip()
+            if xfh:
+                # Remove existing host entries and append the forwarded host
+                new_headers = [(k, v) for k, v in headers if k.lower() != b"host"]
+                new_headers.append((b"host", xfh.encode("latin-1")))
+                scope["headers"] = new_headers
+
+            # Update scheme from X-Forwarded-Proto
+            xfp = headers_lower.get(b"x-forwarded-proto", b"").decode("latin-1").strip()
+            if xfp and xfp in ("http", "https"):
+                scope["scheme"] = xfp
+
+        await self.app(scope, receive, send)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

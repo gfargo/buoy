@@ -44,6 +44,25 @@ network:
   # allowed_origins:
   #   - https://harbor.example.ts.net
 
+  # Trusted reverse-proxy IPs / CIDRs.  When a request arrives from one of
+  # these addresses, buoy reads X-Forwarded-For (for per-client rate-limiting)
+  # and X-Forwarded-Host (for tailnet URL rewriting) instead of the raw TCP
+  # peer.  With the default empty list every X-Forwarded-* header from clients
+  # is ignored, so no spoofing is possible.
+  #
+  # Accepts: individual IPs, CIDR ranges, or "*" (trust all — convenience only,
+  # not recommended on networks reachable by untrusted clients).
+  # Also settable via BUOY_NETWORK_TRUSTED_PROXIES (comma-separated).
+  #
+  # IMPORTANT: deployments that previously relied on uvicorn's implicit
+  # loopback-proxy trust (X-Forwarded-For from 127.0.0.1) must now list
+  # the proxy explicitly here (e.g. "127.0.0.1").
+  trusted_proxies: []
+  # Example (nginx on the same host + Docker bridge):
+  # trusted_proxies:
+  #   - "127.0.0.1"
+  #   - "172.16.0.0/12"
+
 # ── Services ───────────────────────────────────────────────
 # Buoy auto-discovers local Docker containers and shows them as services.
 # Use 'hidden' to exclude noise, 'overrides' to customize display.
