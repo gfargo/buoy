@@ -6,6 +6,7 @@ import asyncio
 
 from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
 
 
 class SystemdHealthPlugin(Plugin):
@@ -67,7 +68,7 @@ class SystemdHealthPlugin(Plugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            stdout, _ = await communicate(proc, timeout=5)
             return stdout.decode().strip() if stdout else "unknown"
         except (FileNotFoundError, TimeoutError):
             return "unknown"

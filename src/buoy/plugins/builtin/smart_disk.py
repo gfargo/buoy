@@ -7,6 +7,7 @@ import re
 
 from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
 
 
 class SmartDiskPlugin(Plugin):
@@ -74,7 +75,7 @@ class SmartDiskPlugin(Plugin):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                stdout, _ = await communicate(proc, timeout=5)
                 if proc.returncode is not None and stdout:
                     devices = []
                     for line in stdout.decode().strip().split("\n"):
@@ -102,7 +103,7 @@ class SmartDiskPlugin(Plugin):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                stdout, _ = await communicate(proc, timeout=5)
                 if proc.returncode is not None and stdout:
                     output = stdout.decode()
                     break

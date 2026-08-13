@@ -20,6 +20,8 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from buoy.subprocess_utils import communicate
+
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
@@ -152,7 +154,7 @@ async def api_deploy_info(request: Request) -> JSONResponse:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+        stdout, _ = await communicate(proc, timeout=3)
         if stdout and stdout.strip() != b"0":
             import datetime
 
@@ -177,7 +179,7 @@ async def api_deploy_info(request: Request) -> JSONResponse:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        stdout, _ = await communicate(proc, timeout=5)
         if stdout and stdout.strip():
             info["git_head"] = stdout.decode().strip()
     except Exception:

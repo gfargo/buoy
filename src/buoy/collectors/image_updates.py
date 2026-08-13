@@ -21,6 +21,8 @@ import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING
 
+from buoy.subprocess_utils import communicate
+
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
@@ -82,7 +84,7 @@ async def _run(*args: str, timeout: float = 10) -> tuple[int, str]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        stdout, _ = await communicate(proc, timeout=timeout)
         return proc.returncode, stdout.decode().strip()
     except Exception:
         return 1, ""

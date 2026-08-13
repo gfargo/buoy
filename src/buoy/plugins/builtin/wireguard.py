@@ -7,6 +7,7 @@ import time
 
 from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
 
 
 class WireGuardPlugin(Plugin):
@@ -69,7 +70,7 @@ class WireGuardPlugin(Plugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            stdout, _ = await communicate(proc, timeout=5)
             text = stdout.decode().strip()
             return text if text else None
         except (TimeoutError, FileNotFoundError):
