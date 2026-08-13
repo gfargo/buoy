@@ -97,7 +97,7 @@ ruff format --check src/ tests/
    hatch — it can't be used under a strict CSP and every value must be
    escaped by hand.
 
-See [docs/plugins.md](docs/plugins.md) for the full guide.
+See [Plugin Development](https://github.com/gfargo/buoy/wiki/Plugins) for the full guide.
 
 ## Code Style
 
