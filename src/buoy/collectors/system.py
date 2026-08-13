@@ -10,6 +10,8 @@ import os
 import platform
 from typing import TYPE_CHECKING
 
+from buoy.subprocess_utils import communicate
+
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
@@ -215,7 +217,7 @@ class SystemCollector:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            stdout, _ = await communicate(proc, timeout=5)
             lines = stdout.decode().strip().split("\n")[1 : limit + 1]
             result = []
             for line in lines:

@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from buoy.subprocess_utils import communicate
+
 _PING_RE = re.compile(r"in ([\d.]+)ms")
 
 if TYPE_CHECKING:
@@ -84,7 +86,7 @@ class NetworkCollector:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=6)
+            stdout, _ = await communicate(proc, timeout=6)
             if proc.returncode != 0:
                 return None
             match = _PING_RE.search(stdout.decode())

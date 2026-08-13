@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
 
 
 class TailscalePlugin(Plugin):
@@ -98,7 +99,7 @@ class TailscalePlugin(Plugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=6)
+            stdout, _ = await communicate(proc, timeout=6)
             if proc.returncode != 0 or not stdout:
                 return None
             return json.loads(stdout)
