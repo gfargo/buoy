@@ -35,3 +35,8 @@ hub.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Node / Playwright
+node_modules/
+playwright-report/
+test-results/
