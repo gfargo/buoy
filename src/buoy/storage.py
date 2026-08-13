@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,6 +29,7 @@ class MetricStore:
         self.config = config
         self._conn: sqlite3.Connection | None = None
         self._db_path: Path | None = None
+        self._lock = threading.Lock()
 
     def open(self):
         """Open (or create) the SQLite database."""
@@ -37,16 +39,18 @@ class MetricStore:
             data_dir = Path(".")
 
         self._db_path = data_dir / DB_FILENAME
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._create_tables()
+        with self._lock:
+            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._create_tables()
 
     def close(self):
         """Close the database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        with self._lock:
+            if self._conn:
+                self._conn.close()
+                self._conn = None
 
     def record(self, collector: str, data: dict):
         """Store a metric snapshot.
@@ -59,14 +63,15 @@ class MetricStore:
             return
 
         ts = int(time.time())
-        try:
-            self._conn.execute(
-                "INSERT INTO metrics (ts, collector, data) VALUES (?, ?, ?)",
-                (ts, collector, json.dumps(data)),
-            )
-            self._conn.commit()
-        except sqlite3.Error:
-            pass
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO metrics (ts, collector, data) VALUES (?, ?, ?)",
+                    (ts, collector, json.dumps(data)),
+                )
+                self._conn.commit()
+            except sqlite3.Error:
+                pass
 
     def prune(self):
         """Delete entries older than 24h."""
@@ -74,12 +79,13 @@ class MetricStore:
             return
 
         cutoff = int(time.time()) - RETENTION_SECONDS
-        try:
-            self._conn.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
-            self._conn.execute("DELETE FROM container_states WHERE ts < ?", (cutoff,))
-            self._conn.commit()
-        except sqlite3.Error:
-            pass
+        with self._lock:
+            try:
+                self._conn.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
+                self._conn.execute("DELETE FROM container_states WHERE ts < ?", (cutoff,))
+                self._conn.commit()
+            except sqlite3.Error:
+                pass
 
     def record_container_states(self, states: list[dict]):
         """Batch-insert container state samples.
@@ -90,14 +96,16 @@ class MetricStore:
             return
 
         ts = int(time.time())
-        try:
-            self._conn.executemany(
-                "INSERT INTO container_states (ts, name, status, restart_count) VALUES (?, ?, ?, ?)",
-                [(ts, s["name"], s["status"], s["restart_count"]) for s in states],
-            )
-            self._conn.commit()
-        except sqlite3.Error:
-            pass
+        with self._lock:
+            try:
+                self._conn.executemany(
+                    "INSERT INTO container_states (ts, name, status, restart_count) "
+                    "VALUES (?, ?, ?, ?)",
+                    [(ts, s["name"], s["status"], s["restart_count"]) for s in states],
+                )
+                self._conn.commit()
+            except sqlite3.Error:
+                pass
 
     def query_container_history(self, name: str, period_seconds: int) -> list[tuple[int, str, int]]:
         """Return time-ordered (ts, status, restart_count) samples for a container.
@@ -113,15 +121,16 @@ class MetricStore:
             return []
 
         cutoff = int(time.time()) - period_seconds
-        try:
-            cursor = self._conn.execute(
-                "SELECT ts, status, restart_count FROM container_states "
-                "WHERE name = ? AND ts >= ? ORDER BY ts ASC",
-                (name, cutoff),
-            )
-            return list(cursor)
-        except sqlite3.Error:
-            return []
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT ts, status, restart_count FROM container_states "
+                    "WHERE name = ? AND ts >= ? ORDER BY ts ASC",
+                    (name, cutoff),
+                )
+                return list(cursor)
+            except sqlite3.Error:
+                return []
 
     def record_latency(self, peer: str, latency_ms: float):
         """Store a latency measurement for a peer.
@@ -146,23 +155,19 @@ class MetricStore:
             return []
 
         cutoff = int(time.time()) - period_seconds
-        try:
-            cursor = self._conn.execute(
-                "SELECT ts, data FROM metrics "
-                "WHERE collector = 'latency' AND ts >= ? ORDER BY ts ASC",
-                (cutoff,),
-            )
-            results = []
-            for ts, data_json in cursor:
-                try:
-                    data = json.loads(data_json)
-                    if data.get("peer") == peer:
-                        results.append((ts, data["latency_ms"]))
-                except (json.JSONDecodeError, KeyError):
-                    continue
-            return results
-        except sqlite3.Error:
-            return []
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT ts, json_extract(data, '$.latency_ms') FROM metrics "
+                    "WHERE collector = 'latency' AND ts >= ? AND json_valid(data) "
+                    "AND json_extract(data, '$.peer') = ? "
+                    "AND json_extract(data, '$.latency_ms') IS NOT NULL "
+                    "ORDER BY ts ASC",
+                    (cutoff, peer),
+                )
+                return list(cursor)
+            except sqlite3.Error:
+                return []
 
     def query(self, metric: str, period_seconds: int) -> list[tuple[int, float]]:
         """Query historical data for a specific metric.
@@ -178,24 +183,25 @@ class MetricStore:
             return []
 
         cutoff = int(time.time()) - period_seconds
-        try:
-            cursor = self._conn.execute(
-                "SELECT ts, data FROM metrics "
-                "WHERE collector = 'stats' AND ts >= ? ORDER BY ts ASC",
-                (cutoff,),
-            )
-            results = []
-            for ts, data_json in cursor:
-                try:
-                    data = json.loads(data_json)
-                    value = self._extract_metric(data, metric)
-                    if value is not None:
-                        results.append((ts, value))
-                except (json.JSONDecodeError, KeyError):
-                    continue
-            return results
-        except sqlite3.Error:
-            return []
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT ts, data FROM metrics "
+                    "WHERE collector = 'stats' AND ts >= ? ORDER BY ts ASC",
+                    (cutoff,),
+                )
+                results = []
+                for ts, data_json in cursor:
+                    try:
+                        data = json.loads(data_json)
+                        value = self._extract_metric(data, metric)
+                        if value is not None:
+                            results.append((ts, value))
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+                return results
+            except sqlite3.Error:
+                return []
 
     def _extract_metric(self, data: dict, metric: str) -> float | None:
         """Extract a specific metric value from a stats snapshot."""

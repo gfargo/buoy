@@ -448,3 +448,42 @@ class TestMetricStoreLatency:
         assert len(results) == 1
         assert results[0][1] == 42
         store.close()
+
+    def test_query_latency_filters_in_sql_ignoring_malformed_rows(self, tmp_path, monkeypatch):
+        """A malformed JSON row for another peer must not break the whole query."""
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        store.record_latency("harbor", 10.0)
+        store._conn.execute(
+            "INSERT INTO metrics (ts, collector, data) VALUES (?, ?, ?)",
+            (int(time.time()), "latency", "not valid json"),
+        )
+        store._conn.commit()
+
+        results = store.query_latency("harbor", 3600)
+        assert len(results) == 1
+        assert results[0][1] == 10.0
+        store.close()
+
+    def test_query_latency_ignores_rows_missing_latency_ms(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config = _make_config()
+        store = MetricStore(config)
+        store.open()
+
+        import json as _json
+
+        store._conn.execute(
+            "INSERT INTO metrics (ts, collector, data) VALUES (?, ?, ?)",
+            (int(time.time()), "latency", _json.dumps({"peer": "harbor"})),
+        )
+        store.record_latency("harbor", 10.0)
+        store._conn.commit()
+
+        results = store.query_latency("harbor", 3600)
+        assert len(results) == 1
+        assert results[0][1] == 10.0
+        store.close()

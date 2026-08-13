@@ -282,7 +282,7 @@ async def api_container_history(request: Request) -> JSONResponse:
     except (ValueError, TypeError):
         hours = 24
 
-    samples = _metric_store.query_container_history(name, hours * 3600)
+    samples = await asyncio.to_thread(_metric_store.query_container_history, name, hours * 3600)
     return JSONResponse(
         {
             "container": name,
@@ -428,7 +428,7 @@ async def api_fleet_latency_history(request: Request) -> JSONResponse:
     except (ValueError, TypeError):
         hours = 6
 
-    data = _metric_store.query_latency(peer, hours * 3600)
+    data = await asyncio.to_thread(_metric_store.query_latency, peer, hours * 3600)
     return JSONResponse({"peer": peer, "hours": hours, "data": data})
 
 
@@ -449,7 +449,7 @@ async def api_history(request: Request) -> JSONResponse:
             {"error": f"invalid metric, must be one of: {valid_metrics}"}, status_code=400
         )
 
-    data = _metric_store.query(metric, period_seconds)
+    data = await asyncio.to_thread(_metric_store.query, metric, period_seconds)
     return JSONResponse({"metric": metric, "period": period_str, "data": data})
 
 
@@ -506,6 +506,8 @@ async def broadcast_alert(alert_data: dict):
 
 # ── Background Tasks ───────────────────────────────────────────────────────────
 
+PRUNE_EVERY_CYCLES = 100  # ~500s at the default 5s stats_interval
+
 
 async def _stats_loop():
     """Periodically collect, broadcast, store, and evaluate alerts."""
@@ -543,24 +545,30 @@ async def _stats_loop():
 
             # Store in history (if enabled)
             if _metric_store:
-                _metric_store.record("stats", combined)
+                await asyncio.to_thread(_metric_store.record, "stats", combined)
                 # Sample container states every ~30s (every 6th cycle at 5s interval)
                 if docker_coll and _cycle % 6 == 0:
                     try:
                         states = await docker_coll.list_container_states()
                         if states:
-                            _metric_store.record_container_states(states)
+                            await asyncio.to_thread(_metric_store.record_container_states, states)
                     except Exception:
                         pass
-                # Prune every 100 cycles (~500s at 5s interval)
-                if int(asyncio.get_event_loop().time()) % 500 < _config.refresh.stats_interval:
-                    _metric_store.prune()
+                # Prune on a fixed cycle cadence, never twice-in-a-row or skipped
+                if _cycle % PRUNE_EVERY_CYCLES == 0:
+                    await asyncio.to_thread(_metric_store.prune)
 
             # Evaluate alert thresholds
             if _alert_engine:
                 await _alert_engine.evaluate(combined)
         except Exception:
             pass
+
+
+def _record_latency_batch(results: list[dict]):
+    """Sync helper: persist a batch of latency readings in one thread hop."""
+    for r in results:
+        _metric_store.record_latency(r["name"], r["latency_ms"])
 
 
 async def _latency_loop():
@@ -571,8 +579,8 @@ async def _latency_loop():
             network_coll = _collectors.get("network")
             if network_coll and _metric_store:
                 results = await network_coll.measure_latency()
-                for r in results:
-                    _metric_store.record_latency(r["name"], r["latency_ms"])
+                if results:
+                    await asyncio.to_thread(_record_latency_batch, results)
         except Exception:
             pass
 
