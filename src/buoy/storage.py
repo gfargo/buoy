@@ -160,7 +160,10 @@ class MetricStore:
             try:
                 self._conn.executemany(
                     "INSERT INTO metrics (ts, collector, data) VALUES (?, 'latency', ?)",
-                    [(ts, json.dumps({"peer": peer, "latency_ms": latency_ms})) for peer, latency_ms in rows],
+                    [
+                        (ts, json.dumps({"peer": peer, "latency_ms": latency_ms}))
+                        for peer, latency_ms in rows
+                    ],
                 )
                 self._conn.commit()
             except sqlite3.Error:
