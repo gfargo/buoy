@@ -32,12 +32,6 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
-      - if: matrix.build-mode == 'manual'
-        shell: bash
-        run: |
-          echo 'No manual build steps are required for python or javascript.'
-          exit 1
-
       - uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
