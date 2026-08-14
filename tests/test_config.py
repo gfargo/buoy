@@ -1,8 +1,9 @@
 """Tests for the Buoy configuration system."""
 
+import pytest
 import yaml
 
-from buoy.config import _apply_env_overrides, _build_config, load_config
+from buoy.config import ConfigError, _apply_env_overrides, _build_config, load_config
 
 
 class TestConfigDefaults:
@@ -277,6 +278,40 @@ class TestEnvOverrides:
         config = _build_config(raw)
         assert config.logging.level == "WARNING"
 
+    def test_port_override_invalid_raises(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_LISTEN_PORT", "eighty-ninety")
+        with pytest.raises(ConfigError) as exc_info:
+            _apply_env_overrides({})
+        assert "BUOY_NETWORK_LISTEN_PORT" in str(exc_info.value)
+        assert "eighty-ninety" in str(exc_info.value)
+
+    def test_port_override_empty_string_raises(self, monkeypatch):
+        """An explicitly-set but empty env var is an invalid int, not "unset"."""
+        monkeypatch.setenv("BUOY_NETWORK_LISTEN_PORT", "")
+        with pytest.raises(ConfigError) as exc_info:
+            _apply_env_overrides({})
+        assert "BUOY_NETWORK_LISTEN_PORT" in str(exc_info.value)
+
+    def test_stats_interval_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_REFRESH_STATS_INTERVAL", "10")
+        result = _apply_env_overrides({})
+        assert result["refresh"]["stats_interval"] == 10
+
+    def test_services_interval_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_REFRESH_SERVICES_INTERVAL", "45")
+        result = _apply_env_overrides({})
+        assert result["refresh"]["services_interval"] == 45
+
+    def test_fleet_interval_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_REFRESH_FLEET_INTERVAL", "20")
+        result = _apply_env_overrides({})
+        assert result["refresh"]["fleet_interval"] == 20
+
+    def test_plugins_interval_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_REFRESH_PLUGINS_INTERVAL", "90")
+        result = _apply_env_overrides({})
+        assert result["refresh"]["plugins_interval"] == 90
+
 
 class TestLoadConfig:
     """Integration test for the full load_config flow."""
@@ -323,3 +358,19 @@ class TestLoadConfig:
 
         config = load_config(path=str(config_file))
         assert config.network.allowed_origins == ["https://harbor.example.ts.net"]
+
+    def test_plugins_interval_from_env(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "buoy.yaml"
+        config_file.write_text(yaml.dump({"node": {"name": "compass"}}))
+        monkeypatch.setenv("BUOY_REFRESH_PLUGINS_INTERVAL", "120")
+
+        config = load_config(path=str(config_file))
+        assert config.refresh.plugins_interval == 120
+
+    def test_invalid_port_env_raises_config_error(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "buoy.yaml"
+        config_file.write_text(yaml.dump({"node": {"name": "compass"}}))
+        monkeypatch.setenv("BUOY_NETWORK_LISTEN_PORT", "eighty-ninety")
+
+        with pytest.raises(ConfigError):
+            load_config(path=str(config_file))

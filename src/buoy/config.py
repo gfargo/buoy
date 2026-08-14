@@ -20,6 +20,11 @@ import yaml
 
 logger = logging.getLogger("buoy.config")
 
+
+class ConfigError(Exception):
+    """Raised when configuration input is invalid (bad env value, etc.)."""
+
+
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 
 
@@ -43,6 +48,7 @@ class NetworkConfig:
     listen_port: int = 8090
     peers: list[PeerConfig] = field(default_factory=list)
     allowed_origins: list[str] = field(default_factory=list)
+    trusted_proxies: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -181,6 +187,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_NETWORK_LISTEN_PORT": ("network", "listen_port"),
         "BUOY_NETWORK_TAILNET_DOMAIN": ("network", "tailnet_domain"),
         "BUOY_NETWORK_ALLOWED_ORIGINS": ("network", "allowed_origins"),
+        "BUOY_NETWORK_TRUSTED_PROXIES": ("network", "trusted_proxies"),
         "BUOY_AUTH_ENABLED": ("auth", "enabled"),
         "BUOY_AUTH_TOKEN": ("auth", "token"),
         "BUOY_AUTH_TYPE": ("auth", "type"),
@@ -191,6 +198,10 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_WEBSOCKET": ("features", "websocket"),
         "BUOY_FEATURES_HISTORY": ("features", "history"),
         "BUOY_FEATURES_IMAGE_UPDATES": ("features", "image_updates"),
+        "BUOY_REFRESH_STATS_INTERVAL": ("refresh", "stats_interval"),
+        "BUOY_REFRESH_SERVICES_INTERVAL": ("refresh", "services_interval"),
+        "BUOY_REFRESH_FLEET_INTERVAL": ("refresh", "fleet_interval"),
+        "BUOY_REFRESH_PLUGINS_INTERVAL": ("refresh", "plugins_interval"),
         "BUOY_REFRESH_IMAGE_UPDATES_INTERVAL": ("refresh", "image_updates_interval"),
         "BUOY_ALERTS_WEBHOOK_URL": ("alerts", "webhook_url"),
         "BUOY_LOG_LEVEL": ("logging", "level"),
@@ -206,12 +217,30 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             raw[section] = {}
 
         # Type coercion
-        if key in ("listen_port", "stats_interval", "fleet_interval", "image_updates_interval"):
-            raw[section][key] = int(value)
+        if key in (
+            "listen_port",
+            "stats_interval",
+            "services_interval",
+            "fleet_interval",
+            "plugins_interval",
+            "image_updates_interval",
+        ):
+            # An empty string (e.g. `BUOY_NETWORK_LISTEN_PORT=`) is treated as an
+            # explicit invalid value, not "unset" — only a missing env var (checked
+            # above) falls back to the YAML/default. There's no sensible int for "",
+            # so we surface the same ConfigError as any other unparsable value.
+            try:
+                raw[section][key] = int(value)
+            except ValueError as exc:
+                raise ConfigError(
+                    f"Invalid value for {env_key}: {value!r} (expected an integer)"
+                ) from exc
         elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates"):
             raw[section][key] = value.lower() in ("true", "1", "yes")
         elif key == "allowed_origins":
             raw[section][key] = [origin.strip() for origin in value.split(",") if origin.strip()]
+        elif key == "trusted_proxies":
+            raw[section][key] = [entry.strip() for entry in value.split(",") if entry.strip()]
         else:
             raw[section][key] = value
 
@@ -292,6 +321,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         listen_port=int(network_raw.get("listen_port", 8090)),
         peers=peers,
         allowed_origins=list(network_raw.get("allowed_origins", [])),
+        trusted_proxies=list(network_raw.get("trusted_proxies", [])),
     )
 
     services = ServicesConfig(

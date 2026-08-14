@@ -23,6 +23,7 @@ from pathlib import Path
 
 from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
 
 logger = logging.getLogger("buoy.plugins.speedtest")
 
@@ -169,7 +170,7 @@ class SpeedtestPlugin(Plugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+            stdout, _ = await communicate(proc, timeout=120)
             data = json.loads(stdout.decode())
 
             if is_ookla:

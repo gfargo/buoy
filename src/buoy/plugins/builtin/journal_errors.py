@@ -7,6 +7,7 @@ import re
 
 from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
 
 
 class JournalErrorsPlugin(Plugin):
@@ -53,7 +54,7 @@ class JournalErrorsPlugin(Plugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            stdout, _ = await communicate(proc, timeout=5)
             if not stdout:
                 return []
 

@@ -35,7 +35,7 @@ def _add_serve_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _serve(args) -> None:
-    from buoy.config import load_config
+    from buoy.config import ConfigError, load_config
     from buoy.logging_setup import setup_logging
 
     # Bootstrap logging before config load so the config-loading log messages
@@ -46,7 +46,11 @@ def _serve(args) -> None:
         # --dev raises the *application* log level to DEBUG, not just uvicorn's.
         os.environ["BUOY_LOG_LEVEL"] = "DEBUG"
 
-    config = load_config(path=args.config, demo=args.demo)
+    try:
+        config = load_config(path=args.config, demo=args.demo)
+    except ConfigError as exc:
+        print(f"[buoy] {exc}", file=sys.stderr)
+        sys.exit(2)
     setup_logging(config.logging.level)
     port = args.port or config.network.listen_port
 
@@ -62,19 +66,24 @@ def _serve(args) -> None:
             port=port,
             reload=True,
             log_level="debug",
+            proxy_headers=False,
         )
     else:
         from buoy.server import create_app
 
         app = create_app(config)
-        uvicorn.run(app, host=args.host, port=port, log_level="info")
+        uvicorn.run(app, host=args.host, port=port, log_level="info", proxy_headers=False)
 
 
 def _plugin(args) -> int:
-    from buoy.config import load_config
+    from buoy.config import ConfigError, load_config
     from buoy.plugins import cli as plugin_cli
 
-    config = load_config(path=args.config, demo=False)
+    try:
+        config = load_config(path=args.config, demo=False)
+    except ConfigError as exc:
+        print(f"[buoy] {exc}", file=sys.stderr)
+        sys.exit(2)
 
     if args.plugin_command == "list":
         return plugin_cli.cmd_list(config)

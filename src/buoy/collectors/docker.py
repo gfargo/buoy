@@ -13,6 +13,8 @@ import re
 import time
 from typing import TYPE_CHECKING
 
+from buoy.subprocess_utils import communicate
+
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
@@ -45,7 +47,7 @@ class DockerCollector:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await communicate(proc, timeout=timeout)
             return proc.returncode, stdout.decode().strip(), stderr.decode().strip()
         except TimeoutError:
             return 1, "", "timeout"

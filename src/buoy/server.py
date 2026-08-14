@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import hmac
 import json
@@ -21,6 +22,8 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from buoy.subprocess_utils import communicate
+
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
@@ -35,9 +38,20 @@ _plugin_manager = None
 _metric_store = None
 _alert_engine = None
 _image_update_cache: dict = {}  # {container_name: {"status": ..., "image": ..., "checked_at": ts}}
+_background_tasks: list[asyncio.Task] = []
 
 
 # ── API Handlers ───────────────────────────────────────────────────────────────
+
+
+def _is_tailscale(request: Request) -> bool:
+    """Return True when the request's Host header indicates a Tailscale network."""
+    host = request.headers.get("host", "").split(":", 1)[0].lower()
+    if host == "ts.net" or host.endswith(".ts.net"):
+        return True
+
+    tailnet_domain = (_config.network.tailnet_domain if _config else "").strip(".").lower()
+    return bool(tailnet_domain) and (host == tailnet_domain or host.endswith(f".{tailnet_domain}"))
 
 
 async def api_health(request: Request) -> JSONResponse:
@@ -155,7 +169,7 @@ async def api_deploy_info(request: Request) -> JSONResponse:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+        stdout, _ = await communicate(proc, timeout=3)
         if stdout and stdout.strip() != b"0":
             import datetime
 
@@ -180,7 +194,7 @@ async def api_deploy_info(request: Request) -> JSONResponse:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        stdout, _ = await communicate(proc, timeout=5)
         if stdout and stdout.strip():
             info["git_head"] = stdout.decode().strip()
     except Exception:
@@ -197,7 +211,7 @@ async def api_stats(request: Request) -> JSONResponse:
     docker_coll = _collectors.get("docker")
     disk_coll = _collectors.get("disk")
 
-    is_tailscale = ".ts.net" in request.headers.get("host", "")
+    is_tailscale = _is_tailscale(request)
 
     # Gather all stats concurrently
     results = await asyncio.gather(
@@ -254,7 +268,7 @@ async def api_services(request: Request) -> JSONResponse:
     """Discovered local services + network links."""
     from buoy.services import discover_services
 
-    is_tailscale = ".ts.net" in request.headers.get("host", "")
+    is_tailscale = _is_tailscale(request)
     data = await discover_services(_config, is_tailscale, collector=_collectors.get("docker"))
     return JSONResponse(data)
 
@@ -285,7 +299,7 @@ async def api_container_history(request: Request) -> JSONResponse:
     except (ValueError, TypeError):
         hours = 24
 
-    samples = _metric_store.query_container_history(name, hours * 3600)
+    samples = await asyncio.to_thread(_metric_store.query_container_history, name, hours * 3600)
     return JSONResponse(
         {
             "container": name,
@@ -431,7 +445,7 @@ async def api_fleet_latency_history(request: Request) -> JSONResponse:
     except (ValueError, TypeError):
         hours = 6
 
-    data = _metric_store.query_latency(peer, hours * 3600)
+    data = await asyncio.to_thread(_metric_store.query_latency, peer, hours * 3600)
     return JSONResponse({"peer": peer, "hours": hours, "data": data})
 
 
@@ -452,7 +466,7 @@ async def api_history(request: Request) -> JSONResponse:
             {"error": f"invalid metric, must be one of: {valid_metrics}"}, status_code=400
         )
 
-    data = _metric_store.query(metric, period_seconds)
+    data = await asyncio.to_thread(_metric_store.query, metric, period_seconds)
     return JSONResponse({"metric": metric, "period": period_str, "data": data})
 
 
@@ -512,6 +526,8 @@ async def broadcast_alert(alert_data: dict):
 
 # ── Background Tasks ───────────────────────────────────────────────────────────
 
+PRUNE_EVERY_CYCLES = 100  # ~500s at the default 5s stats_interval
+
 
 async def _stats_loop():
     """Periodically collect, broadcast, store, and evaluate alerts."""
@@ -549,24 +565,29 @@ async def _stats_loop():
 
             # Store in history (if enabled)
             if _metric_store:
-                _metric_store.record("stats", combined)
+                await asyncio.to_thread(_metric_store.record, "stats", combined)
                 # Sample container states every ~30s (every 6th cycle at 5s interval)
                 if docker_coll and _cycle % 6 == 0:
                     try:
                         states = await docker_coll.list_container_states()
                         if states:
-                            _metric_store.record_container_states(states)
+                            await asyncio.to_thread(_metric_store.record_container_states, states)
                     except Exception:
                         logger.debug("stats loop: container state sampling failed", exc_info=True)
-                # Prune every 100 cycles (~500s at 5s interval)
-                if int(asyncio.get_event_loop().time()) % 500 < _config.refresh.stats_interval:
-                    _metric_store.prune()
+                # Prune on a fixed cycle cadence, never twice-in-a-row or skipped
+                if _cycle % PRUNE_EVERY_CYCLES == 0:
+                    await asyncio.to_thread(_metric_store.prune)
 
             # Evaluate alert thresholds
             if _alert_engine:
                 await _alert_engine.evaluate(combined)
         except Exception:
             logger.warning("stats loop iteration failed", exc_info=True)
+
+
+def _record_latency_batch(results: list[dict]):
+    """Sync helper: persist a batch of latency readings in one thread hop and one commit."""
+    _metric_store.record_latency_batch([(r["name"], r["latency_ms"]) for r in results])
 
 
 async def _latency_loop():
@@ -577,8 +598,8 @@ async def _latency_loop():
             network_coll = _collectors.get("network")
             if network_coll and _metric_store:
                 results = await network_coll.measure_latency()
-                for r in results:
-                    _metric_store.record_latency(r["name"], r["latency_ms"])
+                if results:
+                    await asyncio.to_thread(_record_latency_batch, results)
         except Exception:
             logger.warning("latency loop iteration failed", exc_info=True)
 
@@ -638,11 +659,11 @@ async def on_startup():
 
     # Start WebSocket broadcast loop
     if _config.features.websocket:
-        asyncio.create_task(_stats_loop())
+        _background_tasks.append(asyncio.create_task(_stats_loop()))
 
     # Start latency collection loop (only when network collector and history are both present)
     if _collectors.get("network") and _metric_store:
-        asyncio.create_task(_latency_loop())
+        _background_tasks.append(asyncio.create_task(_latency_loop()))
 
     # Start image update checker (if enabled)
     if _config.features.image_updates:
@@ -654,7 +675,7 @@ async def on_startup():
             from buoy.collectors.image_updates import ImageUpdateChecker
 
             _image_checker = ImageUpdateChecker(_config)
-        asyncio.create_task(_image_update_loop(_image_checker))
+        _background_tasks.append(asyncio.create_task(_image_update_loop(_image_checker)))
         logger.info(
             "Image update checker enabled (interval: %ss)",
             _config.refresh.image_updates_interval,
@@ -665,6 +686,46 @@ async def on_startup():
 
     _plugin_manager = PluginManager(_config)
     await _plugin_manager.start()
+
+
+async def on_shutdown():
+    """Cancel background loops, tear down plugins, and close storage."""
+    global _plugin_manager, _metric_store, _alert_engine
+
+    for task in _background_tasks:
+        task.cancel()
+    if _background_tasks:
+        await asyncio.gather(*_background_tasks, return_exceptions=True)
+    _background_tasks.clear()
+
+    try:
+        if _plugin_manager:
+            await _plugin_manager.stop()
+    finally:
+        if _metric_store:
+            _metric_store.close()
+
+        _plugin_manager = None
+        _metric_store = None
+        _alert_engine = None
+        _collectors.clear()
+        _ws_clients.clear()
+        _image_update_cache.clear()
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: Starlette):
+    """Starlette lifespan: run startup, then guarantee shutdown teardown.
+
+    ``on_startup`` runs inside the ``try`` so a partial failure (e.g. the
+    metric store opens but a later step raises) still triggers
+    ``on_shutdown`` to release whatever was already acquired.
+    """
+    try:
+        await on_startup()
+        yield
+    finally:
+        await on_shutdown()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -855,6 +916,16 @@ def create_app(config: BuoyConfig) -> Starlette:
     # reads). Cross-origin access is opt-in via an explicit origin allowlist
     # (e.g. for fleet peers) — never a wildcard, per SPEC §7.2.
     middleware = []
+
+    # ProxyHeadersMiddleware must be outermost so all downstream middleware
+    # and handlers see the corrected scope["client"] and host header.
+    # With trusted_proxies=[] (default) this is a no-op.
+    from buoy.auth import ProxyHeadersMiddleware
+
+    middleware.append(
+        Middleware(ProxyHeadersMiddleware, trusted_proxies=config.network.trusted_proxies)
+    )
+
     if config.network.allowed_origins:
         middleware.append(
             Middleware(
@@ -916,7 +987,7 @@ def create_app(config: BuoyConfig) -> Starlette:
     app = Starlette(
         routes=routes,
         middleware=middleware,
-        on_startup=[on_startup],
+        lifespan=lifespan,
     )
 
     return app
