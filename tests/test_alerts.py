@@ -260,41 +260,36 @@ class TestAlertEngineWebhooks:
     """Test webhook dispatch from _send_webhooks."""
 
     @pytest.mark.asyncio
-    async def test_no_webhook_when_unconfigured(self, monkeypatch):
+    async def test_no_webhook_when_unconfigured(self):
         """No HTTP request is made when webhook_url is empty (the default)."""
+        from unittest.mock import AsyncMock, patch
+
         config = _make_config()
         # Default AlertsConfig has empty webhook_url — no override needed
 
-        calls = []
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            calls.append(fn)
-
-        monkeypatch.setattr("buoy.alerts.asyncio.to_thread", fake_to_thread)
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
 
         engine = AlertEngine(config)
         alert = Alert(metric="disk", level="crit", value=92, threshold=90, message="DISK crit: 92")
-        await engine._send_webhooks(alert)
 
-        assert calls == [], "asyncio.to_thread should not be called when webhook_url is empty"
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await engine._send_webhooks(alert)
+
+        mock_client.post.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_webhook_posts_when_configured(self, monkeypatch):
+    async def test_webhook_posts_when_configured(self):
         """A POST is attempted with the correct URL and JSON payload."""
-        import json
-        import urllib.request
+        from unittest.mock import AsyncMock, patch
 
         config = _make_config()
         config.alerts = AlertsConfig(webhook_url="https://hooks.example/x")
 
-        captured = {}
-
-        def fake_urlopen(req, timeout=None):
-            captured["url"] = req.full_url
-            captured["method"] = req.method
-            captured["data"] = json.loads(req.data.decode())
-
-        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
 
         engine = AlertEngine(config)
         alert = Alert(
@@ -305,30 +300,35 @@ class TestAlertEngineWebhooks:
             message="DISK crit: 92",
             fired_at=1000.0,
         )
-        await engine._send_webhooks(alert)
 
-        assert captured["url"] == "https://hooks.example/x"
-        assert captured["method"] == "POST"
-        assert captured["data"]["metric"] == "disk"
-        assert captured["data"]["level"] == "crit"
-        assert captured["data"]["hostname"] == "test"
-        assert captured["data"]["value"] == 92
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await engine._send_webhooks(alert)
+
+        mock_client.post.assert_called_once()
+        args, kwargs = mock_client.post.call_args
+        assert args[0] == "https://hooks.example/x"
+        assert kwargs["json"]["metric"] == "disk"
+        assert kwargs["json"]["level"] == "crit"
+        assert kwargs["json"]["hostname"] == "test"
+        assert kwargs["json"]["value"] == 92
 
     @pytest.mark.asyncio
-    async def test_webhook_failure_is_swallowed(self, monkeypatch):
+    async def test_webhook_failure_is_swallowed(self):
         """A network error during webhook dispatch does not crash _send_webhooks."""
-        import urllib.request
+        from unittest.mock import AsyncMock, patch
 
         config = _make_config()
         config.alerts = AlertsConfig(webhook_url="https://hooks.example/x")
 
-        def exploding_urlopen(req, timeout=None):
-            raise OSError("connection refused")
-
-        monkeypatch.setattr(urllib.request, "urlopen", exploding_urlopen)
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(side_effect=OSError("connection refused"))
 
         engine = AlertEngine(config)
         alert = Alert(metric="disk", level="crit", value=92, threshold=90, message="DISK crit: 92")
+
         # Await directly so the failure-swallow path is deterministically exercised
         # (no dangling create_task), and confirm no exception escapes.
-        await engine._send_webhooks(alert)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await engine._send_webhooks(alert)

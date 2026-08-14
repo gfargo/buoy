@@ -8,12 +8,12 @@ external webhooks (Discord, Slack, generic HTTP).
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+import httpx
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
@@ -175,27 +175,17 @@ class AlertEngine:
             return
 
         # Generic webhook payload
-        payload = json.dumps(
-            {
-                "text": alert.message,
-                "level": alert.level,
-                "metric": alert.metric,
-                "value": alert.value,
-                "hostname": self.config.node.name,
-                "timestamp": alert.fired_at,
-            }
-        ).encode()
-
-        def _post():
-            req = urllib.request.Request(
-                webhook_url,
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=5)
+        payload = {
+            "text": alert.message,
+            "level": alert.level,
+            "metric": alert.metric,
+            "value": alert.value,
+            "hostname": self.config.node.name,
+            "timestamp": alert.fired_at,
+        }
 
         try:
-            await asyncio.to_thread(_post)
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(webhook_url, json=payload)
         except Exception:
             pass  # Best-effort, don't crash on webhook failure
