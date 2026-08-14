@@ -57,12 +57,13 @@ def _serve(args) -> None:
             port=port,
             reload=True,
             log_level="debug",
+            proxy_headers=False,
         )
     else:
         from buoy.server import create_app
 
         app = create_app(config)
-        uvicorn.run(app, host=args.host, port=port, log_level="info")
+        uvicorn.run(app, host=args.host, port=port, log_level="info", proxy_headers=False)
 
 
 def _plugin(args) -> int:

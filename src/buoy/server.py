@@ -41,6 +41,16 @@ _background_tasks: list[asyncio.Task] = []
 # ── API Handlers ───────────────────────────────────────────────────────────────
 
 
+def _is_tailscale(request: Request) -> bool:
+    """Return True when the request's Host header indicates a Tailscale network."""
+    host = request.headers.get("host", "").split(":", 1)[0].lower()
+    if host == "ts.net" or host.endswith(".ts.net"):
+        return True
+
+    tailnet_domain = (_config.network.tailnet_domain if _config else "").strip(".").lower()
+    return bool(tailnet_domain) and (host == tailnet_domain or host.endswith(f".{tailnet_domain}"))
+
+
 async def api_health(request: Request) -> JSONResponse:
     """Health check endpoint."""
     return JSONResponse(
@@ -198,7 +208,7 @@ async def api_stats(request: Request) -> JSONResponse:
     docker_coll = _collectors.get("docker")
     disk_coll = _collectors.get("disk")
 
-    is_tailscale = ".ts.net" in request.headers.get("host", "")
+    is_tailscale = _is_tailscale(request)
 
     # Gather all stats concurrently
     results = await asyncio.gather(
@@ -255,7 +265,7 @@ async def api_services(request: Request) -> JSONResponse:
     """Discovered local services + network links."""
     from buoy.services import discover_services
 
-    is_tailscale = ".ts.net" in request.headers.get("host", "")
+    is_tailscale = _is_tailscale(request)
     data = await discover_services(_config, is_tailscale, collector=_collectors.get("docker"))
     return JSONResponse(data)
 
@@ -895,6 +905,16 @@ def create_app(config: BuoyConfig) -> Starlette:
     # reads). Cross-origin access is opt-in via an explicit origin allowlist
     # (e.g. for fleet peers) — never a wildcard, per SPEC §7.2.
     middleware = []
+
+    # ProxyHeadersMiddleware must be outermost so all downstream middleware
+    # and handlers see the corrected scope["client"] and host header.
+    # With trusted_proxies=[] (default) this is a no-op.
+    from buoy.auth import ProxyHeadersMiddleware
+
+    middleware.append(
+        Middleware(ProxyHeadersMiddleware, trusted_proxies=config.network.trusted_proxies)
+    )
+
     if config.network.allowed_origins:
         middleware.append(
             Middleware(
