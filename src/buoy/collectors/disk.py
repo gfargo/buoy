@@ -7,6 +7,7 @@ Falls back to local filesystem info when nsenter is not available.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 from typing import TYPE_CHECKING
@@ -15,6 +16,8 @@ from buoy.subprocess_utils import communicate
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.collectors.disk")
 
 
 _VIRTUAL_FSTYPES = {
@@ -78,6 +81,7 @@ class DiskCollector:
             usage = shutil.disk_usage("/")
             return int((usage.used / usage.total) * 100)
         except Exception:
+            logger.debug("failed to read root disk usage", exc_info=True)
             return 0
 
     # ── All Mounts ─────────────────────────────────────────────────────────────
@@ -190,7 +194,7 @@ class DiskCollector:
                         "mount": mount_point,
                     }
         except OSError:
-            pass
+            logger.debug("failed to read /proc/mounts", exc_info=True)
         return list(by_device.values()) or self._root_only_mount()
 
     def _root_only_mount(self) -> list[dict]:
@@ -209,6 +213,7 @@ class DiskCollector:
                 }
             ]
         except Exception:
+            logger.debug("failed to read root mount usage", exc_info=True)
             return []
 
     # ── NVMe SMART ─────────────────────────────────────────────────────────────
@@ -274,7 +279,7 @@ class DiskCollector:
                             "write_gb": round(sectors_written * 512 / (1024**3), 1),
                         }
         except Exception:
-            pass
+            logger.debug("failed to read /proc/diskstats", exc_info=True)
         return {"read_gb": 0, "write_gb": 0}
 
     # ── Helpers ────────────────────────────────────────────────────────────────

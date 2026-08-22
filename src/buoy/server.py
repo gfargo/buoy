@@ -7,6 +7,7 @@ import contextlib
 import dataclasses
 import hmac
 import json
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -25,6 +26,8 @@ from buoy.subprocess_utils import communicate
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.server")
 
 # ── Globals (set during app creation) ──────────────────────────────────────────
 
@@ -175,7 +178,7 @@ async def api_deploy_info(request: Request) -> JSONResponse:
                 boot_ts, tz=datetime.UTC
             ).isoformat()
     except Exception:
-        pass
+        logger.debug("api_deploy_info: container start time probe failed", exc_info=True)
 
     # Git HEAD from host strut repo (optional, best-effort)
     try:
@@ -195,7 +198,7 @@ async def api_deploy_info(request: Request) -> JSONResponse:
         if stdout and stdout.strip():
             info["git_head"] = stdout.decode().strip()
     except Exception:
-        pass
+        logger.debug("api_deploy_info: git HEAD probe failed", exc_info=True)
 
     return JSONResponse(info)
 
@@ -487,6 +490,7 @@ async def ws_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         _ws_clients.discard(websocket)
     except Exception:
+        logger.debug("ws_endpoint: client connection failed", exc_info=True)
         _ws_clients.discard(websocket)
 
 
@@ -500,6 +504,7 @@ async def broadcast_stats(data: dict):
         try:
             await ws.send_text(message)
         except Exception:
+            logger.debug("broadcast_stats: dropping dead client", exc_info=True)
             disconnected.add(ws)
     _ws_clients -= disconnected
 
@@ -514,6 +519,7 @@ async def broadcast_alert(alert_data: dict):
         try:
             await ws.send_text(message)
         except Exception:
+            logger.debug("broadcast_alert: dropping dead client", exc_info=True)
             disconnected.add(ws)
     _ws_clients -= disconnected
 
@@ -567,7 +573,7 @@ async def _stats_loop():
                         if states:
                             await asyncio.to_thread(_metric_store.record_container_states, states)
                     except Exception:
-                        pass
+                        logger.debug("stats loop: container state sampling failed", exc_info=True)
                 # Prune on a fixed cycle cadence, never twice-in-a-row or skipped
                 if _cycle % PRUNE_EVERY_CYCLES == 0:
                     await asyncio.to_thread(_metric_store.prune)
@@ -576,7 +582,7 @@ async def _stats_loop():
             if _alert_engine:
                 await _alert_engine.evaluate(combined)
         except Exception:
-            pass
+            logger.warning("stats loop iteration failed", exc_info=True)
 
 
 def _record_latency_batch(results: list[dict]):
@@ -595,7 +601,7 @@ async def _latency_loop():
                 if results:
                     await asyncio.to_thread(_record_latency_batch, results)
         except Exception:
-            pass
+            logger.warning("latency loop iteration failed", exc_info=True)
 
 
 async def _image_update_loop(checker):
@@ -605,13 +611,13 @@ async def _image_update_loop(checker):
     try:
         _image_update_cache = await checker.check_all()
     except Exception:
-        pass
+        logger.warning("image update check failed", exc_info=True)
     while True:
         await asyncio.sleep(_config.refresh.image_updates_interval)
         try:
             _image_update_cache = await checker.check_all()
         except Exception:
-            pass
+            logger.warning("image update check failed", exc_info=True)
 
 
 # ── Lifecycle ──────────────────────────────────────────────────────────────────
@@ -644,7 +650,7 @@ async def on_startup():
 
         _metric_store = MetricStore(_config)
         _metric_store.open()
-        print("[buoy] History storage enabled (SQLite ring buffer)")
+        logger.info("History storage enabled (SQLite ring buffer)")
 
     # Initialize alert engine
     from buoy.alerts import AlertEngine
@@ -670,8 +676,9 @@ async def on_startup():
 
             _image_checker = ImageUpdateChecker(_config)
         _background_tasks.append(asyncio.create_task(_image_update_loop(_image_checker)))
-        print(
-            f"[buoy] Image update checker enabled (interval: {_config.refresh.image_updates_interval}s)"
+        logger.info(
+            "Image update checker enabled (interval: %ss)",
+            _config.refresh.image_updates_interval,
         )
 
     # Initialize plugin manager
@@ -871,6 +878,10 @@ def create_app(config: BuoyConfig) -> Starlette:
     """Create the Starlette application."""
     global _config
     _config = config
+
+    from buoy.logging_setup import setup_logging
+
+    setup_logging(config.logging.level)
 
     static_dir = _resolve_static_dir()
 

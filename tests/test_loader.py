@@ -1,6 +1,7 @@
 """Tests for Buoy plugin loader/manager."""
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -833,6 +834,18 @@ class TestPluginCollection:
         assert "failing" in mgr.latest_data
         assert mgr.latest_data["failing"].status == "error"
         assert "Something broke" in mgr.latest_data["failing"].detail["error"]
+
+    @pytest.mark.asyncio
+    async def test_safe_collect_logs_failure(self, caplog):
+        """A failing collect() leaves a diagnostic trail instead of vanishing silently."""
+        config = _make_config()
+        mgr = PluginManager(config)
+        plugin = FailingPlugin()
+
+        with caplog.at_level(logging.DEBUG, logger="buoy.plugins"):
+            await mgr._safe_collect("failing", plugin)
+
+        assert any("failing" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_safe_collect_handles_timeout(self):

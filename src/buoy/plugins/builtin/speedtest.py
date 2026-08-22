@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import statistics
 import time
@@ -23,6 +24,8 @@ from pathlib import Path
 from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 from buoy.subprocess_utils import communicate
+
+logger = logging.getLogger("buoy.plugins.speedtest")
 
 _HISTORY_PATHS = [Path("/data/speedtest_history.json"), Path("speedtest_history.json")]
 _MAX_HISTORY = 100
@@ -242,7 +245,7 @@ class SpeedtestPlugin(Plugin):
                     self._history = raw[-_MAX_HISTORY:]
                     return
             except Exception:
-                pass
+                logger.debug("speedtest: failed to load history from %s", path, exc_info=True)
 
     def _save_history(self) -> None:
         for path in _HISTORY_PATHS:
@@ -250,7 +253,7 @@ class SpeedtestPlugin(Plugin):
                 path.write_text(json.dumps(self._history))
                 return
             except Exception:
-                pass
+                logger.debug("speedtest: failed to save history to %s", path, exc_info=True)
 
     # ── Frontend ───────────────────────────────────────────────────────────────
 

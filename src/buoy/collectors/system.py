@@ -6,6 +6,7 @@ Reads from /proc and /sys on Linux. Returns zeros gracefully on other platforms.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import platform
 from typing import TYPE_CHECKING
@@ -14,6 +15,8 @@ from buoy.subprocess_utils import communicate
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.collectors.system")
 
 
 class SystemCollector:
@@ -72,6 +75,7 @@ class SystemCollector:
                 return 0
             return int(100 * (1 - idle_delta / total_delta))
         except Exception:
+            logger.debug("failed to read CPU usage from /proc/stat", exc_info=True)
             return 0
 
     def _read_proc_stat(self) -> list[int]:
@@ -96,7 +100,7 @@ class SystemCollector:
                     # ARM devices use /proc/device-tree/model
                     model = self._read_model() or "unknown"
         except Exception:
-            pass
+            logger.debug("failed to read CPU model from /proc/cpuinfo", exc_info=True)
 
         load_1, load_5, load_15 = 0.0, 0.0, 0.0
         try:
@@ -104,7 +108,7 @@ class SystemCollector:
                 parts = f.read().split()
                 load_1, load_5, load_15 = float(parts[0]), float(parts[1]), float(parts[2])
         except Exception:
-            pass
+            logger.debug("failed to read load averages from /proc/loadavg", exc_info=True)
 
         top_processes = await self._top_processes_by("cpu")
 
@@ -131,6 +135,7 @@ class SystemCollector:
             used_kb = total_kb - free_kb - buffers_kb - cached_kb
             return round(used_kb / 1048576, 1), round(total_kb / 1048576, 1)
         except Exception:
+            logger.debug("failed to read memory from /proc/meminfo", exc_info=True)
             return 0.0, 0.0
 
     def _read_memory_detail(self) -> dict:
@@ -160,6 +165,7 @@ class SystemCollector:
                 "top_processes": [],  # populated by _top_processes_by("mem")
             }
         except Exception:
+            logger.debug("failed to read memory detail from /proc/meminfo", exc_info=True)
             return {}
 
     def _parse_meminfo(self) -> dict[str, int]:
@@ -181,6 +187,7 @@ class SystemCollector:
             with open("/sys/class/thermal/thermal_zone0/temp") as f:
                 return int(f.read().strip()) // 1000
         except Exception:
+            logger.debug("failed to read temperature from thermal_zone0", exc_info=True)
             return 0
 
     # ── Uptime ─────────────────────────────────────────────────────────────────
@@ -192,6 +199,7 @@ class SystemCollector:
                 seconds = int(float(f.read().split()[0]))
             return seconds // 3600, (seconds % 3600) // 60, seconds
         except Exception:
+            logger.debug("failed to read uptime from /proc/uptime", exc_info=True)
             return 0, 0, 0
 
     # ── Device Model ───────────────────────────────────────────────────────────
@@ -202,6 +210,7 @@ class SystemCollector:
             with open("/proc/device-tree/model") as f:
                 return f.read().strip().rstrip("\x00")
         except Exception:
+            logger.debug("failed to read device model from device-tree", exc_info=True)
             return ""
 
     # ── Top Processes ──────────────────────────────────────────────────────────
@@ -233,6 +242,7 @@ class SystemCollector:
                     )
             return result
         except Exception:
+            logger.debug("failed to read top processes via ps", exc_info=True)
             return []
 
     # ── Fallback (non-Linux) ───────────────────────────────────────────────────

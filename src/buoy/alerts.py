@@ -8,6 +8,7 @@ external webhooks (Discord, Slack, generic HTTP).
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ import httpx
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.alerts")
 
 # Default thresholds (can be overridden in config in the future)
 DEFAULT_THRESHOLDS = {
@@ -188,4 +191,5 @@ class AlertEngine:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 await client.post(webhook_url, json=payload)
         except Exception:
-            pass  # Best-effort, don't crash on webhook failure
+            # Best-effort, don't crash on webhook failure
+            logger.warning("webhook delivery failed", exc_info=True)

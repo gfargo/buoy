@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from typing import TYPE_CHECKING
@@ -15,6 +16,8 @@ _PING_RE = re.compile(r"in ([\d.]+)ms")
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.collectors.network")
 
 
 class NetworkCollector:
@@ -60,6 +63,7 @@ class NetworkCollector:
                     }
                 return {"name": name, "tier": tier, "online": False}
         except Exception:
+            logger.debug("failed to poll peer '%s'", name, exc_info=True)
             return {"name": name, "tier": tier, "online": False}
 
     async def _tailscale_ping(self, peer_name: str) -> float | None:
@@ -123,6 +127,9 @@ class NetworkCollector:
                     else:
                         results.append({"name": peer.name, "latency_ms": -1, "online": False})
             except Exception:
+                logger.debug(
+                    "failed to measure HTTP latency to peer '%s'", peer.name, exc_info=True
+                )
                 results.append({"name": peer.name, "latency_ms": -1, "online": False})
 
         return results

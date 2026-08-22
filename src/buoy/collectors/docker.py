@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 from typing import TYPE_CHECKING
@@ -16,6 +17,8 @@ from buoy.subprocess_utils import communicate
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.collectors.docker")
 
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 _LIST_CACHE_TTL = 5.0
@@ -51,6 +54,7 @@ class DockerCollector:
         except FileNotFoundError:
             return 1, "", "docker not found"
         except Exception as e:
+            logger.debug("docker %s failed: %s", " ".join(args), e, exc_info=True)
             return 1, "", str(e)
 
     async def is_available(self) -> bool:

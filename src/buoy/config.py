@@ -10,13 +10,15 @@ Minimal config: just `node.name`. Everything else has sensible defaults.
 
 from __future__ import annotations
 
+import logging
 import os
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger("buoy.config")
 
 
 class ConfigError(Exception):
@@ -122,6 +124,11 @@ class AlertsConfig:
 
 
 @dataclass
+class LoggingConfig:
+    level: str = "INFO"
+
+
+@dataclass
 class BuoyConfig:
     node: NodeConfig = field(default_factory=NodeConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
@@ -132,6 +139,7 @@ class BuoyConfig:
     refresh: RefreshConfig = field(default_factory=RefreshConfig)
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
 # ── Loader ─────────────────────────────────────────────────────────────────────
@@ -143,7 +151,7 @@ def _find_config_path(explicit_path: str | None) -> Path | None:
         p = Path(explicit_path)
         if p.exists():
             return p
-        print(f"[buoy] Config file not found: {explicit_path}", file=sys.stderr)
+        logger.warning("Config file not found: %s", explicit_path)
         return None
 
     # Check env var
@@ -196,6 +204,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_REFRESH_PLUGINS_INTERVAL": ("refresh", "plugins_interval"),
         "BUOY_REFRESH_IMAGE_UPDATES_INTERVAL": ("refresh", "image_updates_interval"),
         "BUOY_ALERTS_WEBHOOK_URL": ("alerts", "webhook_url"),
+        "BUOY_LOG_LEVEL": ("logging", "level"),
     }
 
     for env_key, path in env_map.items():
@@ -298,6 +307,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     refresh_raw = raw.get("refresh", {})
     plugins_raw = raw.get("plugins", {})
     alerts_raw = raw.get("alerts", {})
+    logging_raw = raw.get("logging", {})
 
     node = NodeConfig(
         name=node_raw.get("name", "buoy"),
@@ -360,6 +370,10 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         webhook_url=alerts_raw.get("webhook_url", "") if isinstance(alerts_raw, dict) else "",
     )
 
+    logging_cfg = LoggingConfig(
+        level=logging_raw.get("level", "INFO") if isinstance(logging_raw, dict) else "INFO",
+    )
+
     return BuoyConfig(
         node=node,
         network=network,
@@ -370,6 +384,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         refresh=refresh,
         plugins=plugins,
         alerts=alerts,
+        logging=logging_cfg,
     )
 
 
@@ -386,11 +401,11 @@ def load_config(path: str | None = None, demo: bool = False) -> BuoyConfig:
     config_path = _find_config_path(path)
 
     if config_path:
-        print(f"[buoy] Loading config from {config_path}")
+        logger.info("Loading config from %s", config_path)
         with open(config_path) as f:
             raw = yaml.safe_load(f) or {}
     else:
-        print("[buoy] No config file found, using defaults")
+        logger.info("No config file found, using defaults")
         raw = {}
 
     # Apply environment variable overrides
