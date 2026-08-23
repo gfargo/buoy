@@ -48,10 +48,19 @@ def strip_base_path(path: str, base_path: str) -> str:
 
 
 def _is_protected(path: str, base_path: str = "") -> bool:
-    """Check if a path requires rate limiting / authentication."""
-    path = strip_base_path(path, base_path)
+    """Check if a path requires rate limiting / authentication.
+
+    Matches against both the raw path and the base-path-stripped path.
+    A request that arrives via the prefixed Mount is only protected once
+    stripped, but if ``base_path`` itself happens to be a prefix of a
+    protected path (e.g. ``base_path=/api``), stripping could otherwise
+    turn a protected path into something that no longer matches while the
+    root routes still resolve and execute it. Checking both forms closes
+    that gap without weakening the check for the normal case.
+    """
+    stripped = strip_base_path(path, base_path)
     for prefix in PROTECTED_PATHS:
-        if path.startswith(prefix):
+        if path.startswith(prefix) or stripped.startswith(prefix):
             return True
     return False
 

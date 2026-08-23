@@ -162,6 +162,19 @@ class TestSecurityRegression:
             r = client.get("/buoy/api/container/foo")
         assert r.status_code == 429
 
+    def test_base_path_prefix_of_protected_path_still_requires_auth(self):
+        """A base_path that is itself a prefix of a protected path (e.g. /api)
+        must not strip away the protected-path match and let the root routes
+        serve the request unauthenticated."""
+        app = create_app(_make_config(base_path="/api", auth_enabled=True))
+        with TestClient(app, raise_server_exceptions=False) as client:
+            r = client.post(
+                "/api/container/foo/restart",
+                headers={"Content-Type": "application/json"},
+                json={},
+            )
+        assert r.status_code == 401
+
 
 class TestCacheControlHeader:
     def test_prefixed_static_has_no_cache_control(self):
