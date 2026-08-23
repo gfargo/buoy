@@ -5,6 +5,7 @@
 
 import { escapeHtml } from './escape.js';
 import { renderPanelSpec } from './panel.js';
+import { apiUrl } from './paths.js';
 
 let pluginRenderers = {};
 let jsLoaded = false;
@@ -31,7 +32,7 @@ function formatAgo(epochSeconds) {
 async function loadPluginJS() {
   if (jsLoaded) return;
   try {
-    const r = await fetch('/api/plugins/js');
+    const r = await fetch(apiUrl('plugins/js'));
     if (!r.ok) return;
     const js = await r.text();
     if (js.trim()) {
@@ -132,7 +133,7 @@ export async function refreshPlugins() {
   await loadPluginJS();
 
   try {
-    const r = await fetch('/api/plugins');
+    const r = await fetch(apiUrl('plugins'));
     if (!r.ok) return;
     const data = await r.json();
     const plugins = data.plugins || [];

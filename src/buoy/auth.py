@@ -32,8 +32,24 @@ RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX = 60  # requests per window
 
 
-def _is_protected(path: str) -> bool:
+def strip_base_path(path: str, base_path: str) -> str:
+    """Strip a configured reverse-proxy base path prefix from a request path.
+
+    Mirrors Starlette's ``Mount`` prefix-matching semantics exactly (the
+    prefix is only consumed at a ``/`` boundary or end-of-path) so this
+    middleware-level view of the path can never diverge from what the
+    router actually matched — any divergence here would be a routing
+    bypass for the protected paths below.
+    """
+    if not base_path or not path.startswith(base_path):
+        return path
+    rest = path[len(base_path) :]
+    return rest if rest.startswith("/") else (path if rest else "/")
+
+
+def _is_protected(path: str, base_path: str = "") -> bool:
     """Check if a path requires rate limiting / authentication."""
+    path = strip_base_path(path, base_path)
     for prefix in PROTECTED_PATHS:
         if path.startswith(prefix):
             return True
@@ -204,10 +220,14 @@ class ProxyHeadersMiddleware:
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Always-on per-IP rate limiter for destructive/protected endpoints (SPEC §7.2)."""
 
+    def __init__(self, app, base_path: str = ""):
+        super().__init__(app)
+        self.base_path = base_path
+
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
-        if not _is_protected(path):
+        if not _is_protected(path, self.base_path):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"
@@ -223,9 +243,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 class AuthMiddleware(BaseHTTPMiddleware):
     """Optional auth middleware — only active when auth.enabled is True."""
 
-    def __init__(self, app, auth_config: AuthConfig):
+    def __init__(self, app, auth_config: AuthConfig, base_path: str = ""):
         super().__init__(app)
         self.auth_config = auth_config
+        self.base_path = base_path
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -246,7 +267,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     def _is_protected(self, path: str) -> bool:
         """Check if a path requires authentication."""
-        return _is_protected(path)
+        return _is_protected(path, self.base_path)
 
     def _authenticate(self, request: Request) -> bool:
         """Validate the request's auth credentials."""

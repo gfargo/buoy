@@ -19,6 +19,24 @@ node:
 network:
   listen_port: 8090          # Port buoy listens on
 
+  # Set this when buoy is served behind a reverse proxy at a sub-path
+  # (e.g. https://host/buoy/) instead of at the domain root. Also settable
+  # via BUOY_NETWORK_BASE_PATH. Leading/trailing slashes are normalized, so
+  # "buoy", "/buoy", and "/buoy/" are all equivalent.
+  #
+  # buoy serves both the prefixed AND unprefixed paths, which covers both
+  # proxy styles:
+  #   - Proxy forwards the prefix unchanged (nginx `proxy_pass` without a
+  #     trailing slash; Caddy `handle /buoy/*`): the browser requests
+  #     "/buoy/api/..." — set base_path so buoy's own routes and the URLs
+  #     it emits (assets, API calls, WebSocket) carry the same prefix.
+  #   - Proxy strips the prefix before forwarding (Caddy `handle_path`,
+  #     Traefik `StripPrefix`): buoy receives "/api/..." — set base_path
+  #     anyway so the HTML/JS *emitted to the browser* still link back
+  #     through "/buoy/...", since the browser itself is not behind the
+  #     strip.
+  base_path: ""               # e.g., "/buoy"
+
   # If set, enables Tailscale-aware URL generation (HTTPS links via tailnet)
   tailnet_domain: ""         # e.g., "tailb82ead.ts.net"
 
