@@ -496,6 +496,7 @@ async def ws_endpoint(websocket: WebSocket):
 
 async def broadcast_stats(data: dict):
     """Push stats update to all connected WebSocket clients."""
+    global _ws_clients
     if not _ws_clients:
         return
     message = json.dumps({"type": "stats", "data": data})
@@ -511,6 +512,7 @@ async def broadcast_stats(data: dict):
 
 async def broadcast_alert(alert_data: dict):
     """Push alert notification to all connected WebSocket clients."""
+    global _ws_clients
     if not _ws_clients:
         return
     message = json.dumps(alert_data)
@@ -560,8 +562,9 @@ async def _stats_loop():
                     if entry:
                         ctr["update_status"] = entry["status"]
 
-            # Broadcast to WebSocket clients
-            await broadcast_stats(combined)
+            # Broadcast to WebSocket clients (only when websocket feature enabled)
+            if _config.features.websocket:
+                await broadcast_stats(combined)
 
             # Store in history (if enabled)
             if _metric_store:
@@ -657,9 +660,14 @@ async def on_startup():
 
     _alert_engine = AlertEngine(_config, broadcast_fn=broadcast_alert)
 
-    # Start WebSocket broadcast loop
-    if _config.features.websocket:
+    # Start stats collection loop (needed for history persistence, alerts, and websocket broadcast)
+    if _config.features.websocket or _config.features.history:
         _background_tasks.append(asyncio.create_task(_stats_loop()))
+        logger.info(
+            "Stats collection loop enabled (history=%s websocket=%s)",
+            _config.features.history,
+            _config.features.websocket,
+        )
 
     # Start latency collection loop (only when network collector and history are both present)
     if _collectors.get("network") and _metric_store:
