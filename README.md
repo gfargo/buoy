@@ -171,6 +171,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Tailscale | `tailscale` | Tailnet peer status | (none) |
 | Trigger.dev | `trigger_dev` | Task run status | `url`, `api_key`, `project_ref` |
 | WireGuard | `wireguard` | WireGuard tunnel peer status | (none) |
+| Zigbee2MQTT | `zigbee2mqtt` | Coordinator status + per-device link quality | `host` (needs `pip install "buoy[zigbee2mqtt]"`) |
 
 **Custom plugins** are Python files dropped into the `/plugins` volume:
 

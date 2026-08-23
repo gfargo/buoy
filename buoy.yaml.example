@@ -222,6 +222,18 @@ plugins:
       token: ""               # Long-lived access token (Profile → Security)
       verify_ssl: true
 
+    # Zigbee2MQTT coordinator status + per-device link quality. Reads the
+    # network layer directly via MQTT — independent of home_assistant above,
+    # doesn't need it (or anything) subscribed to the same broker. Requires
+    # the `zigbee2mqtt` extra: pip install "buoy[zigbee2mqtt]".
+    zigbee2mqtt:
+      enabled: false
+      host: ""                # e.g., 127.0.0.1 or the tailnet hostname
+      port: 1883
+      username: ""
+      password: ""            # Or BUOY_PLUGIN_ZIGBEE2MQTT_PASSWORD
+      base_topic: zigbee2mqtt
+
     # Proxmox VE node + guest status
     # Note: verify_ssl defaults to false — PVE uses self-signed certs by default
     proxmox:

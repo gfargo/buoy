@@ -1527,6 +1527,193 @@ class TestActualBudgetPlugin:
 # Plugin discovery
 # =============================================================================
 
+
+class TestZigbee2MqttPlugin:
+    """Tests for the Zigbee2MQTT coordinator/link-quality plugin.
+
+    setup()/teardown() (the actual MQTT wiring) are covered separately with
+    the client class mocked out; collect()/render() are tested by injecting
+    the internal state a real on_message callback would have built, matching
+    this file's existing convention (e.g. TestSpeedtestPlugin sets
+    plugin._history directly rather than mocking the subprocess call).
+    """
+
+    def _make_plugin(self, config=None):
+        from buoy.plugins.builtin.zigbee2mqtt import Zigbee2MqttPlugin
+
+        plugin = Zigbee2MqttPlugin()
+        plugin.configure({"host": "127.0.0.1"} if config is None else config)
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_no_host_returns_disabled(self):
+        plugin = self._make_plugin(config={})
+        result = await plugin.collect()
+        assert result.status == "disabled"
+
+    @pytest.mark.asyncio
+    async def test_setup_with_no_host_does_not_create_client(self):
+        plugin = self._make_plugin(config={})
+        with patch("buoy.plugins.builtin.zigbee2mqtt.mqtt.Client") as client_cls:
+            await plugin.setup()
+        client_cls.assert_not_called()
+        assert plugin._client is None
+
+    @pytest.mark.asyncio
+    async def test_setup_connects_and_subscribes(self):
+        plugin = self._make_plugin(config={"host": "127.0.0.1", "username": "u", "password": "p"})
+        mock_client = MagicMock()
+        with patch("buoy.plugins.builtin.zigbee2mqtt.mqtt.Client", return_value=mock_client):
+            await plugin.setup()
+        mock_client.username_pw_set.assert_called_once_with("u", "p")
+        mock_client.connect_async.assert_called_once()
+        mock_client.loop_start.assert_called_once()
+        assert plugin._client is mock_client
+
+    @pytest.mark.asyncio
+    async def test_teardown_stops_and_disconnects(self):
+        plugin = self._make_plugin()
+        mock_client = MagicMock()
+        plugin._client = mock_client
+        await plugin.teardown()
+        mock_client.loop_stop.assert_called_once()
+        mock_client.disconnect.assert_called_once()
+        assert plugin._client is None
+
+    @pytest.mark.asyncio
+    async def test_connect_failure_returns_error(self):
+        plugin = self._make_plugin()
+        with patch("buoy.plugins.builtin.zigbee2mqtt.mqtt.Client") as client_cls:
+            client_cls.return_value.connect_async.side_effect = OSError("refused")
+            await plugin.setup()
+        result = await plugin.collect()
+        assert result.status == "error"
+        assert plugin._client is None
+
+    @pytest.mark.asyncio
+    async def test_no_data_yet_returns_warn(self):
+        plugin = self._make_plugin()
+        result = await plugin.collect()
+        assert result.status == "warn"
+        assert "Waiting" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_bridge_offline_returns_error(self):
+        plugin = self._make_plugin()
+        plugin._bridge_state = "offline"
+        plugin._bridge_info = {"coordinator": {}}
+        result = await plugin.collect()
+        assert result.status == "error"
+        assert "offline" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_healthy_network_returns_ok(self):
+        plugin = self._make_plugin()
+        plugin._bridge_state = "online"
+        plugin._bridge_info = {
+            "coordinator": {"type": "EmberZNet", "meta": {"revision": "7.4.4 [GA]"}},
+            "network": {"channel": 11, "pan_id": 40340},
+            "permit_join": False,
+        }
+        plugin._devices = [
+            {"type": "Coordinator", "friendly_name": "Coordinator"},
+            {"type": "Router", "friendly_name": "bulb_1", "interview_state": "SUCCESSFUL"},
+        ]
+        plugin._device_live = {"bulb_1": {"linkquality": 180, "_seen_at": time.time()}}
+
+        result = await plugin.collect()
+
+        assert result.status == "ok"
+        assert result.detail["coordinator_type"] == "EmberZNet"
+        assert result.detail["channel"] == 11
+        assert result.detail["device_count"] == 1  # coordinator excluded
+        assert result.detail["devices"][0]["linkquality"] == 180
+
+    @pytest.mark.asyncio
+    async def test_weak_link_quality_returns_error(self):
+        plugin = self._make_plugin()
+        plugin._bridge_state = "online"
+        plugin._bridge_info = {"coordinator": {}, "network": {}}
+        plugin._devices = [{"type": "EndDevice", "friendly_name": "sensor_1"}]
+        plugin._device_live = {"sensor_1": {"linkquality": 5, "_seen_at": time.time()}}
+
+        result = await plugin.collect()
+
+        assert result.status == "error"
+        assert "weakest 5" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_stale_device_counts_as_problem(self):
+        plugin = self._make_plugin()
+        plugin._bridge_state = "online"
+        plugin._bridge_info = {"coordinator": {}, "network": {}}
+        plugin._devices = [{"type": "Router", "friendly_name": "old_device"}]
+        # No entry in _device_live at all -> never seen -> stale
+        result = await plugin.collect()
+
+        assert result.status == "warn"
+        assert result.detail["devices"][0]["stale"] is True
+        assert "need attention" in result.summary
+
+    def test_on_message_parses_bridge_info(self):
+        plugin = self._make_plugin()
+        msg = MagicMock()
+        msg.topic = "zigbee2mqtt/bridge/info"
+        msg.payload = json.dumps({"coordinator": {"type": "EmberZNet"}}).encode()
+        plugin._on_message(None, None, msg)
+        assert plugin._bridge_info["coordinator"]["type"] == "EmberZNet"
+
+    def test_on_message_parses_device_state(self):
+        plugin = self._make_plugin()
+        msg = MagicMock()
+        msg.topic = "zigbee2mqtt/bulb_1"
+        msg.payload = json.dumps({"linkquality": 200, "state": "ON"}).encode()
+        plugin._on_message(None, None, msg)
+        assert plugin._device_live["bulb_1"]["linkquality"] == 200
+        assert "_seen_at" in plugin._device_live["bulb_1"]
+
+    def test_on_message_ignores_malformed_payload(self):
+        plugin = self._make_plugin()
+        msg = MagicMock()
+        msg.topic = "zigbee2mqtt/bridge/info"
+        msg.payload = b"not json"
+        plugin._on_message(None, None, msg)  # must not raise
+        assert plugin._bridge_info == {}
+
+    def test_render_disabled(self):
+        plugin = self._make_plugin()
+        blocks = plugin.render(PanelData(status="disabled"))
+        assert blocks[0]["value"] == "Not configured"
+
+    def test_render_healthy_includes_device_table(self):
+        plugin = self._make_plugin()
+        data = PanelData(
+            status="ok",
+            detail={
+                "coordinator_type": "EmberZNet",
+                "coordinator_firmware": "7.4.4",
+                "channel": 11,
+                "pan_id": 40340,
+                "permit_join": False,
+                "device_count": 1,
+                "devices": [
+                    {
+                        "name": "bulb_1",
+                        "type": "Router",
+                        "linkquality": 180,
+                        "stale": False,
+                        "interview_ok": True,
+                        "disabled": False,
+                    }
+                ],
+            },
+        )
+        blocks = plugin.render(data)
+        assert blocks[0]["type"] == "keyvalue"
+        assert blocks[1]["type"] == "table"
+        assert blocks[1]["rows"][0][0]["value"] == "bulb_1"
+
+
 ALL_BUILTIN_IDS = {
     "actual_budget",
     "backup_status",
