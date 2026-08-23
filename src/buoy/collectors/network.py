@@ -33,7 +33,7 @@ class NetworkCollector:
             return {"peers": []}
 
         results = await asyncio.gather(
-            *[self._poll_peer(p.name, p.url, p.tier) for p in peers],
+            *[self._poll_peer(p.name, p.url, p.tier, self._peer_verify(p)) for p in peers],
             return_exceptions=True,
         )
 
@@ -45,13 +45,23 @@ class NetworkCollector:
 
         return {"peers": peer_data}
 
-    async def _poll_peer(self, name: str, url: str, tier: str) -> dict:
+    def _peer_verify(self, peer) -> bool:
+        """Return the effective TLS-verify flag for a peer.
+
+        A peer-level ``verify_ssl`` wins over the network default; absent
+        (``None``) means inherit from ``network.verify_ssl``.
+        """
+        if peer.verify_ssl is not None:
+            return peer.verify_ssl
+        return self.config.network.verify_ssl
+
+    async def _poll_peer(self, name: str, url: str, tier: str, verify: bool = True) -> dict:
         """Fetch /api/stats from a peer node."""
         if name == self.config.node.name:
             return {"name": name, "tier": tier, "online": True, "self": True}
 
         try:
-            async with httpx.AsyncClient(timeout=4.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=4.0, verify=verify) as client:
                 r = await client.get(f"{url}/api/stats")
                 if r.status_code == 200:
                     data = r.json()
@@ -115,7 +125,7 @@ class NetworkCollector:
 
             # Fallback: HTTP timing to /api/health
             try:
-                async with httpx.AsyncClient(timeout=4.0, verify=False) as client:
+                async with httpx.AsyncClient(timeout=4.0, verify=self._peer_verify(peer)) as client:
                     start = time.monotonic()
                     r = await client.get(f"{peer.url}/api/health")
                     elapsed = (time.monotonic() - start) * 1000
