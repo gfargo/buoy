@@ -2,7 +2,11 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    # release-please's manifest/component mode tags releases as "buoy-vX.Y.Z",
+    # not the bare "vX.Y.Z" this used to match — confirmed 2026-08-23 that
+    # every release since whenever that changed silently never triggered an
+    # image publish (the plain "v*" pattern doesn't match a "buoy-v..." ref).
+    tags: ["buoy-v*"]
   workflow_dispatch:
 
 permissions:
@@ -25,14 +29,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # docker/metadata-action's `type=semver` needs a bare (optionally
+      # "v"-prefixed) semver string — "buoy-v2.2.0" doesn't parse as one, so
+      # strip the component prefix ourselves. On a workflow_dispatch run
+      # (ref_name = a branch, not a tag) this just won't strip anything and
+      # the resulting value fails semver parsing, which metadata-action
+      # silently drops — latest/sha tags still get pushed either way.
+      - id: version
+        run: echo "value=${GITHUB_REF_NAME#buoy-}" >> "$GITHUB_OUTPUT"
+
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.value }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.value }}
             type=sha,format=short
 
       - uses: docker/build-push-action@v6
