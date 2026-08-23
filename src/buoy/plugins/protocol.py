@@ -71,6 +71,17 @@ class Plugin:
         """
         raise NotImplementedError("Plugins must implement collect()")
 
+    def demo_data(self) -> PanelData:
+        """Sample data used in demo mode, in place of setup()/collect().
+
+        Must not perform any I/O (network, subprocess, filesystem). Override
+        this to return realistic sample data shaped like what collect()
+        produces, so render(demo_data()) works without raising. The base
+        implementation is a safe generic fallback for plugins that don't
+        override it.
+        """
+        return PanelData(status="ok", summary="Demo data", detail={"demo": True})
+
     def render(self, data: PanelData) -> list[dict[str, Any]] | None:
         """Preferred rendering path: return a declarative panel spec.
 

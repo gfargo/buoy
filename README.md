@@ -45,6 +45,13 @@ Try it without any infrastructure — no Docker socket, no host access needed:
 docker run --rm -p 8090:8090 ghcr.io/gfargo/buoy:latest --demo
 ```
 
+Plugins are stubbed too: in demo mode a plugin's `setup()`/`collect()` are
+never called (so `--demo` never makes a real outbound call), and its panel
+renders sample data from `demo_data()` instead. With no `buoy.yaml`, a
+curated set of built-in plugins is auto-enabled so the dashboard isn't empty;
+running `--demo` against a real config that enables plugins shows exactly
+those, stubbed.
+
 ## Configuration
 
 Buoy is configured via a single `buoy.yaml` file. See [`buoy.yaml.example`](./buoy.yaml.example) for the full reference.
@@ -183,6 +190,12 @@ class WeatherPlugin(Plugin):
 
     async def collect(self) -> PanelData:
         # Your logic here
+        return PanelData(status="ok", summary="72°F, Sunny")
+
+    def demo_data(self) -> PanelData:
+        # Sample data for --demo — must not perform any I/O. Called instead
+        # of setup()/collect() when demo mode is on; the base Plugin class
+        # already provides a generic fallback, so this is optional.
         return PanelData(status="ok", summary="72°F, Sunny")
 ```
 

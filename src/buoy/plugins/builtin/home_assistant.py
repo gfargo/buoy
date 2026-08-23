@@ -95,6 +95,23 @@ class HomeAssistantPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
+    def demo_data(self) -> PanelData:
+        return PanelData(
+            status="warn",
+            summary="182 entities · 24 automations · 1 unavailable · 1 update",
+            detail={
+                "version": "2026.8.1",
+                "total": 182,
+                "automation_count": 24,
+                "unavailable": ["sensor.garage_temp"],
+                "unavailable_count": 1,
+                "disabled_automations": ["automation.vacation_mode"],
+                "disabled_automation_count": 1,
+                "updates": ["update.home_assistant_core"],
+                "update_count": 1,
+            },
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         d = data.detail or {}
         blocks: list[dict] = [

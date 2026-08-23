@@ -24,6 +24,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from buoy.config import PluginEntry
+from buoy.demo import DEMO_PLUGIN_IDS
 from buoy.plugins.protocol import PanelData, Plugin
 
 if TYPE_CHECKING:
@@ -142,6 +144,7 @@ class PluginManager:
 
     def __init__(self, config: BuoyConfig):
         self.config = config
+        self._demo = config.features.demo_mode
         self._plugins: dict[str, Plugin] = {}
         self._latest_data: dict[str, PanelData] = {}
         self._tasks: list[asyncio.Task] = []
@@ -165,9 +168,17 @@ class PluginManager:
         return self._latest_data
 
     async def start(self):
-        """Discover, configure, setup, and start all plugins."""
+        """Discover, configure, setup, and start all plugins.
+
+        In demo mode, no plugin ever runs setup()/collect() — every plugin is
+        seeded from demo_data() instead, so `--demo` never makes a real
+        outbound call. See _seed_demo_data.
+        """
         if not self.config.plugins.enabled:
             return
+
+        if self._demo:
+            self._inject_demo_defaults()
 
         # 1. Discover built-in plugins
         await self._load_builtins()
@@ -177,6 +188,15 @@ class PluginManager:
 
         # 3. Discover user plugins from directory
         await self._load_user_plugins()
+
+        if self._demo:
+            self._seed_demo_data()
+            logger.info(
+                "%d plugin(s) active (demo mode): %s",
+                len(self._plugins),
+                ", ".join(self._plugins.keys()),
+            )
+            return
 
         # 4. Setup all configured plugins (skip those disabled by config validation)
         for plugin_id, plugin in list(self._plugins.items()):
@@ -197,11 +217,42 @@ class PluginManager:
 
         logger.info("%d plugin(s) active: %s", len(self._plugins), ", ".join(self._plugins.keys()))
 
+    def _inject_demo_defaults(self) -> None:
+        """Enable a curated set of builtins when demo mode has none configured.
+
+        Only kicks in when the operator hasn't enabled any builtin themselves
+        (e.g. a bare `docker run ... --demo`) — a demo run over a real config
+        that does enable plugins shows exactly those, stubbed, and respects
+        the operator's selection.
+        """
+        if any(entry.enabled for entry in self.config.plugins.builtin.values()):
+            return
+        for plugin_id in DEMO_PLUGIN_IDS:
+            self.config.plugins.builtin.setdefault(plugin_id, PluginEntry(enabled=True))
+
+    def _seed_demo_data(self) -> None:
+        """Populate latest_data from each registered plugin's demo_data(), no I/O."""
+        for plugin_id, plugin in self._plugins.items():
+            if plugin_id in self._disabled_ids:
+                continue
+            try:
+                data = plugin.demo_data()
+            except Exception as e:
+                logger.warning("%s demo_data() failed: %s", plugin_id, e, exc_info=True)
+                data = Plugin.demo_data(plugin)
+            self._latest_data[plugin_id] = data
+            self._record_success(plugin_id)
+
     async def stop(self):
         """Teardown all plugins and cancel tasks."""
         for task in self._tasks:
             task.cancel()
         self._tasks.clear()
+
+        if self._demo:
+            # Nothing was set up (setup() is skipped in demo mode), so there's
+            # nothing to tear down.
+            return
 
         for plugin_id, plugin in self._plugins.items():
             try:
@@ -397,7 +448,16 @@ class PluginManager:
             plugin_id, plugin_class.manifest.config_schema, settings
         )
         self._warn_on_collision(plugin_id, source=source)
-        if errors:
+        if errors and self._demo:
+            # Required fields (API tokens, URLs, ...) are irrelevant in demo
+            # mode since collect() never runs — log and register anyway so
+            # the card renders demo_data() instead of a config-error card.
+            logger.debug(
+                "%s: ignoring config errors in demo mode: %s", plugin_id, "; ".join(errors)
+            )
+            self._disabled_ids.discard(plugin_id)
+            self._latest_data.pop(plugin_id, None)
+        elif errors:
             self._disabled_ids.add(plugin_id)
             self._latest_data[plugin_id] = PanelData(
                 status="disabled",

@@ -35,11 +35,11 @@ class PluginsConfig:
     user: dict = field(default_factory=dict)
 
 
-def _make_config(plugins_enabled=True, builtin=None, user=None):
+def _make_config(plugins_enabled=True, builtin=None, user=None, features=None):
     config = BuoyConfig()
     config.node = NodeConfig(name="test")
     config.network = NetworkConfig()
-    config.features = FeaturesConfig()
+    config.features = features or FeaturesConfig()
     config.plugins = PluginsConfig(
         enabled=plugins_enabled,
         builtin=builtin or {},
@@ -1136,6 +1136,63 @@ class TestPluginManagerStop:
 
         # Should not raise
         await mgr.stop()
+
+
+# =============================================================================
+# Demo mode (BUG-40 / OSS-1304)
+# =============================================================================
+
+
+class RaisingPlugin(Plugin):
+    """A plugin whose setup(), collect(), and teardown() all raise."""
+
+    manifest = PluginManifest(id="raising", name="Raising", refresh_interval=5)
+
+    async def setup(self) -> None:
+        raise RuntimeError("setup should never be called in demo mode")
+
+    async def collect(self) -> PanelData:
+        raise RuntimeError("collect should never be called in demo mode")
+
+    async def teardown(self) -> None:
+        raise RuntimeError("teardown should never be called in demo mode")
+
+
+class TestDemoMode:
+    """PluginManager must never reach a plugin's I/O when demo_mode is on."""
+
+    @pytest.mark.asyncio
+    async def test_raising_plugin_still_registers_via_demo_data(self):
+        config = _make_config(
+            builtin={"raising": PluginEntry(enabled=True)},
+            features=FeaturesConfig(demo_mode=True),
+        )
+        mgr = PluginManager(config)
+        mgr._iter_builtin_classes = lambda: iter([RaisingPlugin])
+
+        await mgr.start()
+
+        assert "raising" in mgr.plugins
+        assert mgr._tasks == []
+
+        results = await mgr.collect_all_now()
+        assert results["raising"]["loaded"] is True
+        assert results["raising"]["last_collect_at"] is not None
+
+        # Should not raise, even though teardown() would if it were called.
+        await mgr.stop()
+
+    @pytest.mark.asyncio
+    async def test_no_tasks_started_in_demo_mode(self):
+        config = _make_config(
+            builtin={"fake": PluginEntry(enabled=True)},
+            features=FeaturesConfig(demo_mode=True),
+        )
+        mgr = PluginManager(config)
+        mgr._iter_builtin_classes = lambda: iter([FakePlugin])
+
+        await mgr.start()
+        assert mgr._tasks == []
 
 
 # =============================================================================

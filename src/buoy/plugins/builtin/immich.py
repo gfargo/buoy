@@ -80,6 +80,20 @@ class ImmichPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
+    def demo_data(self) -> PanelData:
+        return PanelData(
+            status="ok",
+            summary="18,204 photos · 1,092 videos · 62.4% disk",
+            detail={
+                "photos": 18204,
+                "videos": 1092,
+                "usage_bytes": 214748364800,
+                "disk_pct": 62.4,
+                "disk_use": "200 GiB",
+                "disk_size": "320 GiB",
+            },
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         d = data.detail or {}
         pct = d.get("disk_pct") or 0

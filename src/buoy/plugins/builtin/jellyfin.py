@@ -92,6 +92,21 @@ class JellyfinPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
+    def demo_data(self) -> PanelData:
+        streams = [
+            {"title": "The Matrix", "user": "alex", "transcoding": True},
+        ]
+        libraries = [
+            {"name": "Movies", "type": "movies"},
+            {"name": "TV Shows", "type": "tvshows"},
+            {"name": "Music", "type": "music"},
+        ]
+        return PanelData(
+            status="warn",
+            summary="1 stream (1 transcoding)",
+            detail={"streams": streams, "transcoding_count": 1, "libraries": libraries},
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         streams = data.detail.get("streams") or []
         libs = data.detail.get("libraries") or []

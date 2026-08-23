@@ -104,6 +104,19 @@ class TriggerDevPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
+    def demo_data(self) -> PanelData:
+        recent = [
+            {"id": "run_1", "task": "sync-photos", "status": "COMPLETED"},
+            {"id": "run_2", "task": "prune-backups", "status": "COMPLETED"},
+            {"id": "run_3", "task": "sync-photos", "status": "FAILED"},
+            {"id": "run_4", "task": "check-updates", "status": "QUEUED"},
+        ]
+        return PanelData(
+            status="warn",
+            summary="1 failed (24h)",
+            detail={"recent": recent, "failures_24h": 1, "queued": 1, "last_failed": "sync-photos"},
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         d = data.detail or {}
         recent = d.get("recent") or []

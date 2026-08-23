@@ -81,6 +81,32 @@ class GitHubPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="API error", detail={"error": str(e)})
 
+    def demo_data(self) -> PanelData:
+        notifications = [
+            {"title": "CI failed on main", "repo": "acme/buoy", "type": "CheckSuite"},
+            {"title": "New review requested", "repo": "acme/infra", "type": "PullRequest"},
+        ]
+        open_prs = [
+            {
+                "title": "fix(proxy): trusted-proxy header handling",
+                "url": "https://github.com/acme/buoy/pull/260",
+            },
+            {
+                "title": "feat: add Zigbee2MQTT plugin",
+                "url": "https://github.com/acme/buoy/pull/270",
+            },
+        ]
+        return PanelData(
+            status="warn",
+            summary="2 notifications, 2 open PRs",
+            detail={
+                "notifications": notifications,
+                "notification_count": len(notifications),
+                "open_prs": open_prs,
+                "pr_count": len(open_prs),
+            },
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         d = data.detail or {}
         notif_count = d.get("notification_count", 0)
