@@ -496,6 +496,7 @@ async def ws_endpoint(websocket: WebSocket):
 
 async def broadcast_stats(data: dict):
     """Push stats update to all connected WebSocket clients."""
+    global _ws_clients
     if not _ws_clients:
         return
     message = json.dumps({"type": "stats", "data": data})
@@ -511,6 +512,7 @@ async def broadcast_stats(data: dict):
 
 async def broadcast_alert(alert_data: dict):
     """Push alert notification to all connected WebSocket clients."""
+    global _ws_clients
     if not _ws_clients:
         return
     message = json.dumps(alert_data)
