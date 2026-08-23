@@ -501,13 +501,13 @@ async def broadcast_stats(data: dict):
         return
     message = json.dumps({"type": "stats", "data": data})
     disconnected = set()
-    for ws in _ws_clients:
+    for ws in list(_ws_clients):
         try:
             await ws.send_text(message)
         except Exception:
             logger.debug("broadcast_stats: dropping dead client", exc_info=True)
             disconnected.add(ws)
-    _ws_clients -= disconnected
+    _ws_clients.difference_update(disconnected)
 
 
 async def broadcast_alert(alert_data: dict):
@@ -517,13 +517,13 @@ async def broadcast_alert(alert_data: dict):
         return
     message = json.dumps(alert_data)
     disconnected = set()
-    for ws in _ws_clients:
+    for ws in list(_ws_clients):
         try:
             await ws.send_text(message)
         except Exception:
             logger.debug("broadcast_alert: dropping dead client", exc_info=True)
             disconnected.add(ws)
-    _ws_clients -= disconnected
+    _ws_clients.difference_update(disconnected)
 
 
 # ── Background Tasks ───────────────────────────────────────────────────────────
