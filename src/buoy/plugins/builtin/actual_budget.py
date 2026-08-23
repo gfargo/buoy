@@ -94,6 +94,29 @@ class ActualBudgetPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
+    def demo_data(self) -> PanelData:
+        month = date.today().strftime("%Y-%m")
+        categories = [
+            {"name": "Groceries", "spent": 412.30, "budgeted": 500.0},
+            {"name": "Dining Out", "spent": 187.50, "budgeted": 150.0},
+            {"name": "Utilities", "spent": 220.0, "budgeted": 250.0},
+            {"name": "Transportation", "spent": 96.20, "budgeted": 200.0},
+        ]
+        spent = round(sum(c["spent"] for c in categories), 2)
+        budgeted = round(sum(c["budgeted"] for c in categories), 2)
+        pct = round((spent / budgeted) * 100) if budgeted else 0
+        return PanelData(
+            status="ok",
+            summary=f"${spent:,.2f} / ${budgeted:,.2f} ({pct}%)",
+            detail={
+                "month": month,
+                "spent": spent,
+                "budgeted": budgeted,
+                "pct": pct,
+                "categories": categories,
+            },
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         if not data.detail or data.status == "disabled":
             return [panel.text("Not configured", status="dim")]

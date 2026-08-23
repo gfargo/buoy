@@ -134,6 +134,14 @@ class DnsFilterPlugin(Plugin):
             },
         )
 
+    def demo_data(self) -> PanelData:
+        top_blocked = [
+            {"domain": "ads.example.com", "count": 812},
+            {"domain": "track.adtech.net", "count": 645},
+            {"domain": "telemetry.badcorp.io", "count": 301},
+        ]
+        return self._make_panel(queries=48213, blocked=9021, pct=18.7, top_blocked=top_blocked)
+
     def render(self, data: PanelData) -> list[dict] | None:
         d = data.detail or {}
         top = d.get("top_blocked") or []

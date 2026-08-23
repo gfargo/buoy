@@ -92,6 +92,13 @@ class CertExpiryPlugin(Plugin):
 
         return PanelData(status=overall, summary=summary, detail={"certs": certs})
 
+    def demo_data(self) -> PanelData:
+        certs = [
+            {"name": "demo.ts.net", "days": 62, "status": "ok"},
+            {"name": "grafana.demo.ts.net", "days": 18, "status": "warn"},
+        ]
+        return PanelData(status="warn", summary="2 certs · soonest 18d", detail={"certs": certs})
+
     def render(self, data: PanelData) -> list[dict] | None:
         certs = data.detail.get("certs") or []
         if not certs:

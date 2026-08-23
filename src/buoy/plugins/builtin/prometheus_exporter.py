@@ -36,6 +36,10 @@ class PrometheusExporterPlugin(Plugin):
         """This plugin doesn't produce panel data."""
         return PanelData(status="ok", summary="/metrics active")
 
+    def demo_data(self) -> PanelData:
+        """No I/O either way — same data as collect()."""
+        return PanelData(status="ok", summary="/metrics active")
+
     @staticmethod
     def _escape_label_value(value: str) -> str:
         """Escape a Prometheus label value per the exposition format spec.

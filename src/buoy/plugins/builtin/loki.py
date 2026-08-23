@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
@@ -58,6 +59,14 @@ class LokiPlugin(Plugin):
             return PanelData(status=status, summary=summary, detail={"entries": entries[:10]})
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
+
+    def demo_data(self) -> PanelData:
+        now_ns = str(int(time.time() * 1_000_000_000))
+        entries = [
+            {"ts": now_ns, "line": "connection refused: upstream timeout", "job": "nginx-proxy"},
+            {"ts": now_ns, "line": "failed to acquire lock: retrying", "job": "postgres"},
+        ]
+        return PanelData(status="warn", summary="2 recent errors", detail={"entries": entries})
 
     def render(self, data: PanelData) -> list[dict] | None:
         entries = data.detail.get("entries") or []

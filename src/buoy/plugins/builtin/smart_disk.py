@@ -148,6 +148,25 @@ class SmartDiskPlugin(Plugin):
             "power_hours": power_hours,
         }
 
+    def demo_data(self) -> PanelData:
+        drives = [
+            {
+                "device": "nvme0n1",
+                "health": "PASSED",
+                "temp": 38,
+                "reallocated": 0,
+                "power_hours": 2847,
+            },
+            {
+                "device": "sda",
+                "health": "PASSED",
+                "temp": 33,
+                "reallocated": 0,
+                "power_hours": 15021,
+            },
+        ]
+        return PanelData(status="ok", summary="2 drives OK", detail={"drives": drives})
+
     def render(self, data: PanelData) -> list[dict] | None:
         drives = data.detail.get("drives") or []
         if not drives:

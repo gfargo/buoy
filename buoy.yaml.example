@@ -158,6 +158,8 @@ alerts:
 #   3. the `directory` below — plain .py files dropped in by hand
 # Entry-point plugins use the same `builtin.<id>.enabled` gate as built-ins.
 # Run `buoy plugin list` / `buoy plugin info <id>` to see everything currently discoverable.
+# Under features.demo_mode / --demo, every plugin is stubbed: setup()/collect() are
+# never called (no outbound calls), panels render each plugin's demo_data() instead.
 plugins:
   enabled: true
   directory: /plugins        # Mount point for user plugins

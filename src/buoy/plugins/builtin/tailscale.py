@@ -106,6 +106,43 @@ class TailscalePlugin(Plugin):
         except (TimeoutError, FileNotFoundError, PermissionError, json.JSONDecodeError):
             return None
 
+    def demo_data(self) -> PanelData:
+        peers = [
+            {
+                "name": "nas-01",
+                "online": True,
+                "conn_type": "direct",
+                "last_seen": "",
+                "exit_node": False,
+            },
+            {
+                "name": "pi-cam",
+                "online": True,
+                "conn_type": "relay",
+                "last_seen": "",
+                "exit_node": False,
+            },
+            {
+                "name": "office-laptop",
+                "online": False,
+                "conn_type": "unknown",
+                "last_seen": "2026-08-22T18:04:00Z",
+                "exit_node": False,
+            },
+            {
+                "name": "exit-node-us",
+                "online": True,
+                "conn_type": "direct",
+                "last_seen": "",
+                "exit_node": True,
+            },
+        ]
+        return PanelData(
+            status="warn",
+            summary="3/4 peers online · exit: exit-node-us",
+            detail={"peers": peers, "backend_state": "Running", "exit_node": "exit-node-us"},
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         peers = data.detail.get("peers") or []
         if not peers:

@@ -73,6 +73,14 @@ class SystemdHealthPlugin(Plugin):
         except (FileNotFoundError, TimeoutError):
             return "unknown"
 
+    def demo_data(self) -> PanelData:
+        units = [
+            {"unit": "docker.service", "state": "active"},
+            {"unit": "tailscaled.service", "state": "active"},
+            {"unit": "cron.service", "state": "active"},
+        ]
+        return PanelData(status="ok", summary="3/3 active", detail={"units": units})
+
     def render(self, data: PanelData) -> list[dict] | None:
         units = data.detail.get("units") or []
         if not units:

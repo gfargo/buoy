@@ -72,6 +72,14 @@ class CronHealthPlugin(Plugin):
         except (TimeoutError, FileNotFoundError):
             return []
 
+    def demo_data(self) -> PanelData:
+        entries = [
+            {"time": "Aug 23 03:00:01", "user": "root", "cmd": "/usr/local/bin/backup.sh"},
+            {"time": "Aug 23 04:00:01", "user": "root", "cmd": "certbot renew --quiet"},
+            {"time": "Aug 23 06:00:01", "user": "buoy", "cmd": "docker image prune -f"},
+        ]
+        return PanelData(status="ok", summary="3 jobs (24h)", detail={"entries": entries})
+
     def render(self, data: PanelData) -> list[dict] | None:
         entries = data.detail.get("entries") or []
         if not entries:

@@ -77,6 +77,15 @@ class SnapraidPlugin(Plugin):
         except (TimeoutError, FileNotFoundError):
             return None
 
+    def demo_data(self) -> PanelData:
+        detail = {
+            "unsynced_count": 0,
+            "last_sync_age_hours": 5.0,
+            "disk_errors": False,
+            "scrub_pct": 92,
+        }
+        return PanelData(status="ok", summary="synced 5h ago", detail=detail)
+
     def render(self, data: PanelData) -> list[dict] | None:
         d = data.detail or {}
         rows: list[dict] = []

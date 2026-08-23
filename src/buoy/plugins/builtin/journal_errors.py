@@ -78,6 +78,16 @@ class JournalErrorsPlugin(Plugin):
         except (TimeoutError, FileNotFoundError):
             return []
 
+    def demo_data(self) -> PanelData:
+        entries = [
+            {
+                "time": "Aug 23 09:14:02",
+                "unit": "docker",
+                "message": "Container jellyfin health check failed, retrying",
+            },
+        ]
+        return PanelData(status="warn", summary="1 error (24h)", detail={"entries": entries})
+
     def render(self, data: PanelData) -> list[dict] | None:
         entries = data.detail.get("entries") or []
         if not entries:

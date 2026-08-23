@@ -58,6 +58,19 @@ class UptimeKumaPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
+    def demo_data(self) -> PanelData:
+        monitors = [
+            {"name": "nas-01", "up": True},
+            {"name": "grafana", "up": True},
+            {"name": "plausible", "up": True},
+            {"name": "pi-cam", "up": True},
+        ]
+        return PanelData(
+            status="ok",
+            summary=f"{len(monitors)}/{len(monitors)} up",
+            detail={"monitors": monitors},
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         monitors = data.detail.get("monitors") or []
         if not monitors:

@@ -88,6 +88,21 @@ class PlanePlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="API error", detail={"error": str(e)})
 
+    def demo_data(self) -> PanelData:
+        return PanelData(
+            status="ok",
+            summary="68% complete (17/25)",
+            detail={
+                "cycle": "Sprint 42",
+                "start": "2026-08-17",
+                "end": "2026-08-31",
+                "total_issues": 25,
+                "completed_issues": 17,
+                "pct": 68,
+                "days_left": 8,
+            },
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         d = data.detail or {}
         if not d.get("cycle"):

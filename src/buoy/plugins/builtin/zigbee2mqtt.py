@@ -218,6 +218,47 @@ class Zigbee2MqttPlugin(Plugin):
             },
         )
 
+    def demo_data(self) -> PanelData:
+        devices = [
+            {
+                "name": "living-room-motion",
+                "type": "EndDevice",
+                "linkquality": 180,
+                "stale": False,
+                "interview_ok": True,
+                "disabled": False,
+            },
+            {
+                "name": "kitchen-light",
+                "type": "Router",
+                "linkquality": 96,
+                "stale": False,
+                "interview_ok": True,
+                "disabled": False,
+            },
+            {
+                "name": "garage-door",
+                "type": "EndDevice",
+                "linkquality": 34,
+                "stale": True,
+                "interview_ok": True,
+                "disabled": False,
+            },
+        ]
+        return PanelData(
+            status="warn",
+            summary="3 devices · weakest 34 · 1 need attention",
+            detail={
+                "coordinator_type": "zStack3x0",
+                "coordinator_firmware": "20221226",
+                "channel": 15,
+                "pan_id": "0x1a62",
+                "permit_join": False,
+                "device_count": len(devices),
+                "devices": devices,
+            },
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         d = data.detail or {}
         if data.status == "disabled":

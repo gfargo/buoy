@@ -88,6 +88,25 @@ class ProxmoxPlugin(Plugin):
             },
         )
 
+    def demo_data(self) -> PanelData:
+        vms = [
+            {"name": "vm-plex", "status": "running", "vmid": 101},
+            {"name": "vm-nas", "status": "running", "vmid": 102},
+        ]
+        cts = [
+            {"name": "ct-pihole", "status": "running", "vmid": 201},
+            {"name": "ct-vaultwarden", "status": "stopped", "vmid": 202},
+        ]
+        return PanelData(
+            status="warn",
+            summary="2/2 VMs · 1/2 CTs · CPU 34%",
+            detail={
+                "vms": vms,
+                "cts": cts,
+                "node": {"cpu_pct": 34, "mem_pct": 58, "uptime": 1209600},
+            },
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         d = data.detail or {}
         node = d.get("node") or {}

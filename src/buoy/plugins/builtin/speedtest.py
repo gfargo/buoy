@@ -116,6 +116,26 @@ class SpeedtestPlugin(Plugin):
             },
         )
 
+    def demo_data(self) -> PanelData:
+        now = time.time()
+        history = [
+            {
+                "ts": now - (19 - i) * 3600,
+                "download_mbps": 480 + (i % 5) * 6,
+                "upload_mbps": 90 + (i % 3) * 4,
+                "ping_ms": 8 + (i % 4),
+                "server": "Demo ISP - Metro",
+                "ok": True,
+            }
+            for i in range(20)
+        ]
+        latest = history[-1]
+        return PanelData(
+            status="ok",
+            summary=f"↓ {latest['download_mbps']:.0f} Mbps · ↑ {latest['upload_mbps']:.0f} Mbps · {latest['ping_ms']:.0f} ms",
+            detail={"latest": latest, "history": history, "baseline_mbps": 480.0},
+        )
+
     # ── Background task ────────────────────────────────────────────────────────
 
     async def _loop(self) -> None:

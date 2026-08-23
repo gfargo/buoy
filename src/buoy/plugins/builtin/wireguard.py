@@ -76,6 +76,31 @@ class WireGuardPlugin(Plugin):
         except (TimeoutError, FileNotFoundError):
             return None
 
+    def demo_data(self) -> PanelData:
+        peers = [
+            {
+                "public_key": "aBcDeFgHiJkL…",
+                "endpoint": "203.0.113.5:51820",
+                "allowed_ips": "10.10.0.2/32",
+                "handshake_age": 42,
+                "rx": 184320,
+                "tx": 92160,
+                "stale": False,
+            },
+            {
+                "public_key": "mNoPqRsTuVwX…",
+                "endpoint": "198.51.100.9:51820",
+                "allowed_ips": "10.10.0.3/32",
+                "handshake_age": 610,
+                "rx": 20480,
+                "tx": 10240,
+                "stale": True,
+            },
+        ]
+        return PanelData(
+            status="warn", summary="1/2 peers up", detail={"interface": "wg0", "peers": peers}
+        )
+
     def render(self, data: PanelData) -> list[dict] | None:
         peers = data.detail.get("peers") or []
         if not peers:
