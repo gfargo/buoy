@@ -18,4 +18,7 @@ exclude = [
   # Truncated example webhook URL in buoy.yaml.example ("...api/webhooks/...
   # "), not a real endpoint.
   '^https?://discord\.com/api/webhooks',
+  # Example internal hostname used in buoy.yaml.example to illustrate
+  # per-peer verify_ssl: false for self-signed certs; not a real host.
+  '^https?://lab\.internal',
 ]

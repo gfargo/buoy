@@ -386,11 +386,7 @@ class TestNetworkVerifySsl:
         assert config.network.verify_ssl is True
 
     def test_peer_verify_ssl_default_none(self):
-        raw = {
-            "network": {
-                "peers": [{"name": "harbor", "url": "https://harbor.example.ts.net"}]
-            }
-        }
+        raw = {"network": {"peers": [{"name": "harbor", "url": "https://harbor.example.ts.net"}]}}
         config = _build_config(raw)
         assert config.network.peers[0].verify_ssl is None
 

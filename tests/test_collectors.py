@@ -478,7 +478,9 @@ class TestNetworkLatency:
 
         config = self._make_net_config()
         config.network.verify_ssl = True
-        config.network.peers = [PeerConfig(name="harbor", url="https://harbor.local", verify_ssl=False)]
+        config.network.peers = [
+            PeerConfig(name="harbor", url="https://harbor.local", verify_ssl=False)
+        ]
         coll = NetworkCollector(config)
 
         mock_client = self._make_mock_client()
@@ -535,7 +537,9 @@ class TestNetworkLatency:
 
         config = self._make_net_config()
         config.network.verify_ssl = True
-        config.network.peers = [PeerConfig(name="harbor", url="https://harbor.local", verify_ssl=False)]
+        config.network.peers = [
+            PeerConfig(name="harbor", url="https://harbor.local", verify_ssl=False)
+        ]
         coll = NetworkCollector(config)
 
         mock_client = self._make_mock_client()
