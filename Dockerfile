@@ -22,8 +22,13 @@ COPY src/ ./src/
 # (which maps static/ → buoy/static in the wheel) can find it at build time.
 COPY static/ ./static/
 
-# Install the package (deps + buoy itself)
-RUN pip install --no-cache-dir .
+# Install the package (deps + buoy itself). zigbee2mqtt is an optional
+# extra (paho-mqtt is a small, pure-Python-friendly dep) installed by
+# default so the shipped image can actually run that plugin without a
+# custom build — confirmed 2026-08-23 that a plain `pip install .` here
+# left it unimportable (ImportError, isolated per-plugin by the loader,
+# but silently absent from the dashboard with no obvious signal why).
+RUN pip install --no-cache-dir ".[zigbee2mqtt]"
 COPY buoy.yaml.example ./buoy.yaml.example
 
 # Create plugin + data directories
