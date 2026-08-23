@@ -286,10 +286,14 @@ def _parse_plugins(
     """
     entries = {}
     for plugin_id, cfg in raw_plugins.items():
-        enabled = cfg.pop("enabled", default_enabled) if isinstance(cfg, dict) else default_enabled
-        raw_interval = cfg.pop("refresh_interval", None) if isinstance(cfg, dict) else None
+        enabled = cfg.get("enabled", default_enabled) if isinstance(cfg, dict) else default_enabled
+        raw_interval = cfg.get("refresh_interval", None) if isinstance(cfg, dict) else None
         refresh_interval = int(raw_interval) if raw_interval is not None else None
-        settings = cfg if isinstance(cfg, dict) else {}
+        settings = (
+            {k: v for k, v in cfg.items() if k not in ("enabled", "refresh_interval")}
+            if isinstance(cfg, dict)
+            else {}
+        )
         entries[plugin_id] = PluginEntry(
             enabled=enabled, refresh_interval=refresh_interval, settings=settings
         )
