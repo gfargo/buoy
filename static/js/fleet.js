@@ -5,6 +5,7 @@
 import { renderSparkline } from './gauges.js';
 import { escapeHtml, safeUrl } from './escape.js';
 import { formatUptime } from './format.js';
+import { apiUrl } from './paths.js';
 
 export async function refreshFleet(config) {
   const peers = config.network?.peers || [];
@@ -91,7 +92,7 @@ export async function refreshFleet(config) {
 
 async function fetchLatencyHistory(peerName, peerKey) {
   try {
-    const r = await fetch(`/api/fleet/${encodeURIComponent(peerName)}/latency-history?hours=6`);
+    const r = await fetch(apiUrl(`fleet/${encodeURIComponent(peerName)}/latency-history?hours=6`));
     if (!r.ok) return;
     const { data } = await r.json();
     if (!data || data.length < 2) return;

@@ -103,6 +103,54 @@ BUOY_AUTH_TOKEN=my-secret
 BUOY_FEATURES_DEMO_MODE=true
 ```
 
+## Reverse Proxy / Sub-Path Hosting
+
+By default buoy assumes it's served at the domain root. To serve it at a
+sub-path (e.g. `https://host/buoy/`) behind a reverse proxy, set
+`network.base_path` (or `BUOY_NETWORK_BASE_PATH`):
+
+```yaml
+network:
+  base_path: /buoy
+```
+
+buoy then serves both the prefixed *and* unprefixed paths, so it works
+whether your proxy forwards the prefix unchanged or strips it before
+forwarding — `base_path` just needs to match what your browser actually
+requests.
+
+**Caddy, forwarding the prefix:**
+```
+handle /buoy/* {
+    reverse_proxy buoy:8090
+}
+```
+
+**Caddy, stripping the prefix:**
+```
+handle_path /buoy/* {
+    reverse_proxy buoy:8090
+}
+```
+
+**Traefik, stripping the prefix:**
+```yaml
+middlewares:
+  - stripprefix:
+      prefixes: ["/buoy"]
+```
+
+**nginx, forwarding the prefix** (note: no trailing slash on `proxy_pass`):
+```nginx
+location /buoy/ {
+    proxy_pass http://buoy:8090;
+}
+```
+
+In every case above, set `base_path: /buoy` — even when the proxy strips
+the prefix before it reaches buoy, the *browser* still sees `/buoy/...`
+URLs, so the HTML/JS/CSS buoy emits must carry that prefix too.
+
 ## Architecture
 
 ```

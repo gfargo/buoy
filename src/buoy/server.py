@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import dataclasses
 import hmac
+import html as html_module
 import json
 import logging
 import re
@@ -76,6 +77,7 @@ async def api_config(request: Request) -> JSONResponse:
             },
             "network": {
                 "tailnet_domain": _config.network.tailnet_domain,
+                "base_path": _config.network.base_path,
                 "peers": [
                     {"name": p.name, "url": p.url, "tier": p.tier} for p in _config.network.peers
                 ],
@@ -819,13 +821,22 @@ async def _empty_disk_detail():
 
 
 async def index(request: Request) -> Response:
-    """Serve the dashboard HTML."""
+    """Serve the dashboard HTML, rewriting asset URLs for the configured base path."""
     static_dir = _resolve_static_dir()
     index_path = static_dir / "index.html"
     if not index_path.exists():
         return Response("index.html not found", status_code=500)
+
+    html = index_path.read_text()
+    base = _config.network.base_path if _config else ""
+    if base:
+        html = html.replace('="/static/', f'="{html_module.escape(base, quote=True)}/static/')
+    html = html.replace(
+        '<meta name="buoy-base-path" content="">',
+        f'<meta name="buoy-base-path" content="{html_module.escape(base, quote=True)}">',
+    )
     return Response(
-        content=index_path.read_text(),
+        content=html,
         media_type="text/html",
     )
 
@@ -920,6 +931,15 @@ def create_app(config: BuoyConfig) -> Starlette:
     if _prometheus_enabled(config):
         routes.insert(-1, Route("/metrics", api_metrics))
 
+    # When base_path is set, mount the same routes under the prefix too, so
+    # both proxy styles work: a non-stripping proxy delivers e.g.
+    # "/buoy/api/stats" (matches the Mount below), while a stripping proxy
+    # (Caddy handle_path, Traefik StripPrefix) delivers "/api/stats" (matches
+    # the root routes). Route/Mount objects are pure matchers, safe to
+    # reference from two places.
+    if config.network.base_path:
+        routes = [*routes, Mount(config.network.base_path, routes=routes)]
+
     # Same-origin by default (no CORS middleware = browsers block cross-origin
     # reads). Cross-origin access is opt-in via an explicit origin allowlist
     # (e.g. for fleet peers) — never a wildcard, per SPEC §7.2.
@@ -949,6 +969,10 @@ def create_app(config: BuoyConfig) -> Starlette:
 
     csp_policy = _build_csp_policy([p.url for p in config.network.peers if p.url])
 
+    from buoy.auth import strip_base_path
+
+    base_path = config.network.base_path
+
     class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             response = await call_next(request)
@@ -956,7 +980,8 @@ def create_app(config: BuoyConfig) -> Starlette:
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
             response.headers["Content-Security-Policy"] = csp_policy
-            if not request.url.path.startswith("/static/"):
+            path = strip_base_path(request.url.path, base_path)
+            if not path.startswith("/static/"):
                 response.headers["Cache-Control"] = "no-cache"
             return response
 
@@ -966,7 +991,7 @@ def create_app(config: BuoyConfig) -> Starlette:
     # independent of whether auth is enabled.
     from buoy.auth import RateLimitMiddleware
 
-    middleware.append(Middleware(RateLimitMiddleware))
+    middleware.append(Middleware(RateLimitMiddleware, base_path=base_path))
 
     # Add auth middleware if enabled. Fail fast rather than silently serving
     # a "protected" dashboard that isn't (SEC-1): a misconfigured install
@@ -990,7 +1015,7 @@ def create_app(config: BuoyConfig) -> Starlette:
 
         from buoy.auth import AuthMiddleware
 
-        middleware.append(Middleware(AuthMiddleware, auth_config=config.auth))
+        middleware.append(Middleware(AuthMiddleware, auth_config=config.auth, base_path=base_path))
 
     app = Starlette(
         routes=routes,

@@ -84,6 +84,15 @@ included here since ingress setup is cluster-specific. `/api/health` is a
 safe liveness/readiness path (unauthenticated, matches the probes in both
 manifests and the Helm template).
 
+If the Ingress serves buoy at a sub-path (e.g. `/buoy` instead of the
+domain root), set `BUOY_NETWORK_BASE_PATH=/buoy` on the container so its
+emitted asset/API/WebSocket URLs carry the prefix — see the
+[reverse-proxy section in the README](../../README.md#reverse-proxy--sub-path-hosting)
+for details on both prefix-forwarding and prefix-stripping Ingress
+controllers. The liveness/readiness probes above continue to hit the
+unprefixed `/api/health` path directly against the pod, which keeps
+working regardless of `base_path`.
+
 ## Data persistence
 
 Same caveat as the [native install](./native.md#3-config-and-data-directories):

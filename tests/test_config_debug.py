@@ -40,6 +40,7 @@ class FakeAuthConfig:
 def _make_middleware():
     mw = AuthMiddleware.__new__(AuthMiddleware)
     mw.auth_config = FakeAuthConfig()
+    mw.base_path = ""
     return mw
 
 
