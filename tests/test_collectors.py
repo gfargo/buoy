@@ -417,6 +417,139 @@ class TestNetworkLatency:
 
         assert results == [{"name": "compass", "latency_ms": 0, "online": True}]
 
+    # --- verify_ssl propagation tests ---
+
+    def _make_mock_client(self, status_code=200):
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.json = MagicMock(return_value={})
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_response)
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_collect_uses_verify_true_by_default(self):
+        """collect() passes verify=True to AsyncClient when network.verify_ssl defaults."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config([("harbor", "https://harbor.local")])
+        # Default: network.verify_ssl=True, peer.verify_ssl=None
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+            await coll.collect()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is True
+
+    @pytest.mark.asyncio
+    async def test_collect_uses_network_verify_false(self):
+        """collect() passes verify=False when network.verify_ssl=False."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config([("harbor", "https://harbor.local")])
+        config.network.verify_ssl = False
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+            await coll.collect()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is False
+
+    @pytest.mark.asyncio
+    async def test_collect_per_peer_override_wins(self):
+        """Per-peer verify_ssl=False wins over network.verify_ssl=True."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+        from buoy.config import PeerConfig
+
+        config = self._make_net_config()
+        config.network.verify_ssl = True
+        config.network.peers = [
+            PeerConfig(name="harbor", url="https://harbor.local", verify_ssl=False)
+        ]
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+            await coll.collect()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is False
+
+    @pytest.mark.asyncio
+    async def test_measure_latency_http_fallback_verify_true(self):
+        """HTTP fallback in measure_latency() uses verify=True by default."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config([("harbor", "https://harbor.local")])
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
+            with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+                await coll.measure_latency()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is True
+
+    @pytest.mark.asyncio
+    async def test_measure_latency_http_fallback_verify_false(self):
+        """HTTP fallback in measure_latency() uses verify=False when network.verify_ssl=False."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config([("harbor", "https://harbor.local")])
+        config.network.verify_ssl = False
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
+            with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+                await coll.measure_latency()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is False
+
+    @pytest.mark.asyncio
+    async def test_measure_latency_per_peer_override_wins(self):
+        """Per-peer verify_ssl=False wins in measure_latency() HTTP fallback."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+        from buoy.config import PeerConfig
+
+        config = self._make_net_config()
+        config.network.verify_ssl = True
+        config.network.peers = [
+            PeerConfig(name="harbor", url="https://harbor.local", verify_ssl=False)
+        ]
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
+            with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+                await coll.measure_latency()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is False
+
 
 class TestDockerListContainerStates:
     """Tests for DockerCollector.list_container_states()."""

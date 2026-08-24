@@ -385,3 +385,90 @@ class TestLoadConfig:
 
         with pytest.raises(ConfigError):
             load_config(path=str(config_file))
+
+
+class TestNetworkVerifySsl:
+    """Tests for network.verify_ssl and per-peer verify_ssl config."""
+
+    # --- defaults ---
+
+    def test_network_verify_ssl_default_true(self):
+        config = _build_config({})
+        assert config.network.verify_ssl is True
+
+    def test_peer_verify_ssl_default_none(self):
+        raw = {"network": {"peers": [{"name": "harbor", "url": "https://harbor.example.ts.net"}]}}
+        config = _build_config(raw)
+        assert config.network.peers[0].verify_ssl is None
+
+    # --- YAML overrides ---
+
+    def test_network_verify_ssl_false_from_yaml(self):
+        raw = {"network": {"verify_ssl": False}}
+        config = _build_config(raw)
+        assert config.network.verify_ssl is False
+
+    def test_network_verify_ssl_true_explicit(self):
+        raw = {"network": {"verify_ssl": True}}
+        config = _build_config(raw)
+        assert config.network.verify_ssl is True
+
+    def test_per_peer_verify_ssl_false(self):
+        raw = {
+            "network": {
+                "peers": [
+                    {"name": "harbor", "url": "https://harbor.local", "verify_ssl": False},
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert config.network.peers[0].verify_ssl is False
+
+    def test_per_peer_verify_ssl_true(self):
+        raw = {
+            "network": {
+                "peers": [
+                    {"name": "harbor", "url": "https://harbor.local", "verify_ssl": True},
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert config.network.peers[0].verify_ssl is True
+
+    def test_per_peer_without_verify_ssl_stays_none(self):
+        """A peer without verify_ssl must stay None (inherit, not default-False)."""
+        raw = {
+            "network": {
+                "peers": [
+                    {"name": "harbor", "url": "https://harbor.local"},
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert config.network.peers[0].verify_ssl is None
+
+    # --- env override ---
+
+    def test_env_verify_ssl_false(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_VERIFY_SSL", "false")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.network.verify_ssl is False
+
+    def test_env_verify_ssl_true(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_VERIFY_SSL", "true")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.network.verify_ssl is True
+
+    def test_env_verify_ssl_zero_is_false(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_VERIFY_SSL", "0")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.network.verify_ssl is False
+
+    def test_env_verify_ssl_overrides_yaml(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_VERIFY_SSL", "false")
+        raw = _apply_env_overrides({"network": {"verify_ssl": True}})
+        config = _build_config(raw)
+        assert config.network.verify_ssl is False

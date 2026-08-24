@@ -40,6 +40,7 @@ class PeerConfig:
     name: str = ""
     url: str = ""
     tier: str = ""
+    verify_ssl: bool | None = None  # None = inherit network.verify_ssl
 
 
 @dataclass
@@ -50,6 +51,7 @@ class NetworkConfig:
     peers: list[PeerConfig] = field(default_factory=list)
     allowed_origins: list[str] = field(default_factory=list)
     trusted_proxies: list[str] = field(default_factory=list)
+    verify_ssl: bool = True  # TLS verification for peer polling (default on)
 
 
 @dataclass
@@ -190,6 +192,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_NETWORK_TAILNET_DOMAIN": ("network", "tailnet_domain"),
         "BUOY_NETWORK_ALLOWED_ORIGINS": ("network", "allowed_origins"),
         "BUOY_NETWORK_TRUSTED_PROXIES": ("network", "trusted_proxies"),
+        "BUOY_NETWORK_VERIFY_SSL": ("network", "verify_ssl"),
         "BUOY_AUTH_ENABLED": ("auth", "enabled"),
         "BUOY_AUTH_TOKEN": ("auth", "token"),
         "BUOY_AUTH_TYPE": ("auth", "type"),
@@ -237,7 +240,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
                 raise ConfigError(
                     f"Invalid value for {env_key}: {value!r} (expected an integer)"
                 ) from exc
-        elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates"):
+        elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates", "verify_ssl"):
             raw[section][key] = value.lower() in ("true", "1", "yes")
         elif key == "allowed_origins":
             raw[section][key] = [origin.strip() for origin in value.split(",") if origin.strip()]
@@ -264,11 +267,16 @@ def _parse_peers(raw_peers: list[dict]) -> list[PeerConfig]:
     """Parse peer config entries."""
     peers = []
     for p in raw_peers:
+        raw_verify = p.get("verify_ssl")
+        # Keep None when absent so the collector can inherit network.verify_ssl.
+        # Only coerce to bool when the key is explicitly present.
+        verify_ssl = bool(raw_verify) if raw_verify is not None else None
         peers.append(
             PeerConfig(
                 name=p.get("name", ""),
                 url=p.get("url", ""),
                 tier=p.get("tier", ""),
+                verify_ssl=verify_ssl,
             )
         )
     return peers
@@ -340,6 +348,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         peers=peers,
         allowed_origins=list(network_raw.get("allowed_origins", [])),
         trusted_proxies=list(network_raw.get("trusted_proxies", [])),
+        verify_ssl=bool(network_raw.get("verify_ssl", True)),
     )
 
     services = ServicesConfig(

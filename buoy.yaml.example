@@ -51,6 +51,17 @@ network:
   #   - name: watch
   #     url: https://watch.example.ts.net
   #     tier: "Tier 2"
+  #   - name: lab
+  #     url: https://lab.internal
+  #     tier: "Tier 3"
+  #     verify_ssl: false  # per-peer opt-out for self-signed certs
+
+  # TLS certificate verification for fleet peer polling.
+  # Default true — peers must present a valid certificate. Set to false only
+  # if all your peers use self-signed certs and you accept the risk.
+  # Can also be set per-peer via peers[*].verify_ssl (peer wins over this).
+  # Also settable via BUOY_NETWORK_VERIFY_SSL=false.
+  verify_ssl: true
 
   # Browser CORS is same-origin only by default (no cross-origin reads at
   # all). Only set this if another origin's browser needs to call this
