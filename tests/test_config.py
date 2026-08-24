@@ -158,6 +158,17 @@ class TestConfigFromYAML:
         config = _build_config(raw)
         assert config.plugins.builtin["github"].enabled is False
 
+    def test_build_config_does_not_mutate_raw_dict(self):
+        """_build_config must not pop keys off the caller's raw dict (BUG-17):
+        building twice from the same raw dict must yield the same result."""
+        raw = {"plugins": {"builtin": {"github": {"enabled": True, "token": "ghp_xxx"}}}}
+        _build_config(raw)
+        assert raw["plugins"]["builtin"]["github"] == {"enabled": True, "token": "ghp_xxx"}
+
+        config = _build_config(raw)
+        assert config.plugins.builtin["github"].enabled is True
+        assert config.plugins.builtin["github"].settings["token"] == "ghp_xxx"
+
     def test_theme_preset_light(self):
         config = _build_config({"theme": {"preset": "light"}})
         assert config.theme.preset == "light"
