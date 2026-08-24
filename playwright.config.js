@@ -11,10 +11,19 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   ],
-  webServer: {
-    command: 'python -m buoy --demo',
-    url: 'http://127.0.0.1:8090/api/health',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  webServer: [
+    {
+      command: 'python -m buoy --demo',
+      url: 'http://127.0.0.1:8090/api/health',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      command: 'python -m buoy --demo --port 8091',
+      url: 'http://127.0.0.1:8091/buoy/api/health',
+      env: { BUOY_NETWORK_BASE_PATH: '/buoy' },
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+  ],
 });

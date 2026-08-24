@@ -161,6 +161,7 @@ node:
 network:
   tailnet_domain: tailb82ead.ts.net  # If set, enables Tailscale-aware URLs
   listen_port: 8090
+  base_path: ""                    # Mount under a sub-path for reverse-proxy hosting, e.g. "/buoy"
   # Fleet peers — other hub instances to poll for fleet overview
   peers:
     - name: harbor
@@ -249,7 +250,7 @@ plugins:
 2. Environment variables override any YAML value (prefix: `BUOY_`)
 3. CLI flags override everything (for one-off testing)
 
-**Env var mapping:** `BUOY_NODE_NAME=compass`, `BUOY_NETWORK_LISTEN_PORT=9090`, `BUOY_AUTH_TOKEN=secret123`
+**Env var mapping:** `BUOY_NODE_NAME=compass`, `BUOY_NETWORK_LISTEN_PORT=9090`, `BUOY_NETWORK_BASE_PATH=/buoy`, `BUOY_AUTH_TOKEN=secret123`
 
 ### 3.3 Validation
 

@@ -46,6 +46,7 @@ class PeerConfig:
 class NetworkConfig:
     tailnet_domain: str = ""
     listen_port: int = 8090
+    base_path: str = ""
     peers: list[PeerConfig] = field(default_factory=list)
     allowed_origins: list[str] = field(default_factory=list)
     trusted_proxies: list[str] = field(default_factory=list)
@@ -185,6 +186,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_NODE_TIER": ("node", "tier"),
         "BUOY_NODE_ROLE": ("node", "role"),
         "BUOY_NETWORK_LISTEN_PORT": ("network", "listen_port"),
+        "BUOY_NETWORK_BASE_PATH": ("network", "base_path"),
         "BUOY_NETWORK_TAILNET_DOMAIN": ("network", "tailnet_domain"),
         "BUOY_NETWORK_ALLOWED_ORIGINS": ("network", "allowed_origins"),
         "BUOY_NETWORK_TRUSTED_PROXIES": ("network", "trusted_proxies"),
@@ -245,6 +247,17 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             raw[section][key] = value
 
     return raw
+
+
+def normalize_base_path(value: str) -> str:
+    """Normalize a reverse-proxy base path to '' or '/seg[/seg…]'.
+
+    Strips leading/trailing/duplicate slashes so 'buoy', '/buoy/', and
+    '//buoy//' all collapse to the same '/buoy', with a leading slash and
+    no trailing slash. An empty or all-slashes input normalizes to ''.
+    """
+    cleaned = "/".join(seg for seg in (value or "").split("/") if seg)
+    return f"/{cleaned}" if cleaned else ""
 
 
 def _parse_peers(raw_peers: list[dict]) -> list[PeerConfig]:
@@ -319,6 +332,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     network = NetworkConfig(
         tailnet_domain=network_raw.get("tailnet_domain", ""),
         listen_port=int(network_raw.get("listen_port", 8090)),
+        base_path=normalize_base_path(network_raw.get("base_path", "")),
         peers=peers,
         allowed_origins=list(network_raw.get("allowed_origins", [])),
         trusted_proxies=list(network_raw.get("trusted_proxies", [])),

@@ -18,4 +18,12 @@ exclude = [
   # Truncated example webhook URL in buoy.yaml.example ("...api/webhooks/...
   # "), not a real endpoint.
   '^https?://discord\.com/api/webhooks',
+  # Placeholder hostname illustrating a reverse-proxy sub-path in
+  # buoy.yaml.example, not a real endpoint.
+  '^https?://host(:[0-9]+)?/',
+  # release-please-generated compare link in CHANGELOG.md: the `buoy-v2.1.0`
+  # tag predates the current tagging scheme and was never pushed, so the
+  # range 404s. Unrelated to any single PR; exclude until the changelog
+  # history is backfilled or regenerated.
+  '^https?://github\.com/gfargo/buoy/compare/buoy-v2\.1\.0\.\.\.buoy-v2\.2\.0$',
 ]
