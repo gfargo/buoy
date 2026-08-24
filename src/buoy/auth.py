@@ -28,8 +28,10 @@ PROTECTED_PATHS = {
 
 # Rate limiting: track requests per IP for protected endpoints
 _rate_limit: dict[str, list[float]] = {}
+_rate_limit_last_cleanup = 0.0
 RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX = 60  # requests per window
+RATE_LIMIT_MAX_CLIENTS = 10_000
 
 
 def strip_base_path(path: str, base_path: str) -> str:
@@ -72,13 +74,31 @@ def check_rate_limit(client_ip: str) -> bool:
     so protected paths (including ``/api/config/debug``) can't be
     brute-forced even on installs with auth turned off (SPEC §7.2).
     """
+    global _rate_limit_last_cleanup
+
     now = time.time()
     window_start = now - RATE_LIMIT_WINDOW
 
+    # Expire inactive buckets at most once per window. Capacity handling below
+    # rejects new buckets rather than repeatedly scanning or evicting active
+    # enforcement state.
+    if now - _rate_limit_last_cleanup >= RATE_LIMIT_WINDOW:
+        for ip, timestamps in list(_rate_limit.items()):
+            active = [timestamp for timestamp in timestamps if timestamp > window_start]
+            if active:
+                _rate_limit[ip] = active
+            else:
+                del _rate_limit[ip]
+        _rate_limit_last_cleanup = now
+
     if client_ip not in _rate_limit:
+        # Refuse previously unseen addresses until a periodic expiry frees
+        # capacity. Evicting an active bucket would reset that client's quota.
+        if len(_rate_limit) >= RATE_LIMIT_MAX_CLIENTS:
+            return False
         _rate_limit[client_ip] = []
 
-    # Remove old entries
+    # Remove old entries from the active client's bucket on every request.
     _rate_limit[client_ip] = [t for t in _rate_limit[client_ip] if t > window_start]
 
     if len(_rate_limit[client_ip]) >= RATE_LIMIT_MAX:
