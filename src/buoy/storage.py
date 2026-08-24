@@ -62,31 +62,31 @@ class MetricStore:
             collector: Name of the collector (e.g., 'system', 'docker', 'disk')
             data: The collected data dict to store as JSON
         """
-        if not self._conn:
-            return
-
         ts = int(time.time())
         with self._lock:
+            conn = self._conn
+            if conn is None:
+                return
             try:
-                self._conn.execute(
+                conn.execute(
                     "INSERT INTO metrics (ts, collector, data) VALUES (?, ?, ?)",
                     (ts, collector, json.dumps(data)),
                 )
-                self._conn.commit()
+                conn.commit()
             except sqlite3.Error:
                 logger.warning("storage: failed to record %s metric", collector, exc_info=True)
 
     def prune(self):
         """Delete entries older than 24h."""
-        if not self._conn:
-            return
-
         cutoff = int(time.time()) - RETENTION_SECONDS
         with self._lock:
+            conn = self._conn
+            if conn is None:
+                return
             try:
-                self._conn.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
-                self._conn.execute("DELETE FROM container_states WHERE ts < ?", (cutoff,))
-                self._conn.commit()
+                conn.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
+                conn.execute("DELETE FROM container_states WHERE ts < ?", (cutoff,))
+                conn.commit()
             except sqlite3.Error:
                 logger.warning("storage: failed to prune old entries", exc_info=True)
 
@@ -95,18 +95,21 @@ class MetricStore:
 
         Each dict must have: name (str), status (str), restart_count (int).
         """
-        if not self._conn or not states:
+        if not states:
             return
 
         ts = int(time.time())
         with self._lock:
+            conn = self._conn
+            if conn is None:
+                return
             try:
-                self._conn.executemany(
+                conn.executemany(
                     "INSERT INTO container_states (ts, name, status, restart_count) "
                     "VALUES (?, ?, ?, ?)",
                     [(ts, s["name"], s["status"], s["restart_count"]) for s in states],
                 )
-                self._conn.commit()
+                conn.commit()
             except sqlite3.Error:
                 logger.warning("storage: failed to record container states", exc_info=True)
 
@@ -120,13 +123,13 @@ class MetricStore:
         Returns:
             List of (timestamp, status, restart_count) tuples ascending by time.
         """
-        if not self._conn:
-            return []
-
         cutoff = int(time.time()) - period_seconds
         with self._lock:
+            conn = self._conn
+            if conn is None:
+                return []
             try:
-                cursor = self._conn.execute(
+                cursor = conn.execute(
                     "SELECT ts, status, restart_count FROM container_states "
                     "WHERE name = ? AND ts >= ? ORDER BY ts ASC",
                     (name, cutoff),
@@ -154,24 +157,24 @@ class MetricStore:
             readings: List of (peer, latency_ms) tuples. Only online readings
                 (latency_ms > 0) are persisted; self (0) and offline (-1) are skipped.
         """
-        if not self._conn:
-            return
-
         rows = [(peer, latency_ms) for peer, latency_ms in readings if latency_ms > 0]
         if not rows:
             return
 
         ts = int(time.time())
         with self._lock:
+            conn = self._conn
+            if conn is None:
+                return
             try:
-                self._conn.executemany(
+                conn.executemany(
                     "INSERT INTO metrics (ts, collector, data) VALUES (?, 'latency', ?)",
                     [
                         (ts, json.dumps({"peer": peer, "latency_ms": latency_ms}))
                         for peer, latency_ms in rows
                     ],
                 )
-                self._conn.commit()
+                conn.commit()
             except sqlite3.Error:
                 pass
 
@@ -185,13 +188,13 @@ class MetricStore:
         Returns:
             List of (timestamp, latency_ms) tuples, ordered ascending.
         """
-        if not self._conn:
-            return []
-
         cutoff = int(time.time()) - period_seconds
         with self._lock:
+            conn = self._conn
+            if conn is None:
+                return []
             try:
-                cursor = self._conn.execute(
+                cursor = conn.execute(
                     "SELECT ts, json_extract(data, '$.latency_ms') FROM metrics "
                     "WHERE collector = 'latency' AND json_valid(data) AND ts >= ? "
                     "AND json_extract(data, '$.peer') = ? "
@@ -214,13 +217,13 @@ class MetricStore:
         Returns:
             List of (timestamp, value) tuples, ordered by time ascending.
         """
-        if not self._conn:
-            return []
-
         cutoff = int(time.time()) - period_seconds
         with self._lock:
+            conn = self._conn
+            if conn is None:
+                return []
             try:
-                cursor = self._conn.execute(
+                cursor = conn.execute(
                     "SELECT ts, data FROM metrics "
                     "WHERE collector = 'stats' AND ts >= ? ORDER BY ts ASC",
                     (cutoff,),
