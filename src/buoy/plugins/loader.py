@@ -206,6 +206,13 @@ class PluginManager:
                 await plugin.setup()
             except Exception as e:
                 logger.warning("%s setup failed: %s", plugin_id, e, exc_info=True)
+                # setup() may acquire resources before failing. Give the plugin a
+                # chance to roll them back before removing the only reference that
+                # stop() would otherwise use for teardown.
+                try:
+                    await plugin.teardown()
+                except Exception:
+                    logger.debug("%s rollback teardown failed", plugin_id, exc_info=True)
                 del self._plugins[plugin_id]
 
         # 5. Start collection loops (skip those disabled by config validation)
@@ -244,9 +251,13 @@ class PluginManager:
             self._record_success(plugin_id)
 
     async def stop(self):
-        """Teardown all plugins and cancel tasks."""
-        for task in self._tasks:
+        """Stop collection tasks before tearing down their plugin resources."""
+        tasks = self._tasks[:]
+        for task in tasks:
             task.cancel()
+        awaitables = [task for task in tasks if inspect.isawaitable(task)]
+        if awaitables:
+            await asyncio.gather(*awaitables, return_exceptions=True)
         self._tasks.clear()
 
         if self._demo:
@@ -335,10 +346,14 @@ class PluginManager:
         ]
 
     def get_plugin_frontend_js(self) -> dict[str, str]:
-        """Return custom frontend JS for plugins that provide it."""
+        """Return custom frontend JS, isolating failures to one plugin."""
         result = {}
         for plugin_id, plugin in self._plugins.items():
-            js = plugin.frontend_js()
+            try:
+                js = plugin.frontend_js()
+            except Exception as e:
+                logger.warning("%s frontend_js() failed: %s", plugin_id, e, exc_info=True)
+                continue
             if js:
                 result[plugin_id] = js
         return result
@@ -397,13 +412,32 @@ class PluginManager:
                     plugin_class.manifest.config_schema,
                     entry.settings if entry else {},
                 )
+                settings, errors = validate_plugin_config(
+                    plugin_id, plugin_class.manifest.config_schema, settings
+                )
+                # Do not mutate collision/disabled state until the replacement
+                # plugin has accepted its configuration. A failed override must
+                # leave the previously registered plugin intact and active.
                 instance.configure(settings)
                 self._warn_on_collision(plugin_id, source="user directory")
-                # A user plugin can override a builtin/entry-point plugin that
-                # was disabled by config validation — clear any stale disabled
-                # state so the overriding plugin isn't silently skipped.
-                self._disabled_ids.discard(plugin_id)
-                self._latest_data.pop(plugin_id, None)
+                if errors and self._demo:
+                    logger.debug(
+                        "%s: ignoring config errors in demo mode: %s",
+                        plugin_id,
+                        "; ".join(errors),
+                    )
+                    self._disabled_ids.discard(plugin_id)
+                    self._latest_data.pop(plugin_id, None)
+                elif errors:
+                    self._disabled_ids.add(plugin_id)
+                    self._latest_data[plugin_id] = PanelData(
+                        status="disabled",
+                        summary=f"Config error: {'; '.join(errors)}",
+                        detail={"errors": errors},
+                    )
+                else:
+                    self._disabled_ids.discard(plugin_id)
+                    self._latest_data.pop(plugin_id, None)
                 self._plugins[plugin_id] = instance
             except Exception as e:
                 logger.warning(
@@ -572,7 +606,7 @@ class PluginManager:
             else:
                 entry = config.plugins.builtin.get(plugin_id)
                 enabled = bool(entry and entry.enabled)
-            override = entry.refresh_interval if entry and source != "dir" else None
+            override = entry.refresh_interval if entry else None
             if plugin_id in seen:
                 logger.info(
                     "'%s' from %s overrides a previously discovered plugin with the same id",
@@ -640,14 +674,16 @@ class PluginManager:
 
         The base interval is the plugin's manifest interval, unless an
         operator has set a per-plugin ``refresh_interval`` override under
-        ``plugins.builtin.<id>`` in config, in which case that override wins.
-        The greater of that base and the global ``refresh.plugins_interval``
-        config value is then used. This lets the global value act as a floor
-        that slows down collection (its documented purpose) without ever
-        shortening intentionally long intervals such as the github plugin
-        (300 s) or the prometheus_exporter sentinel (9999 s).
+        ``plugins.builtin.<id>`` or ``plugins.user.<id>`` in config, in which
+        case that override wins. The greater of that base and the global
+        ``refresh.plugins_interval`` config value is then used. This lets the
+        global value act as a floor that slows down collection (its documented
+        purpose) without ever shortening intentionally long intervals such as
+        the github plugin (300 s) or the prometheus_exporter sentinel (9999 s).
         """
-        entry = self.config.plugins.builtin.get(plugin.manifest.id)
+        entry = self.config.plugins.user.get(plugin.manifest.id)
+        if entry is None:
+            entry = self.config.plugins.builtin.get(plugin.manifest.id)
         base = (
             entry.refresh_interval
             if entry and entry.refresh_interval is not None
@@ -670,11 +706,14 @@ class PluginManager:
 
     async def _safe_collect(self, plugin_id: str, plugin: Plugin):
         """Collect from a plugin, catching all exceptions."""
+        collect_task = asyncio.create_task(plugin.collect())
         try:
-            data = await asyncio.wait_for(plugin.collect(), timeout=30)
+            data = await asyncio.wait_for(collect_task, timeout=30)
             self._latest_data[plugin_id] = data
             self._record_success(plugin_id)
         except TimeoutError:
+            collect_task.cancel()
+            await asyncio.gather(collect_task, return_exceptions=True)
             self._latest_data[plugin_id] = PanelData(
                 status="error", summary="Timeout", detail={"error": "collect timed out"}
             )
