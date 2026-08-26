@@ -149,7 +149,9 @@ location /buoy/ {
 
 In every case above, set `base_path: /buoy` — even when the proxy strips
 the prefix before it reaches buoy, the *browser* still sees `/buoy/...`
-URLs, so the HTML/JS/CSS buoy emits must carry that prefix too.
+URLs, so the HTML/JS/CSS buoy emits must carry that prefix too. Configure
+`network.trusted_proxies` with every known proxy hop when forwarding client
+identity; see `buoy.yaml.example` for the trust-chain and wildcard guidance.
 
 ## Architecture
 

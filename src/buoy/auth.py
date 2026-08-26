@@ -131,58 +131,90 @@ def _parse_trusted_networks(
     return trust_all, networks
 
 
-def _extract_forwarded_ip(xff_value: str) -> str | None:
-    """Return the left-most (original client) IP from an X-Forwarded-For value.
+def _parse_forwarded_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parse one X-Forwarded-For item as a strict IP endpoint.
 
-    Handles bracketed IPv6, ``ip:port`` forms, and whitespace.
-    Returns None if the value is empty or unparseable.
+    Accepts plain IPv4/IPv6, IPv4 with a numeric port, and bracketed IPv6
+    with an optional numeric port. Ports must be in the range 0-65535.
+    Hostnames, scoped IPv6, malformed brackets/ports, trailing data, and empty
+    values are rejected.
+    """
+    raw = value.strip()
+    if not raw or "%" in raw:
+        return None
+
+    host = raw
+    port: str | None = None
+
+    if raw.startswith("["):
+        close = raw.find("]")
+        if close <= 1:
+            return None
+        host = raw[1:close]
+        suffix = raw[close + 1 :]
+        if suffix:
+            if not suffix.startswith(":"):
+                return None
+            port = suffix[1:]
+            if not port or not port.isascii() or not port.isdigit():
+                return None
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            return None
+        if address.version != 6:
+            return None
+    else:
+        try:
+            address = ipaddress.ip_address(raw)
+        except ValueError:
+            if raw.count(":") != 1:
+                return None
+            host, port = raw.rsplit(":", 1)
+            if not port or not port.isascii() or not port.isdigit():
+                return None
+            try:
+                address = ipaddress.ip_address(host)
+            except ValueError:
+                return None
+            if address.version != 4:
+                return None
+
+    if port is not None and int(port) > 65535:
+        return None
+    return address
+
+
+def _extract_forwarded_ip(xff_value: str) -> str | None:
+    """Return the canonical left-most IP from a combined X-Forwarded-For value.
+
+    This preserves wildcard-proxy compatibility. Finite trusted proxy lists use
+    :meth:`ProxyHeadersMiddleware._resolve_forwarded_ip` to evaluate the chain.
     """
     if not xff_value:
         return None
-    # Take the leftmost entry (original client)
-    raw = xff_value.split(",")[0].strip()
-    # Strip brackets for IPv6: [::1] → ::1
-    if raw.startswith("["):
-        raw = raw.lstrip("[").split("]")[0]
-    elif ":" in raw:
-        # Could be ip:port (IPv4) — try to detect by counting colons
-        parts = raw.rsplit(":", 1)
-        if len(parts) == 2:
-            try:
-                ipaddress.ip_address(parts[0])
-                raw = parts[0]  # valid ip before colon, strip port
-            except ValueError:
-                pass  # keep raw as-is (might be plain IPv6 without brackets)
-    try:
-        ipaddress.ip_address(raw)
-        return raw
-    except ValueError:
-        return None
+    address = _parse_forwarded_ip(xff_value.split(",", 1)[0])
+    return str(address) if address is not None else None
 
 
 class ProxyHeadersMiddleware:
-    """Pure-ASGI middleware that rewrites ``scope["client"]`` and the ``host``
-    header when the immediate TCP peer is a trusted proxy.
+    """Apply forwarded request metadata only for a trusted immediate TCP peer.
 
-    With ``trusted_proxies=[]`` (the default) the middleware is a no-op: every
-    request passes through unchanged and X-Forwarded-* headers from clients are
-    completely ignored (safe default — clients cannot spoof their IP or Host).
+    With ``trusted_proxies=[]`` (the safe default), every forwarded header is
+    ignored. For a finite trusted list, X-Forwarded-For fields are combined in
+    wire order and scanned right-to-left: trusted proxy hops are skipped and
+    the nearest untrusted address becomes ``scope["client"]``. A malformed
+    value before that boundary fails closed to the original TCP peer; values
+    farther left than the selected client are irrelevant. If every valid hop
+    is trusted, the left-most address is used for compatibility.
 
-    When the peer IP matches the trusted list:
-    - ``scope["client"]`` is replaced with the left-most ``X-Forwarded-For``
-      entry so each real client gets its own rate-limit bucket.
-    - The ``host`` header is replaced with ``X-Forwarded-Host`` (when present)
-      so tailnet URL detection in handlers works correctly.
-    - The ``x-forwarded-proto`` header (when present) is used to set
-      ``scope["scheme"]`` so any scheme-aware logic sees the correct protocol.
+    ``trusted_proxies=["*"]`` intentionally preserves legacy behavior by using
+    the strict, canonicalized left-most X-Forwarded-For address. It is suitable
+    only for fully isolated networks because any peer can claim its identity.
 
-    **Security notes:**
-    - ``trusted_proxies=["*"]`` trusts ALL peers — convenient for development
-      or fully-isolated networks, but allows any client to forge their IP/Host.
-    - CIDR ranges like ``172.16.0.0/12`` cover Docker bridge subnets.
-    - Taking the *left-most* X-Forwarded-For entry assumes a single trusted
-      proxy; with chained proxies the left-most entry can be client-controlled.
-      Acceptable for a private-network dashboard.
+    For trusted immediate peers, X-Forwarded-Host still replaces ``host`` for
+    tailnet URL detection and X-Forwarded-Proto still sets the request scheme.
+    CIDRs such as ``172.16.0.0/12`` can cover known Docker proxy networks.
     """
 
     def __init__(self, app, trusted_proxies: list[str] | None = None):
@@ -198,7 +230,23 @@ class ProxyHeadersMiddleware:
             addr = ipaddress.ip_address(peer_ip)
         except ValueError:
             return False
-        return any(addr in net for net in self._networks)
+        return any(addr.version == net.version and addr in net for net in self._networks)
+
+    def _resolve_forwarded_ip(self, xff_value: str) -> str | None:
+        """Resolve a combined XFF chain, or return None to keep the TCP peer."""
+        if self._trust_all:
+            return _extract_forwarded_ip(xff_value)
+
+        items = xff_value.split(",") if xff_value else []
+        leftmost: ipaddress.IPv4Address | ipaddress.IPv6Address | None = None
+        for item in reversed(items):
+            address = _parse_forwarded_ip(item)
+            if address is None:
+                return None
+            leftmost = address
+            if not self._is_trusted(str(address)):
+                return str(address)
+        return str(leftmost) if leftmost is not None else None
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in {"http", "websocket"}:
@@ -224,9 +272,9 @@ class ProxyHeadersMiddleware:
             # Make a mutable copy of scope once for all rewrites
             scope = dict(scope)
 
-            # Rewrite client from X-Forwarded-For
+            # Resolve client from the complete X-Forwarded-For chain.
             xff = headers_lower.get(b"x-forwarded-for", b"").decode("latin-1")
-            real_ip = _extract_forwarded_ip(xff)
+            real_ip = self._resolve_forwarded_ip(xff)
             if real_ip:
                 scope["client"] = (real_ip, 0)
 
