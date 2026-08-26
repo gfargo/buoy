@@ -73,14 +73,21 @@ network:
   # allowed_origins:
   #   - https://harbor.example.ts.net
 
-  # Trusted reverse-proxy IPs / CIDRs.  When a request arrives from one of
+  # Trusted reverse-proxy IPs / CIDRs. When a request arrives from one of
   # these addresses, buoy reads X-Forwarded-For (for per-client rate-limiting)
   # and X-Forwarded-Host (for tailnet URL rewriting) instead of the raw TCP
-  # peer.  With the default empty list every X-Forwarded-* header from clients
+  # peer. With the default empty list every X-Forwarded-* header from clients
   # is ignored, so no spoofing is possible.
   #
-  # Accepts: individual IPs, CIDR ranges, or "*" (trust all — convenience only,
-  # not recommended on networks reachable by untrusted clients).
+  # List every proxy hop that may appear between the client and buoy. For a
+  # finite list, buoy scans X-Forwarded-For from right to left, skips configured
+  # proxy hops, and selects the nearest untrusted address. Malformed values at
+  # that trust boundary fail closed to the TCP peer. If all hops are trusted,
+  # the left-most address is used for compatibility.
+  #
+  # Accepts: individual IPs, CIDR ranges, or "*". Wildcard trust intentionally
+  # uses the legacy left-most X-Forwarded-For behavior and is only appropriate
+  # on fully isolated networks; it permits any reachable peer to claim an IP.
   # Also settable via BUOY_NETWORK_TRUSTED_PROXIES (comma-separated).
   #
   # IMPORTANT: deployments that previously relied on uvicorn's implicit
