@@ -2,6 +2,7 @@
  * Detail module — expandable panels for CPU, memory, disk, containers.
  */
 
+import { authedFetch } from './auth.js';
 import { escapeHtml } from './escape.js';
 import { apiUrl } from './paths.js';
 
@@ -167,7 +168,7 @@ function renderContainersDetail() {
  */
 async function loadContainerHistory(name, el) {
   try {
-    const r = await fetch(apiUrl(`container/${encodeURIComponent(name)}/history?hours=24`));
+    const r = await authedFetch(apiUrl(`container/${encodeURIComponent(name)}/history?hours=24`));
     if (!r.ok) return; // history disabled or not found — leave empty
     const d = await r.json();
     el.innerHTML = renderUptimeBar(d.samples || [], d.hours || 24);
@@ -247,7 +248,7 @@ async function inspectContainer(name) {
   panel.innerHTML = `<div class="ctr-inspect loading"><span class="ctr-inspect-text">Loading ${escapeHtml(name)}...</span></div>`;
 
   try {
-    const r = await fetch(apiUrl(`container/${encodeURIComponent(name)}`));
+    const r = await authedFetch(apiUrl(`container/${encodeURIComponent(name)}`));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
 
@@ -338,7 +339,7 @@ async function restartContainer(name, btn) {
   btn.classList.remove('confirm');
 
   try {
-    const r = await fetch(apiUrl(`container/${encodeURIComponent(name)}/restart`), {
+    const r = await authedFetch(apiUrl(`container/${encodeURIComponent(name)}/restart`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
@@ -370,7 +371,7 @@ async function showContainerLogs(name) {
   if (!panel) return;
 
   try {
-    const r = await fetch(apiUrl(`container/${encodeURIComponent(name)}/logs`));
+    const r = await authedFetch(apiUrl(`container/${encodeURIComponent(name)}/logs`));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
 

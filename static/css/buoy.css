@@ -242,6 +242,24 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; background: 
 .kb-help-close { position: absolute; top: 0.75rem; right: 0.75rem; background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.75rem; padding: 0.25rem; line-height: 1; }
 .kb-help-close:hover { color: var(--text-bright); }
 
+/* ── Authentication dialog ─────────────────────────── */
+
+.auth-dialog { width: min(92vw, 420px); margin: auto; padding: 0; color: var(--text); background: var(--surface); border: 1px solid var(--cyan-dim); border-radius: 8px; box-shadow: 0 24px 80px rgba(0,0,0,0.55); }
+.auth-dialog::backdrop { background: rgba(0,0,0,0.72); backdrop-filter: blur(2px); }
+.auth-form { display: flex; flex-direction: column; gap: 0.9rem; padding: 1.5rem; }
+.auth-kicker { color: var(--cyan); font-size: 0.6rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+.auth-form h2 { margin: -0.2rem 0 0; color: var(--text-bright); font-family: 'Outfit', sans-serif; font-size: 1.05rem; }
+.auth-form p { margin: 0; color: var(--text-dim); font-size: 0.68rem; line-height: 1.5; }
+.auth-field { display: flex; flex-direction: column; gap: 0.35rem; color: var(--text-bright); font-size: 0.66rem; }
+.auth-field input { width: 100%; box-sizing: border-box; padding: 0.65rem 0.75rem; color: var(--text-bright); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font: 0.72rem 'JetBrains Mono', monospace; }
+.auth-field input:focus { outline: 2px solid var(--cyan); outline-offset: 2px; border-color: var(--cyan); }
+.auth-form .auth-error { color: var(--red); }
+.auth-actions { display: flex; justify-content: flex-end; gap: 0.6rem; padding-top: 0.15rem; }
+.auth-actions button { padding: 0.5rem 0.8rem; border-radius: 4px; font: 0.66rem 'JetBrains Mono', monospace; cursor: pointer; }
+.auth-cancel { color: var(--text-dim); background: transparent; border: 1px solid var(--border); }
+.auth-submit { color: var(--bg); background: var(--cyan); border: 1px solid var(--cyan); font-weight: 600; }
+.auth-actions button:focus-visible { outline: 2px solid var(--text-bright); outline-offset: 2px; }
+
 /* ── Animations ──────────────────────────────────────── */
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

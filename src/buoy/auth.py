@@ -289,10 +289,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 {"error": "authentication required"},
                 status_code=401,
-                headers={"WWW-Authenticate": 'Bearer realm="buoy"'},
+                headers={"WWW-Authenticate": self._challenge()},
             )
 
         return await call_next(request)
+
+    def _challenge(self) -> str:
+        """Return the authentication challenge for the configured mode."""
+        if self.auth_config.type == "basic":
+            return 'Basic realm="buoy", charset="UTF-8"'
+        return 'Bearer realm="buoy"'
 
     def _is_protected(self, path: str) -> bool:
         """Check if a path requires authentication."""

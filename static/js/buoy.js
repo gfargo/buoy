@@ -3,6 +3,7 @@
  * Fetches config, initializes sub-modules, manages refresh loops.
  */
 
+import { initAuth } from './auth.js';
 import { initGauges, updateGauges } from './gauges.js';
 import { initDetail } from './detail.js';
 import { refreshServices } from './services.js';
@@ -23,6 +24,7 @@ async function fetchConfig() {
     node: { name: 'buoy', tier: '', role: '' },
     network: { tailnet_domain: '', peers: [] },
     theme: { preset: 'terminal' },
+    auth: { enabled: false, type: null },
     features: { websocket: true, night_mode: 'auto', keyboard_shortcuts: true },
     refresh: { stats_interval: 5, services_interval: 30, fleet_interval: 15 },
   };
@@ -248,6 +250,7 @@ function applyCustomTheme(custom) {
 
 async function init() {
   config = await fetchConfig();
+  initAuth(config.auth);
 
   // Apply theme: resolve preset via persisted choice / config / OS preference,
   // then swap the stylesheet if it differs from the default terminal.css that

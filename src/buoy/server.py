@@ -86,6 +86,10 @@ async def api_config(request: Request) -> JSONResponse:
                 "preset": _config.theme.preset,
                 "custom": _config.theme.custom,
             },
+            "auth": {
+                "enabled": _config.auth.enabled,
+                "type": _config.auth.type if _config.auth.enabled else None,
+            },
             "features": {
                 "websocket": _config.features.websocket,
                 "history": _config.features.history,
