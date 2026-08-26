@@ -68,6 +68,66 @@ function withAuthorization(input, options, value) {
   return { ...(options || {}), headers };
 }
 
+function prepareRetry(input, options) {
+  const explicitBody = options?.body;
+  if (typeof ReadableStream !== 'undefined' && explicitBody instanceof ReadableStream) {
+    return null;
+  }
+  if (typeof Request === 'undefined' || !(input instanceof Request)) {
+    return { input, options };
+  }
+  if (explicitBody !== undefined) {
+    try {
+      return { input: new Request(input, options), options: undefined };
+    } catch (_) {
+      return null;
+    }
+  }
+  if (input.body === null) return { input, options };
+  try {
+    return { input: input.clone(), options };
+  } catch (_) {
+    return null;
+  }
+}
+
+function effectiveSignal(input, options) {
+  if (options?.signal !== undefined) return options.signal ?? undefined;
+  return typeof Request !== 'undefined' && input instanceof Request ? input.signal : undefined;
+}
+
+function abortReason(signal) {
+  if (signal.reason !== undefined) return signal.reason;
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('The operation was aborted.', 'AbortError');
+  }
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
+}
+
+function waitForPrompt(pending, signal) {
+  if (!signal) return pending;
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      callback(value);
+    };
+    const onAbort = () => finish(reject, abortReason(signal));
+
+    signal.addEventListener('abort', onAbort, { once: true });
+    pending.then(
+      (value) => finish(resolve, value),
+      (error) => finish(reject, error),
+    );
+  });
+}
+
 function showCredentialDialog(type) {
   if (typeof document === 'undefined') return Promise.resolve(null);
 
@@ -176,6 +236,7 @@ export function createAuthClient({
       return fetchImpl(input, options);
     }
 
+    const retryPlan = prepareRetry(input, options);
     const firstCredentials = credentials;
     const firstOptions = firstCredentials
       ? withAuthorization(input, options, authorizationValue(auth.type, firstCredentials))
@@ -184,12 +245,21 @@ export function createAuthClient({
     if (response.status !== 401) return response;
 
     if (credentials === firstCredentials) credentials = null;
-    const retryCredentials = credentials || await requestCredentials();
+    if (retryPlan === null) return response;
+
+    const retryCredentials = credentials || await waitForPrompt(
+      requestCredentials(),
+      effectiveSignal(input, options),
+    );
     if (!retryCredentials) return response;
 
     const retry = await fetchImpl(
-      input,
-      withAuthorization(input, options, authorizationValue(auth.type, retryCredentials)),
+      retryPlan.input,
+      withAuthorization(
+        retryPlan.input,
+        retryPlan.options,
+        authorizationValue(auth.type, retryCredentials),
+      ),
     );
     if (retry.status === 401 && credentials === retryCredentials) credentials = null;
     return retry;
