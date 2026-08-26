@@ -108,6 +108,30 @@ def check_rate_limit(client_ip: str) -> bool:
     return True
 
 
+def _canonicalize_ip_address(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Collapse IPv4-mapped IPv6 addresses into one canonical IPv4 identity."""
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    return address
+
+
+def _canonicalize_ip_network(
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network,
+) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
+    """Collapse a wholly IPv4-mapped IPv6 network into its IPv4 equivalent."""
+    mapped_space = ipaddress.IPv6Network("::ffff:0:0/96")
+    if isinstance(network, ipaddress.IPv6Network) and network.subnet_of(mapped_space):
+        mapped_address = network.network_address.ipv4_mapped
+        if mapped_address is not None:
+            return ipaddress.IPv4Network(
+                (mapped_address, network.prefixlen - mapped_space.prefixlen),
+                strict=False,
+            )
+    return network
+
+
 def _parse_trusted_networks(
     trusted_proxies: list[str],
 ) -> tuple[bool, list[ipaddress.IPv4Network | ipaddress.IPv6Network]]:
@@ -115,6 +139,7 @@ def _parse_trusted_networks(
 
     - ``"*"`` sets the trust_all flag (every peer is trusted).
     - Each other entry is parsed as an IP network (CIDR or plain IP).
+      IPv4-mapped IPv6 networks are normalized to their IPv4 equivalents.
       Unparseable entries are silently skipped (operator misconfiguration
       should not crash the server).
     """
@@ -125,10 +150,18 @@ def _parse_trusted_networks(
             trust_all = True
             continue
         try:
-            networks.append(ipaddress.ip_network(entry, strict=False))
+            network = ipaddress.ip_network(entry, strict=False)
+            networks.append(_canonicalize_ip_network(network))
         except ValueError:
             pass  # ignore unparseable entries
     return trust_all, networks
+
+
+def _is_valid_forwarded_port(port: str) -> bool:
+    """Validate an ASCII decimal port without unbounded integer conversion."""
+    if not port or len(port) > 5 or not port.isascii() or not port.isdigit():
+        return False
+    return len(port) < 5 or port <= "65535"
 
 
 def _parse_forwarded_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -136,6 +169,7 @@ def _parse_forwarded_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Add
 
     Accepts plain IPv4/IPv6, IPv4 with a numeric port, and bracketed IPv6
     with an optional numeric port. Ports must be in the range 0-65535.
+    IPv4-mapped IPv6 values are returned as their canonical IPv4 address.
     Hostnames, scoped IPv6, malformed brackets/ports, trailing data, and empty
     values are rejected.
     """
@@ -156,7 +190,7 @@ def _parse_forwarded_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Add
             if not suffix.startswith(":"):
                 return None
             port = suffix[1:]
-            if not port or not port.isascii() or not port.isdigit():
+            if not _is_valid_forwarded_port(port):
                 return None
         try:
             address = ipaddress.ip_address(host)
@@ -171,7 +205,7 @@ def _parse_forwarded_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Add
             if raw.count(":") != 1:
                 return None
             host, port = raw.rsplit(":", 1)
-            if not port or not port.isascii() or not port.isdigit():
+            if not _is_valid_forwarded_port(port):
                 return None
             try:
                 address = ipaddress.ip_address(host)
@@ -180,9 +214,7 @@ def _parse_forwarded_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Add
             if address.version != 4:
                 return None
 
-    if port is not None and int(port) > 65535:
-        return None
-    return address
+    return _canonicalize_ip_address(address)
 
 
 def _extract_forwarded_ip(xff_value: str) -> str | None:
@@ -227,7 +259,7 @@ class ProxyHeadersMiddleware:
         if not self._networks:
             return False
         try:
-            addr = ipaddress.ip_address(peer_ip)
+            addr = _canonicalize_ip_address(ipaddress.ip_address(peer_ip))
         except ValueError:
             return False
         return any(addr.version == net.version and addr in net for net in self._networks)
@@ -255,6 +287,19 @@ class ProxyHeadersMiddleware:
 
         client = scope.get("client")
         peer_ip = client[0] if client else None
+
+        # Canonicalize the transport peer even when XFF is absent, malformed,
+        # or ignored so every downstream consumer (including rate limiting)
+        # sees one identity for native and IPv4-mapped forms.
+        if peer_ip:
+            try:
+                canonical_peer = str(_canonicalize_ip_address(ipaddress.ip_address(peer_ip)))
+            except ValueError:
+                canonical_peer = peer_ip
+            if canonical_peer != peer_ip:
+                scope = dict(scope)
+                scope["client"] = (canonical_peer, client[1])
+                peer_ip = canonical_peer
 
         if peer_ip and self._is_trusted(peer_ip):
             headers: list[tuple[bytes, bytes]] = list(scope.get("headers", []))

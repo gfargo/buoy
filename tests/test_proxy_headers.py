@@ -50,6 +50,11 @@ class TestParseTrustedNetworks:
         assert len(nets) == 1
         assert ipaddress.ip_address("::1") in nets[0]
 
+    def test_ipv4_mapped_ipv6_network_is_canonicalized(self):
+        trust_all, nets = _parse_trusted_networks(["::ffff:10.0.0.0/104"])
+        assert trust_all is False
+        assert nets == [ipaddress.ip_network("10.0.0.0/8")]
+
     def test_invalid_entry_skipped(self):
         # Should not raise; bad entry is silently ignored
         trust_all, nets = _parse_trusted_networks(["not-an-ip", "10.0.0.1"])
@@ -72,13 +77,23 @@ class TestParseForwardedIp:
             ("2001:0db8:0:0::1", "2001:db8::1"),
             ("[2001:0db8::1]", "2001:db8::1"),
             ("[2001:0db8::1]:443", "2001:db8::1"),
-            ("[::ffff:192.0.2.1]:65535", str(ipaddress.ip_address("::ffff:192.0.2.1"))),
+            ("[::ffff:192.0.2.1]:65535", "192.0.2.1"),
         ],
     )
     def test_supported_forms_are_canonicalized(self, value, expected):
         address = _parse_forwarded_ip(value)
         assert address is not None
         assert str(address) == expected
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param("192.0.2.1:" + "9" * 10_000, id="oversized-ipv4-port"),
+            pytest.param("[2001:db8::1]:" + "9" * 10_000, id="oversized-ipv6-port"),
+        ],
+    )
+    def test_arbitrarily_long_ascii_numeric_ports_are_rejected(self, value):
+        assert _parse_forwarded_ip(value) is None
 
     @pytest.mark.parametrize(
         "value",
@@ -117,6 +132,9 @@ class TestExtractForwardedIp:
 
     def test_canonicalizes_selected_ip(self):
         assert _extract_forwarded_ip("[2001:0db8::1]:443") == "2001:db8::1"
+
+    def test_canonicalizes_ipv4_mapped_ipv6_to_ipv4(self):
+        assert _extract_forwarded_ip("[::ffff:192.0.2.1]:443") == "192.0.2.1"
 
     @pytest.mark.parametrize("value", ["", "not-an-ip", ", 192.0.2.1"])
     def test_invalid_leftmost_returns_none(self, value):
@@ -293,6 +311,15 @@ class TestProxyHeadersMiddlewareDirect:
         assert received[0]["client"] == ("5.6.7.8", 0)
 
     @pytest.mark.asyncio
+    async def test_ipv4_mapped_immediate_peer_matches_ipv4_cidr(self):
+        scope = await _apply_proxy(
+            ["10.0.0.0/8"],
+            [b"203.0.113.5"],
+            client=("::ffff:10.0.0.2", 1000),
+        )
+        assert scope["client"] == ("203.0.113.5", 0)
+
+    @pytest.mark.asyncio
     async def test_cidr_no_match_untrusted(self):
         received: list[dict] = []
 
@@ -340,12 +367,32 @@ class TestProxyHeadersMiddlewareDirect:
         assert scope["client"] == ("203.0.113.5", 0)
 
     @pytest.mark.asyncio
-    async def test_duplicate_xff_fields_form_one_ordered_chain(self):
+    async def test_ipv4_mapped_internal_hop_matches_ipv4_cidr(self):
         scope = await _apply_proxy(
-            ["10.0.0.0/8", "192.168.0.0/16"],
-            [b"198.51.100.66, 203.0.113.5", b"192.168.1.10, 10.0.0.1"],
+            ["10.0.0.0/8"],
+            [b"203.0.113.5, ::ffff:10.0.0.1"],
         )
         assert scope["client"] == ("203.0.113.5", 0)
+
+    @pytest.mark.asyncio
+    async def test_ipv4_mapped_selected_client_is_canonical_ipv4(self):
+        scope = await _apply_proxy(
+            ["10.0.0.0/8"],
+            [b"::ffff:192.0.2.1, 10.0.0.1"],
+        )
+        assert scope["client"] == ("192.0.2.1", 0)
+
+    @pytest.mark.asyncio
+    async def test_duplicate_xff_fields_preserve_wire_order(self):
+        trusted = ["10.0.0.0/8", "192.168.0.0/16"]
+        first = b"198.51.100.66"
+        second = b"203.0.113.5, 192.168.1.10, 10.0.0.1"
+
+        scope = await _apply_proxy(trusted, [first, second])
+        assert scope["client"] == ("203.0.113.5", 0)
+
+        reversed_scope = await _apply_proxy(trusted, [second, first])
+        assert reversed_scope["client"] == ("198.51.100.66", 0)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -354,6 +401,14 @@ class TestProxyHeadersMiddlewareDirect:
             b"203.0.113.5, garbage, 10.0.0.1",
             b"203.0.113.5, , 10.0.0.1",
             b"203.0.113.5, 192.168.1.10:65536, 10.0.0.1",
+            pytest.param(
+                b"203.0.113.5, 192.168.1.10:" + b"9" * 10_000 + b", 10.0.0.1",
+                id="oversized-ipv4-port",
+            ),
+            pytest.param(
+                b"203.0.113.5, [2001:db8::1]:" + b"9" * 10_000 + b", 10.0.0.1",
+                id="oversized-ipv6-port",
+            ),
         ],
     )
     async def test_malformed_boundary_fails_closed_to_tcp_peer(self, xff):
@@ -404,6 +459,15 @@ class TestProxyHeadersMiddlewareDirect:
     @pytest.mark.asyncio
     async def test_trusted_peer_without_xff_keeps_tcp_peer(self):
         scope = await _apply_proxy(["10.0.0.0/8"], [])
+        assert scope["client"] == ("10.0.0.2", 1000)
+
+    @pytest.mark.asyncio
+    async def test_ipv4_mapped_peer_without_xff_is_canonical_ipv4(self):
+        scope = await _apply_proxy(
+            ["10.0.0.0/8"],
+            [],
+            client=("::ffff:10.0.0.2", 1000),
+        )
         assert scope["client"] == ("10.0.0.2", 1000)
 
     @pytest.mark.asyncio
@@ -490,6 +554,59 @@ class TestRateLimitBucketingWithProxy:
                 headers={"X-Forwarded-For": "198.51.100.251, 203.0.113.6, 10.0.0.1"},
             )
             assert r.status_code == 401
+
+    @pytest.mark.parametrize(
+        ("trusted_proxies", "peer", "mapped_xff", "native_xff"),
+        [
+            (["*"], ("testclient", 50000), "::ffff:192.0.2.1", "192.0.2.1"),
+            (
+                ["10.0.0.0/8"],
+                ("::ffff:10.0.0.2", 50000),
+                "::ffff:192.0.2.1, ::ffff:10.0.0.1",
+                "192.0.2.1, 10.0.0.1",
+            ),
+        ],
+    )
+    def test_ipv4_mapped_and_native_forms_share_rate_limit_key(
+        self,
+        trusted_proxies,
+        peer,
+        mapped_xff,
+        native_xff,
+    ):
+        app = _make_app(trusted_proxies=trusted_proxies)
+        with TestClient(
+            app,
+            raise_server_exceptions=False,
+            client=peer,
+        ) as client:
+            mapped = client.get(
+                "/api/config/debug",
+                headers={"X-Forwarded-For": mapped_xff},
+            )
+            native = client.get(
+                "/api/config/debug",
+                headers={"X-Forwarded-For": native_xff},
+            )
+
+        assert mapped.status_code == 401
+        assert native.status_code == 401
+        assert set(_rate_limit) == {"192.0.2.1"}
+        assert len(_rate_limit["192.0.2.1"]) == 2
+
+    def test_ipv4_mapped_and_native_tcp_peers_share_rate_limit_key_without_xff(self):
+        app = _make_app(trusted_proxies=[])
+        for peer in [("::ffff:10.0.0.2", 50000), ("10.0.0.2", 50000)]:
+            with TestClient(
+                app,
+                raise_server_exceptions=False,
+                client=peer,
+            ) as client:
+                response = client.get("/api/config/debug")
+                assert response.status_code == 401
+
+        assert set(_rate_limit) == {"10.0.0.2"}
+        assert len(_rate_limit["10.0.0.2"]) == 2
 
     def test_untrusted_xff_collapses_into_one_bucket(self):
         """Without trusted proxy, all XFF values are ignored — single bucket."""
