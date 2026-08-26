@@ -72,7 +72,7 @@ class TestParseForwardedIp:
             ("2001:0db8:0:0::1", "2001:db8::1"),
             ("[2001:0db8::1]", "2001:db8::1"),
             ("[2001:0db8::1]:443", "2001:db8::1"),
-            ("[::ffff:192.0.2.1]:65535", "::ffff:c000:201"),
+            ("[::ffff:192.0.2.1]:65535", str(ipaddress.ip_address("::ffff:192.0.2.1"))),
         ],
     )
     def test_supported_forms_are_canonicalized(self, value, expected):
