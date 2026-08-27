@@ -11,7 +11,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 import httpx
@@ -124,13 +124,25 @@ class AlertEngine:
             elif now - self._breach_start[metric] < duration:
                 return  # Still within grace period
 
-        # Fire or update alert
-        if metric not in self._active_alerts:
+        # Fire a new incident or escalate an active warning in place. Critical
+        # remains sticky until recovery, so lower readings do not downgrade it.
+        active_alert = self._active_alerts.get(metric)
+        if active_alert is None:
             await self._fire_alert(metric, level, value, threshold)
+        elif active_alert.level == "warn" and level == "crit":
+            active_alert.level = level
+            active_alert.value = value
+            active_alert.threshold = threshold
+            active_alert.message = self._format_message(metric, level, value, threshold)
+            await self._notify_alert(active_alert)
+
+    @staticmethod
+    def _format_message(metric: str, level: str, value: float, threshold: float) -> str:
+        return f"{metric.upper()} {level}: {value:.0f} (threshold: {threshold})"
 
     async def _fire_alert(self, metric: str, level: str, value: float, threshold: float):
         """Fire a new alert."""
-        message = f"{metric.upper()} {level}: {value:.0f} (threshold: {threshold})"
+        message = self._format_message(metric, level, value, threshold)
         alert = Alert(
             metric=metric,
             level=level,
@@ -140,21 +152,26 @@ class AlertEngine:
         )
         self._active_alerts[metric] = alert
         self._history.append(alert)
+        await self._notify_alert(alert)
 
-        # Broadcast via WebSocket
+    async def _notify_alert(self, alert: Alert):
+        """Broadcast one alert transition and queue an immutable webhook snapshot."""
+        # Snapshot before the first await: a concurrent evaluation can escalate
+        # the shared active incident while a broadcast is in progress.
+        webhook_alert = replace(alert)
+
         if self._broadcast_fn:
             await self._broadcast_fn(
                 {
                     "type": "alert",
-                    "level": level,
-                    "metric": metric,
-                    "message": message,
-                    "value": value,
+                    "level": alert.level,
+                    "metric": alert.metric,
+                    "message": alert.message,
+                    "value": alert.value,
                 }
             )
 
-        # Send webhook (non-blocking)
-        asyncio.create_task(self._send_webhooks(alert))
+        asyncio.create_task(self._send_webhooks(webhook_alert))
 
     async def _resolve_alert(self, metric: str):
         """Resolve an active alert."""
