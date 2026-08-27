@@ -655,44 +655,34 @@ class TestTailnetHostRewrite:
         assert r.status_code == 200
 
     def test_trusted_proxy_xfh_services_tailnet_url(self):
-        """With trusted proxy + tailnet host, /api/services should return
-        HTTPS tailnet URLs for discovered containers."""
-        from unittest.mock import AsyncMock, patch
+        """A trusted forwarded host drives app-local tailnet service URLs."""
+        from unittest.mock import AsyncMock
 
-        app = _make_app(trusted_proxies=["*"])
-        # Override config for the global _config used by the handler
-        from buoy import server as srv
+        from buoy.server import create_app
 
-        original_config = srv._config
-        try:
-            cfg = BuoyConfig()
-            cfg.network = NetworkConfig(
-                tailnet_domain="example.ts.net",
-                trusted_proxies=["*"],
+        cfg = BuoyConfig()
+        cfg.network = NetworkConfig(
+            tailnet_domain="example.ts.net",
+            trusted_proxies=["*"],
+        )
+        cfg.features = FeaturesConfig(demo_mode=True)
+        cfg.node = NodeConfig(name="mynode")
+        app = create_app(cfg)
+
+        containers = [{"name": "grafana", "host_port": 3000}]
+        with TestClient(app, raise_server_exceptions=False) as client:
+            collector = app.state.buoy.collectors["docker"]
+            collector.list_containers = AsyncMock(return_value=containers)
+            r = client.get(
+                "/api/services",
+                headers={"X-Forwarded-Host": "mynode.example.ts.net"},
             )
-            cfg.features = FeaturesConfig(demo_mode=True)
-            cfg.node = NodeConfig(name="mynode")
-            srv._config = cfg
 
-            containers = [{"name": "grafana", "host_port": 3000}]
-            with patch("buoy.collectors.docker.DockerCollector") as mock_cls:
-                instance = mock_cls.return_value
-                instance.list_containers = AsyncMock(return_value=containers)
-                srv._collectors["docker"] = instance
-
-                with TestClient(app, raise_server_exceptions=False) as client:
-                    r = client.get(
-                        "/api/services",
-                        headers={"X-Forwarded-Host": "mynode.example.ts.net"},
-                    )
-                assert r.status_code == 200
-        finally:
-            srv._config = original_config
-            srv._collectors.pop("docker", None)
+        assert r.status_code == 200
 
 
 class TestIsTailscaleCustomDomain:
-    """_is_tailscale() also honors a configured non-.ts.net tailnet_domain."""
+    """_is_tailscale() also honors an explicit config's custom tailnet domain."""
 
     @staticmethod
     def _request_for_host(host: str):
@@ -707,61 +697,35 @@ class TestIsTailscaleCustomDomain:
         }
         return Request(scope)
 
+    @staticmethod
+    def _config(tailnet_domain: str) -> BuoyConfig:
+        cfg = BuoyConfig()
+        cfg.network = NetworkConfig(tailnet_domain=tailnet_domain)
+        return cfg
+
     def test_custom_tailnet_domain_detected(self):
-        from buoy import server as srv
+        from buoy.server import _is_tailscale
 
-        original_config = srv._config
-        try:
-            cfg = BuoyConfig()
-            cfg.network = NetworkConfig(tailnet_domain="corp.example.internal")
-            srv._config = cfg
-
-            request = self._request_for_host("node.corp.example.internal:8090")
-            assert srv._is_tailscale(request) is True
-        finally:
-            srv._config = original_config
+        request = self._request_for_host("node.corp.example.internal:8090")
+        assert _is_tailscale(request, self._config("corp.example.internal")) is True
 
     def test_unrelated_host_with_custom_domain_configured_not_detected(self):
-        from buoy import server as srv
+        from buoy.server import _is_tailscale
 
-        original_config = srv._config
-        try:
-            cfg = BuoyConfig()
-            cfg.network = NetworkConfig(tailnet_domain="corp.example.internal")
-            srv._config = cfg
-
-            request = self._request_for_host("node.example.com:8090")
-            assert srv._is_tailscale(request) is False
-        finally:
-            srv._config = original_config
+        request = self._request_for_host("node.example.com:8090")
+        assert _is_tailscale(request, self._config("corp.example.internal")) is False
 
     def test_no_tailnet_domain_configured_falls_back_to_ts_net_only(self):
-        from buoy import server as srv
+        from buoy.server import _is_tailscale
 
-        original_config = srv._config
-        try:
-            cfg = BuoyConfig()
-            cfg.network = NetworkConfig(tailnet_domain="")
-            srv._config = cfg
-
-            request = self._request_for_host("node.corp.example.internal:8090")
-            assert srv._is_tailscale(request) is False
-        finally:
-            srv._config = original_config
+        request = self._request_for_host("node.corp.example.internal:8090")
+        assert _is_tailscale(request, self._config("")) is False
 
     def test_ts_net_still_detected_when_custom_domain_configured(self):
-        from buoy import server as srv
+        from buoy.server import _is_tailscale
 
-        original_config = srv._config
-        try:
-            cfg = BuoyConfig()
-            cfg.network = NetworkConfig(tailnet_domain="corp.example.internal")
-            srv._config = cfg
-
-            request = self._request_for_host("node.example.ts.net:8090")
-            assert srv._is_tailscale(request) is True
-        finally:
-            srv._config = original_config
+        request = self._request_for_host("node.example.ts.net:8090")
+        assert _is_tailscale(request, self._config("corp.example.internal")) is True
 
 
 # ── Config tests ───────────────────────────────────────────────────────────────

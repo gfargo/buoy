@@ -3,7 +3,6 @@
 import pytest
 from starlette.testclient import TestClient
 
-import buoy.server as srv
 from buoy.auth import RATE_LIMIT_MAX, _rate_limit
 from buoy.config import (
     BuoyConfig,
@@ -30,13 +29,10 @@ def _make_config(base_path="/buoy", auth_enabled=False):
 
 @pytest.fixture(autouse=True)
 def isolate_store(tmp_path, monkeypatch):
-    """Each test gets its own DB in tmp_path and a clean global state."""
+    """Each test gets an isolated working directory and limiter reset."""
     monkeypatch.chdir(tmp_path)
     _rate_limit.clear()
     yield
-    if srv._metric_store:
-        srv._metric_store.close()
-        srv._metric_store = None
     _rate_limit.clear()
 
 

@@ -10,8 +10,9 @@ import html as html_module
 import json
 import logging
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from starlette.applications import Starlette
@@ -26,41 +27,48 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from buoy.subprocess_utils import communicate
 
 if TYPE_CHECKING:
+    from buoy.alerts import AlertEngine
     from buoy.config import BuoyConfig
+    from buoy.plugins.loader import PluginManager
+    from buoy.storage import MetricStore
 
 logger = logging.getLogger("buoy.server")
 
-# ── Globals (set during app creation) ──────────────────────────────────────────
 
-_config: BuoyConfig | None = None
-_collectors: dict = {}
-_ws_clients: set[WebSocket] = set()
-_plugin_manager = None
-_metric_store = None
-_alert_engine = None
-_image_update_cache: dict = {}  # {container_name: {"status": ..., "image": ..., "checked_at": ts}}
-_background_tasks: list[asyncio.Task] = []
+@dataclass
+class BuoyAppState:
+    """Mutable runtime resources owned by one Starlette application."""
+
+    config: BuoyConfig
+    collectors: dict[str, Any] = field(default_factory=dict)
+    ws_clients: set[WebSocket] = field(default_factory=set)
+    plugin_manager: PluginManager | None = None
+    metric_store: MetricStore | None = None
+    alert_engine: AlertEngine | None = None
+    image_update_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    background_tasks: list[asyncio.Task[None]] = field(default_factory=list)
 
 
 # ── API Handlers ───────────────────────────────────────────────────────────────
 
 
-def _is_tailscale(request: Request) -> bool:
+def _is_tailscale(request: Request, config: BuoyConfig) -> bool:
     """Return True when the request's Host header indicates a Tailscale network."""
     host = request.headers.get("host", "").split(":", 1)[0].lower()
     if host == "ts.net" or host.endswith(".ts.net"):
         return True
 
-    tailnet_domain = (_config.network.tailnet_domain if _config else "").strip(".").lower()
+    tailnet_domain = config.network.tailnet_domain.strip(".").lower()
     return bool(tailnet_domain) and (host == tailnet_domain or host.endswith(f".{tailnet_domain}"))
 
 
 async def api_health(request: Request) -> JSONResponse:
     """Health check endpoint."""
+    state: BuoyAppState = request.app.state.buoy
     return JSONResponse(
         {
             "status": "ok",
-            "hostname": _config.node.name,
+            "hostname": state.config.node.name,
             "version": "2.0.0-alpha.1",
         }
     )
@@ -68,42 +76,44 @@ async def api_health(request: Request) -> JSONResponse:
 
 async def api_config(request: Request) -> JSONResponse:
     """Public config subset — no secrets, just display/feature info."""
+    state: BuoyAppState = request.app.state.buoy
     return JSONResponse(
         {
             "node": {
-                "name": _config.node.name,
-                "tier": _config.node.tier,
-                "role": _config.node.role,
+                "name": state.config.node.name,
+                "tier": state.config.node.tier,
+                "role": state.config.node.role,
             },
             "network": {
-                "tailnet_domain": _config.network.tailnet_domain,
-                "base_path": _config.network.base_path,
+                "tailnet_domain": state.config.network.tailnet_domain,
+                "base_path": state.config.network.base_path,
                 "peers": [
-                    {"name": p.name, "url": p.url, "tier": p.tier} for p in _config.network.peers
+                    {"name": p.name, "url": p.url, "tier": p.tier}
+                    for p in state.config.network.peers
                 ],
             },
             "theme": {
-                "preset": _config.theme.preset,
-                "custom": _config.theme.custom,
+                "preset": state.config.theme.preset,
+                "custom": state.config.theme.custom,
             },
             "auth": {
-                "enabled": _config.auth.enabled,
-                "type": _config.auth.type if _config.auth.enabled else None,
+                "enabled": state.config.auth.enabled,
+                "type": state.config.auth.type if state.config.auth.enabled else None,
             },
             "features": {
-                "websocket": _config.features.websocket,
-                "history": _config.features.history,
-                "demo_mode": _config.features.demo_mode,
-                "night_mode": _config.features.night_mode,
-                "keyboard_shortcuts": _config.features.keyboard_shortcuts,
-                "image_updates": _config.features.image_updates,
+                "websocket": state.config.features.websocket,
+                "history": state.config.features.history,
+                "demo_mode": state.config.features.demo_mode,
+                "night_mode": state.config.features.night_mode,
+                "keyboard_shortcuts": state.config.features.keyboard_shortcuts,
+                "image_updates": state.config.features.image_updates,
             },
             "refresh": {
-                "stats_interval": _config.refresh.stats_interval,
-                "services_interval": _config.refresh.services_interval,
-                "fleet_interval": _config.refresh.fleet_interval,
-                "plugins_interval": _config.refresh.plugins_interval,
-                "image_updates_interval": _config.refresh.image_updates_interval,
+                "stats_interval": state.config.refresh.stats_interval,
+                "services_interval": state.config.refresh.services_interval,
+                "fleet_interval": state.config.refresh.fleet_interval,
+                "plugins_interval": state.config.refresh.plugins_interval,
+                "image_updates_interval": state.config.refresh.image_updates_interval,
             },
         }
     )
@@ -132,7 +142,8 @@ async def api_config_debug(request: Request) -> JSONResponse:
     ``PROTECTED_PATHS``, including this one — so no separate check is needed
     here.
     """
-    token = _config.auth.token
+    state: BuoyAppState = request.app.state.buoy
+    token = state.config.auth.token
     if not token:
         # No token configured → refuse; don't expose topology to anonymous callers.
         return JSONResponse(
@@ -156,7 +167,7 @@ async def api_config_debug(request: Request) -> JSONResponse:
             headers={"WWW-Authenticate": 'Bearer realm="buoy"'},
         )
 
-    return JSONResponse(_redact_secrets(dataclasses.asdict(_config)))
+    return JSONResponse(_redact_secrets(dataclasses.asdict(state.config)))
 
 
 async def api_deploy_info(request: Request) -> JSONResponse:
@@ -211,20 +222,21 @@ async def api_deploy_info(request: Request) -> JSONResponse:
 
 async def api_stats(request: Request) -> JSONResponse:
     """System vitals — CPU, RAM, disk, temp, containers, uptime."""
+    state: BuoyAppState = request.app.state.buoy
     from buoy.services import top_services
 
-    system_coll = _collectors.get("system")
-    docker_coll = _collectors.get("docker")
-    disk_coll = _collectors.get("disk")
+    system_coll = state.collectors.get("system")
+    docker_coll = state.collectors.get("docker")
+    disk_coll = state.collectors.get("disk")
 
-    is_tailscale = _is_tailscale(request)
+    is_tailscale = _is_tailscale(request, state.config)
 
     # Gather all stats concurrently
     results = await asyncio.gather(
-        system_coll.collect() if system_coll else _empty_system(),
+        system_coll.collect() if system_coll else _empty_system(state.config),
         docker_coll.collect_summary() if docker_coll else _empty_docker(),
         disk_coll.collect_summary() if disk_coll else _empty_disk(),
-        top_services(_config, is_tailscale, collector=docker_coll),
+        top_services(state.config, is_tailscale, collector=docker_coll),
         return_exceptions=True,
     )
 
@@ -234,13 +246,13 @@ async def api_stats(request: Request) -> JSONResponse:
     services = results[3] if not isinstance(results[3], Exception) else []
 
     # Decorate each container entry with update status from cache (pure dict lookup)
-    if _image_update_cache and "containers_list" in docker_data:
+    if state.image_update_cache and "containers_list" in docker_data:
         for ctr in docker_data["containers_list"]:
-            entry = _image_update_cache.get(ctr["name"])
+            entry = state.image_update_cache.get(ctr["name"])
             if entry:
                 ctr["update_status"] = entry["status"]
 
-    alerts = [a.to_dict() for a in _alert_engine.active_alerts] if _alert_engine else []
+    alerts = [a.to_dict() for a in state.alert_engine.active_alerts] if state.alert_engine else []
     return JSONResponse(
         {**system_data, **docker_data, **disk_data, "top_services": services, "alerts": alerts}
     )
@@ -248,9 +260,10 @@ async def api_stats(request: Request) -> JSONResponse:
 
 async def api_stats_detail(request: Request) -> JSONResponse:
     """Extended metrics — per-core CPU, top processes, mount details."""
+    state: BuoyAppState = request.app.state.buoy
 
-    system_coll = _collectors.get("system")
-    disk_coll = _collectors.get("disk")
+    system_coll = state.collectors.get("system")
+    disk_coll = state.collectors.get("disk")
 
     results = await asyncio.gather(
         system_coll.collect_detail() if system_coll else _empty_detail(),
@@ -272,17 +285,21 @@ async def api_stats_detail(request: Request) -> JSONResponse:
 
 async def api_services(request: Request) -> JSONResponse:
     """Discovered local services + network links."""
+    state: BuoyAppState = request.app.state.buoy
     from buoy.services import discover_services
 
-    is_tailscale = _is_tailscale(request)
-    data = await discover_services(_config, is_tailscale, collector=_collectors.get("docker"))
+    is_tailscale = _is_tailscale(request, state.config)
+    data = await discover_services(
+        state.config, is_tailscale, collector=state.collectors.get("docker")
+    )
     return JSONResponse(data)
 
 
 async def api_fleet(request: Request) -> JSONResponse:
     """Aggregated peer node stats."""
+    state: BuoyAppState = request.app.state.buoy
 
-    network_coll = _collectors.get("network")
+    network_coll = state.collectors.get("network")
     if not network_coll:
         return JSONResponse({"peers": []})
 
@@ -292,11 +309,12 @@ async def api_fleet(request: Request) -> JSONResponse:
 
 async def api_container_history(request: Request) -> JSONResponse:
     """24h up/down history for a single container (if history enabled)."""
+    state: BuoyAppState = request.app.state.buoy
     name = request.path_params["name"]
     if not _validate_container_name(name):
         return JSONResponse({"error": "invalid container name"}, status_code=400)
 
-    if not _config.features.history or not _metric_store:
+    if not state.config.features.history or not state.metric_store:
         return JSONResponse({"error": "history feature not enabled"}, status_code=404)
 
     hours_str = request.query_params.get("hours", "24")
@@ -305,7 +323,9 @@ async def api_container_history(request: Request) -> JSONResponse:
     except (ValueError, TypeError):
         hours = 24
 
-    samples = await asyncio.to_thread(_metric_store.query_container_history, name, hours * 3600)
+    samples = await asyncio.to_thread(
+        state.metric_store.query_container_history, name, hours * 3600
+    )
     return JSONResponse(
         {
             "container": name,
@@ -317,11 +337,12 @@ async def api_container_history(request: Request) -> JSONResponse:
 
 async def api_container_detail(request: Request) -> JSONResponse:
     """Container inspect + resource usage."""
+    state: BuoyAppState = request.app.state.buoy
     name = request.path_params["name"]
     if not _validate_container_name(name):
         return JSONResponse({"error": "invalid container name"}, status_code=400)
 
-    docker_coll = _collectors.get("docker")
+    docker_coll = state.collectors.get("docker")
     if not docker_coll:
         return JSONResponse({"error": "docker not available"}, status_code=503)
 
@@ -330,12 +351,13 @@ async def api_container_detail(request: Request) -> JSONResponse:
 
 
 async def api_container_logs(request: Request) -> JSONResponse:
+    state: BuoyAppState = request.app.state.buoy
     """Last N lines of container stdout/stderr."""
     name = request.path_params["name"]
     if not _validate_container_name(name):
         return JSONResponse({"error": "invalid container name"}, status_code=400)
 
-    docker_coll = _collectors.get("docker")
+    docker_coll = state.collectors.get("docker")
     if not docker_coll:
         return JSONResponse({"error": "docker not available"}, status_code=503)
 
@@ -344,6 +366,7 @@ async def api_container_logs(request: Request) -> JSONResponse:
 
 
 async def api_container_restart(request: Request) -> JSONResponse:
+    state: BuoyAppState = request.app.state.buoy
     """Restart a Docker container.
 
     Requires ``Content-Type: application/json``. This isn't for parsing a
@@ -363,7 +386,7 @@ async def api_container_restart(request: Request) -> JSONResponse:
     if not _validate_container_name(name):
         return JSONResponse({"error": "invalid container name"}, status_code=400)
 
-    docker_coll = _collectors.get("docker")
+    docker_coll = state.collectors.get("docker")
     if not docker_coll:
         return JSONResponse({"error": "docker not available"}, status_code=503)
 
@@ -372,18 +395,20 @@ async def api_container_restart(request: Request) -> JSONResponse:
 
 
 async def api_plugins(request: Request) -> JSONResponse:
+    state: BuoyAppState = request.app.state.buoy
     """All plugin panel data."""
-    if not _plugin_manager:
+    if not state.plugin_manager:
         return JSONResponse({"plugins": []})
-    data = await _plugin_manager.collect_all_now()
+    data = await state.plugin_manager.collect_all_now()
     return JSONResponse({"plugins": list(data.values())})
 
 
 async def api_plugin_js(request: Request) -> Response:
+    state: BuoyAppState = request.app.state.buoy
     """Return custom frontend JS for all plugins that provide it."""
-    if not _plugin_manager:
+    if not state.plugin_manager:
         return Response("", media_type="application/javascript")
-    js_map = _plugin_manager.get_plugin_frontend_js()
+    js_map = state.plugin_manager.get_plugin_frontend_js()
     combined = "\n\n".join(js_map.values())
     return Response(combined, media_type="application/javascript")
 
@@ -402,6 +427,7 @@ def _prometheus_enabled(config: BuoyConfig) -> bool:
 
 
 async def api_metrics(request: Request) -> Response:
+    state: BuoyAppState = request.app.state.buoy
     """Prometheus /metrics endpoint.
 
     Only reachable when the ``prometheus_exporter`` builtin plugin is enabled
@@ -410,18 +436,18 @@ async def api_metrics(request: Request) -> Response:
     defensive guard handles the edge case of a test or direct call with a
     disabled config.
     """
-    if not _prometheus_enabled(_config):
+    if not _prometheus_enabled(state.config):
         return JSONResponse({"error": "not found"}, status_code=404)
 
     from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
 
     # Collect current stats
-    system_coll = _collectors.get("system")
-    docker_coll = _collectors.get("docker")
-    disk_coll = _collectors.get("disk")
+    system_coll = state.collectors.get("system")
+    docker_coll = state.collectors.get("docker")
+    disk_coll = state.collectors.get("disk")
 
     results = await asyncio.gather(
-        system_coll.collect() if system_coll else _empty_system(),
+        system_coll.collect() if system_coll else _empty_system(state.config),
         docker_coll.collect_summary() if docker_coll else _empty_docker(),
         disk_coll.collect_summary() if disk_coll else _empty_disk(),
         return_exceptions=True,
@@ -437,12 +463,13 @@ async def api_metrics(request: Request) -> Response:
 
 
 async def api_fleet_latency_history(request: Request) -> JSONResponse:
+    state: BuoyAppState = request.app.state.buoy
     """Per-peer latency history (if history enabled)."""
-    if not _config.features.history or not _metric_store:
+    if not state.config.features.history or not state.metric_store:
         return JSONResponse({"error": "history feature not enabled"}, status_code=404)
 
     peer = request.path_params["peer"]
-    allowed = {p.name for p in _config.network.peers}
+    allowed = {p.name for p in state.config.network.peers}
     if peer not in allowed:
         return JSONResponse({"error": "unknown peer"}, status_code=404)
 
@@ -451,14 +478,15 @@ async def api_fleet_latency_history(request: Request) -> JSONResponse:
     except (ValueError, TypeError):
         hours = 6
 
-    data = await asyncio.to_thread(_metric_store.query_latency, peer, hours * 3600)
+    data = await asyncio.to_thread(state.metric_store.query_latency, peer, hours * 3600)
     return JSONResponse({"peer": peer, "hours": hours, "data": data})
 
 
 async def api_history(request: Request) -> JSONResponse:
+    state: BuoyAppState = request.app.state.buoy
     """24h time-series for a metric (if history enabled)."""
     metric = request.path_params.get("metric", "cpu")
-    if not _config.features.history or not _metric_store:
+    if not state.config.features.history or not state.metric_store:
         return JSONResponse({"error": "history feature not enabled"}, status_code=404)
 
     # Parse period query param
@@ -472,7 +500,7 @@ async def api_history(request: Request) -> JSONResponse:
             {"error": f"invalid metric, must be one of: {valid_metrics}"}, status_code=400
         )
 
-    data = await asyncio.to_thread(_metric_store.query, metric, period_seconds)
+    data = await asyncio.to_thread(state.metric_store.query, metric, period_seconds)
     return JSONResponse({"metric": metric, "period": period_str, "data": data})
 
 
@@ -481,8 +509,9 @@ async def api_history(request: Request) -> JSONResponse:
 
 async def ws_endpoint(websocket: WebSocket):
     """WebSocket for real-time stats push."""
+    state: BuoyAppState = websocket.app.state.buoy
     await websocket.accept()
-    _ws_clients.add(websocket)
+    state.ws_clients.add(websocket)
     try:
         while True:
             # Keep connection alive, handle client messages
@@ -494,42 +523,41 @@ async def ws_endpoint(websocket: WebSocket):
             except json.JSONDecodeError:
                 pass
     except WebSocketDisconnect:
-        _ws_clients.discard(websocket)
+        pass
     except Exception:
         logger.debug("ws_endpoint: client connection failed", exc_info=True)
-        _ws_clients.discard(websocket)
+    finally:
+        state.ws_clients.discard(websocket)
 
 
-async def broadcast_stats(data: dict):
-    """Push stats update to all connected WebSocket clients."""
-    global _ws_clients
-    if not _ws_clients:
+async def broadcast_stats(state: BuoyAppState, data: dict):
+    """Push stats update to this app's connected WebSocket clients."""
+    if not state.ws_clients:
         return
     message = json.dumps({"type": "stats", "data": data})
     disconnected = set()
-    for ws in list(_ws_clients):
+    for ws in list(state.ws_clients):
         try:
             await ws.send_text(message)
         except Exception:
             logger.debug("broadcast_stats: dropping dead client", exc_info=True)
             disconnected.add(ws)
-    _ws_clients.difference_update(disconnected)
+    state.ws_clients.difference_update(disconnected)
 
 
-async def broadcast_alert(alert_data: dict):
-    """Push alert notification to all connected WebSocket clients."""
-    global _ws_clients
-    if not _ws_clients:
+async def broadcast_alert(state: BuoyAppState, alert_data: dict):
+    """Push an alert notification to this app's connected WebSocket clients."""
+    if not state.ws_clients:
         return
     message = json.dumps(alert_data)
     disconnected = set()
-    for ws in list(_ws_clients):
+    for ws in list(state.ws_clients):
         try:
             await ws.send_text(message)
         except Exception:
             logger.debug("broadcast_alert: dropping dead client", exc_info=True)
             disconnected.add(ws)
-    _ws_clients.difference_update(disconnected)
+    state.ws_clients.difference_update(disconnected)
 
 
 # ── Background Tasks ───────────────────────────────────────────────────────────
@@ -537,19 +565,19 @@ async def broadcast_alert(alert_data: dict):
 PRUNE_EVERY_CYCLES = 100  # ~500s at the default 5s stats_interval
 
 
-async def _stats_loop():
+async def _stats_loop(state: BuoyAppState):
     """Periodically collect, broadcast, store, and evaluate alerts."""
-    _cycle = 0
+    cycle = 0
     while True:
-        await asyncio.sleep(_config.refresh.stats_interval)
-        _cycle += 1
+        await asyncio.sleep(state.config.refresh.stats_interval)
+        cycle += 1
         try:
-            system_coll = _collectors.get("system")
-            docker_coll = _collectors.get("docker")
-            disk_coll = _collectors.get("disk")
+            system_coll = state.collectors.get("system")
+            docker_coll = state.collectors.get("docker")
+            disk_coll = state.collectors.get("disk")
 
             results = await asyncio.gather(
-                system_coll.collect() if system_coll else _empty_system(),
+                system_coll.collect() if system_coll else _empty_system(state.config),
                 docker_coll.collect_summary() if docker_coll else _empty_docker(),
                 disk_coll.collect_summary() if disk_coll else _empty_disk(),
                 return_exceptions=True,
@@ -562,69 +590,71 @@ async def _stats_loop():
             combined = {**system_data, **docker_data, **disk_data}
 
             # Decorate containers with update status from cache (pure dict lookup)
-            if _image_update_cache and "containers_list" in combined:
+            if state.image_update_cache and "containers_list" in combined:
                 for ctr in combined["containers_list"]:
-                    entry = _image_update_cache.get(ctr["name"])
+                    entry = state.image_update_cache.get(ctr["name"])
                     if entry:
                         ctr["update_status"] = entry["status"]
 
             # Broadcast to WebSocket clients (only when websocket feature enabled)
-            if _config.features.websocket:
-                await broadcast_stats(combined)
+            if state.config.features.websocket:
+                await broadcast_stats(state, combined)
 
             # Store in history (if enabled)
-            if _metric_store:
-                await asyncio.to_thread(_metric_store.record, "stats", combined)
+            if state.metric_store:
+                await asyncio.to_thread(state.metric_store.record, "stats", combined)
                 # Sample container states every ~30s (every 6th cycle at 5s interval)
-                if docker_coll and _cycle % 6 == 0:
+                if docker_coll and cycle % 6 == 0:
                     try:
                         states = await docker_coll.list_container_states()
                         if states:
-                            await asyncio.to_thread(_metric_store.record_container_states, states)
+                            await asyncio.to_thread(
+                                state.metric_store.record_container_states, states
+                            )
                     except Exception:
                         logger.debug("stats loop: container state sampling failed", exc_info=True)
                 # Prune on a fixed cycle cadence, never twice-in-a-row or skipped
-                if _cycle % PRUNE_EVERY_CYCLES == 0:
-                    await asyncio.to_thread(_metric_store.prune)
+                if cycle % PRUNE_EVERY_CYCLES == 0:
+                    await asyncio.to_thread(state.metric_store.prune)
 
             # Evaluate alert thresholds
-            if _alert_engine:
-                await _alert_engine.evaluate(combined)
+            if state.alert_engine:
+                await state.alert_engine.evaluate(combined)
         except Exception:
             logger.warning("stats loop iteration failed", exc_info=True)
 
 
-def _record_latency_batch(results: list[dict]):
+def _record_latency_batch(store: MetricStore, results: list[dict]):
     """Sync helper: persist a batch of latency readings in one thread hop and one commit."""
-    _metric_store.record_latency_batch([(r["name"], r["latency_ms"]) for r in results])
+    store.record_latency_batch([(r["name"], r["latency_ms"]) for r in results])
 
 
-async def _latency_loop():
+async def _latency_loop(state: BuoyAppState):
     """Periodically measure and store per-peer latency."""
     while True:
-        await asyncio.sleep(_config.refresh.fleet_interval)
+        await asyncio.sleep(state.config.refresh.fleet_interval)
         try:
-            network_coll = _collectors.get("network")
-            if network_coll and _metric_store:
+            network_coll = state.collectors.get("network")
+            store = state.metric_store
+            if network_coll and store:
                 results = await network_coll.measure_latency()
                 if results:
-                    await asyncio.to_thread(_record_latency_batch, results)
+                    await asyncio.to_thread(_record_latency_batch, store, results)
         except Exception:
             logger.warning("latency loop iteration failed", exc_info=True)
 
 
-async def _image_update_loop(checker):
+async def _image_update_loop(state: BuoyAppState, checker: Any):
     """Periodically check running container images against their registries."""
-    global _image_update_cache
     # Run initial check immediately on startup
     try:
-        _image_update_cache = await checker.check_all()
+        state.image_update_cache = await checker.check_all()
     except Exception:
         logger.warning("image update check failed", exc_info=True)
     while True:
-        await asyncio.sleep(_config.refresh.image_updates_interval)
+        await asyncio.sleep(state.config.refresh.image_updates_interval)
         try:
-            _image_update_cache = await checker.check_all()
+            state.image_update_cache = await checker.check_all()
         except Exception:
             logger.warning("image update check failed", exc_info=True)
 
@@ -632,114 +662,120 @@ async def _image_update_loop(checker):
 # ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 
-async def on_startup():
-    """Initialize collectors, plugins, storage, alerts, and start background loops."""
-    global _plugin_manager, _metric_store, _alert_engine
+async def on_startup(state: BuoyAppState):
+    """Initialize this app's collectors, plugins, storage, alerts, and loops."""
+    if state.plugin_manager is not None or state.metric_store is not None:
+        raise RuntimeError("cannot start app while previous shutdown cleanup is incomplete")
 
-    if _config.features.demo_mode:
+    if state.config.features.demo_mode:
         from buoy.demo import DemoDiskCollector, DemoDockerCollector, DemoSystemCollector
 
-        _collectors["system"] = DemoSystemCollector(_config)
-        _collectors["docker"] = DemoDockerCollector(_config)
-        _collectors["disk"] = DemoDiskCollector(_config)
+        state.collectors["system"] = DemoSystemCollector(state.config)
+        state.collectors["docker"] = DemoDockerCollector(state.config)
+        state.collectors["disk"] = DemoDiskCollector(state.config)
     else:
         from buoy.collectors.disk import DiskCollector
         from buoy.collectors.docker import DockerCollector
         from buoy.collectors.network import NetworkCollector
         from buoy.collectors.system import SystemCollector
 
-        _collectors["system"] = SystemCollector(_config)
-        _collectors["docker"] = DockerCollector(_config)
-        _collectors["disk"] = DiskCollector(_config)
-        _collectors["network"] = NetworkCollector(_config)
+        state.collectors["system"] = SystemCollector(state.config)
+        state.collectors["docker"] = DockerCollector(state.config)
+        state.collectors["disk"] = DiskCollector(state.config)
+        state.collectors["network"] = NetworkCollector(state.config)
 
     # Initialize metric history store (if enabled)
-    if _config.features.history:
+    if state.config.features.history:
         from buoy.storage import MetricStore
 
-        _metric_store = MetricStore(_config)
-        _metric_store.open()
+        state.metric_store = MetricStore(state.config)
+        state.metric_store.open()
         logger.info("History storage enabled (SQLite ring buffer)")
 
-    # Initialize alert engine
+    # Initialize alert engine with a callback bound to this app's state.
     from buoy.alerts import AlertEngine
 
-    _alert_engine = AlertEngine(_config, broadcast_fn=broadcast_alert)
+    async def broadcast_app_alert(alert_data: dict) -> None:
+        await broadcast_alert(state, alert_data)
+
+    state.alert_engine = AlertEngine(state.config, broadcast_fn=broadcast_app_alert)
 
     # Start stats collection loop (needed for history persistence, alerts, and websocket broadcast)
-    if _config.features.websocket or _config.features.history:
-        _background_tasks.append(asyncio.create_task(_stats_loop()))
+    if state.config.features.websocket or state.config.features.history:
+        state.background_tasks.append(asyncio.create_task(_stats_loop(state)))
         logger.info(
             "Stats collection loop enabled (history=%s websocket=%s)",
-            _config.features.history,
-            _config.features.websocket,
+            state.config.features.history,
+            state.config.features.websocket,
         )
 
     # Start latency collection loop (only when network collector and history are both present)
-    if _collectors.get("network") and _metric_store:
-        _background_tasks.append(asyncio.create_task(_latency_loop()))
+    if state.collectors.get("network") and state.metric_store:
+        state.background_tasks.append(asyncio.create_task(_latency_loop(state)))
 
     # Start image update checker (if enabled)
-    if _config.features.image_updates:
-        if _config.features.demo_mode:
+    if state.config.features.image_updates:
+        if state.config.features.demo_mode:
             from buoy.demo import DemoImageUpdateChecker
 
-            _image_checker = DemoImageUpdateChecker(_config)
+            image_checker = DemoImageUpdateChecker(state.config)
         else:
             from buoy.collectors.image_updates import ImageUpdateChecker
 
-            _image_checker = ImageUpdateChecker(_config)
-        _background_tasks.append(asyncio.create_task(_image_update_loop(_image_checker)))
+            image_checker = ImageUpdateChecker(state.config)
+        state.background_tasks.append(asyncio.create_task(_image_update_loop(state, image_checker)))
         logger.info(
             "Image update checker enabled (interval: %ss)",
-            _config.refresh.image_updates_interval,
+            state.config.refresh.image_updates_interval,
         )
 
-    # Initialize plugin manager
+    # PluginManager owns its own plugin collection tasks; keep them separate
+    # from the server loops tracked above.
     from buoy.plugins.loader import PluginManager
 
-    _plugin_manager = PluginManager(_config)
-    await _plugin_manager.start()
+    state.plugin_manager = PluginManager(state.config)
+    await state.plugin_manager.start()
 
 
-async def on_shutdown():
-    """Cancel background loops, tear down plugins, and close storage."""
-    global _plugin_manager, _metric_store, _alert_engine
+async def on_shutdown(state: BuoyAppState):
+    """Stop and reset only this app's runtime resources.
 
-    for task in _background_tasks:
-        task.cancel()
-    if _background_tasks:
-        await asyncio.gather(*_background_tasks, return_exceptions=True)
-    _background_tasks.clear()
-
+    Owners are cleared only after their cleanup succeeds. If plugin or storage
+    cleanup fails, retain that owner so teardown can be retried and startup can
+    refuse to overwrite a potentially live resource.
+    """
     try:
-        if _plugin_manager:
-            await _plugin_manager.stop()
+        try:
+            for task in state.background_tasks:
+                task.cancel()
+            if state.background_tasks:
+                await asyncio.gather(*state.background_tasks, return_exceptions=True)
+        finally:
+            try:
+                if state.plugin_manager:
+                    await state.plugin_manager.stop()
+                    state.plugin_manager = None
+            finally:
+                if state.metric_store:
+                    state.metric_store.close()
+                    state.metric_store = None
     finally:
-        if _metric_store:
-            _metric_store.close()
-
-        _plugin_manager = None
-        _metric_store = None
-        _alert_engine = None
-        _collectors.clear()
-        _ws_clients.clear()
-        _image_update_cache.clear()
+        state.alert_engine = None
+        state.collectors.clear()
+        state.ws_clients.clear()
+        state.image_update_cache.clear()
+        state.background_tasks.clear()
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: Starlette):
-    """Starlette lifespan: run startup, then guarantee shutdown teardown.
-
-    ``on_startup`` runs inside the ``try`` so a partial failure (e.g. the
-    metric store opens but a later step raises) still triggers
-    ``on_shutdown`` to release whatever was already acquired.
-    """
+    """Run startup and guaranteed teardown for the given application only."""
+    state: BuoyAppState = app.state.buoy
     try:
-        await on_startup()
+        await on_startup(state)
         yield
     finally:
-        await on_shutdown()
+        await on_shutdown(state)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -792,9 +828,9 @@ def _validate_container_name(name: str) -> bool:
     return bool(_CONTAINER_NAME_RE.match(name)) and len(name) <= 128
 
 
-async def _empty_system():
+async def _empty_system(config: BuoyConfig):
     return {
-        "hostname": _config.node.name,
+        "hostname": config.node.name,
         "cpu": 0,
         "mem_used": 0,
         "mem_total": 0,
@@ -826,13 +862,14 @@ async def _empty_disk_detail():
 
 async def index(request: Request) -> Response:
     """Serve the dashboard HTML, rewriting asset URLs for the configured base path."""
+    state: BuoyAppState = request.app.state.buoy
     static_dir = _resolve_static_dir()
     index_path = static_dir / "index.html"
     if not index_path.exists():
         return Response("index.html not found", status_code=500)
 
     html = index_path.read_text()
-    base = _config.network.base_path if _config else ""
+    base = state.config.network.base_path
     if base:
         html = html.replace('="/static/', f'="{html_module.escape(base, quote=True)}/static/')
     html = html.replace(
@@ -897,10 +934,31 @@ def _build_csp_policy(peer_urls: list[str]) -> str:
     )
 
 
+def _validate_auth_config(config: BuoyConfig) -> None:
+    """Fail fast when enabled authentication is incomplete or invalid."""
+    if not config.auth.enabled:
+        return
+
+    auth = config.auth
+    if auth.type == "token":
+        if not auth.token:
+            raise RuntimeError(
+                "auth.enabled is true but auth.token is not set "
+                "(set BUOY_AUTH_TOKEN or auth.token in buoy.yaml). Refusing to start."
+            )
+    elif auth.type == "basic":
+        if not auth.username or not auth.password:
+            raise RuntimeError(
+                "auth.enabled is true but auth.username/auth.password are not "
+                "both set. Refusing to start."
+            )
+    else:
+        raise RuntimeError(f"auth.enabled is true but auth.type is invalid: {auth.type!r}")
+
+
 def create_app(config: BuoyConfig) -> Starlette:
     """Create the Starlette application."""
-    global _config
-    _config = config
+    _validate_auth_config(config)
 
     from buoy.logging_setup import setup_logging
 
@@ -997,26 +1055,9 @@ def create_app(config: BuoyConfig) -> Starlette:
 
     middleware.append(Middleware(RateLimitMiddleware, base_path=base_path))
 
-    # Add auth middleware if enabled. Fail fast rather than silently serving
-    # a "protected" dashboard that isn't (SEC-1): a misconfigured install
-    # must refuse to start, not fall back to pass-through auth.
+    # Add auth middleware if enabled. Validation ran before runtime state was
+    # constructed, so a failed factory call cannot affect another application.
     if config.auth.enabled:
-        auth = config.auth
-        if auth.type == "token":
-            if not auth.token:
-                raise RuntimeError(
-                    "auth.enabled is true but auth.token is not set "
-                    "(set BUOY_AUTH_TOKEN or auth.token in buoy.yaml). Refusing to start."
-                )
-        elif auth.type == "basic":
-            if not auth.username or not auth.password:
-                raise RuntimeError(
-                    "auth.enabled is true but auth.username/auth.password are not "
-                    "both set. Refusing to start."
-                )
-        else:
-            raise RuntimeError(f"auth.enabled is true but auth.type is invalid: {auth.type!r}")
-
         from buoy.auth import AuthMiddleware
 
         middleware.append(Middleware(AuthMiddleware, auth_config=config.auth, base_path=base_path))
@@ -1027,6 +1068,7 @@ def create_app(config: BuoyConfig) -> Starlette:
         lifespan=lifespan,
     )
 
+    app.state.buoy = BuoyAppState(config=config)
     return app
 
 

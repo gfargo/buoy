@@ -1,9 +1,7 @@
 """Tests for alerts field in /api/stats endpoint."""
 
-import pytest
 from starlette.testclient import TestClient
 
-import buoy.server as srv
 from buoy.alerts import AlertEngine
 from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig, PluginsConfig
 from buoy.server import create_app
@@ -16,16 +14,6 @@ def _make_config():
     config.features = FeaturesConfig(websocket=False, demo_mode=True)
     config.plugins = PluginsConfig()
     return config
-
-
-@pytest.fixture(autouse=True)
-def isolate_state(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    yield
-    if srv._metric_store:
-        srv._metric_store.close()
-        srv._metric_store = None
-    srv._alert_engine = None
 
 
 class TestStatsAlertsField:
@@ -48,7 +36,7 @@ class TestStatsAlertsField:
         with TestClient(app) as client:
             # Replace engine with a no-broadcast one AFTER startup runs
             engine = AlertEngine(config)
-            srv._alert_engine = engine
+            app.state.buoy.alert_engine = engine
             # disk has duration=0, fires immediately on first breach
             asyncio.run(
                 engine.evaluate(
@@ -70,7 +58,7 @@ class TestStatsAlertsField:
         app = create_app(config)
         with TestClient(app) as client:
             engine = AlertEngine(config)
-            srv._alert_engine = engine
+            app.state.buoy.alert_engine = engine
             asyncio.run(
                 engine.evaluate(
                     {"cpu": 10, "mem_used": 0, "mem_total": 1, "temp": 40, "disk_pct": 95}
@@ -88,10 +76,10 @@ class TestStatsAlertsField:
         assert r.json()["alerts"] == []
 
     def test_alerts_field_present_without_engine(self):
-        """Guard: when _alert_engine is None, alerts is [] not an error."""
+        """Guard: when the app alert engine is absent, alerts is [] not an error."""
         app = create_app(_make_config())
         with TestClient(app) as client:
-            srv._alert_engine = None
+            app.state.buoy.alert_engine = None
             r = client.get("/api/stats")
         assert r.status_code == 200
         assert r.json()["alerts"] == []
