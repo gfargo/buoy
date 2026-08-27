@@ -13,20 +13,11 @@ from __future__ import annotations
 import pytest
 from starlette.testclient import TestClient
 
-import buoy.server as server_module
 from buoy.auth import PROTECTED_PATHS, RATE_LIMIT_MAX, _rate_limit
 from buoy.config import BuoyConfig, PluginEntry, PluginsConfig
 from buoy.server import _prometheus_enabled, create_app
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _restore_server_config():
-    """Patch tests set server_module._config directly; restore afterward."""
-    original = server_module._config
-    yield
-    server_module._config = original
 
 
 @pytest.fixture(autouse=True)
@@ -58,11 +49,7 @@ def _config_plugin_disabled() -> BuoyConfig:
 
 
 def _make_client(config: BuoyConfig) -> TestClient:
-    # api_metrics reads server_module._config at call time (defensive guard),
-    # so it must be set before create_app() registers the route too.
-    server_module._config = config
-    app = create_app(config)
-    return TestClient(app, raise_server_exceptions=False)
+    return TestClient(create_app(config), raise_server_exceptions=False)
 
 
 # ── Unit tests for _prometheus_enabled ────────────────────────────────────────

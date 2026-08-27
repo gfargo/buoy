@@ -3,7 +3,6 @@
 import pytest
 from starlette.testclient import TestClient
 
-import buoy.server as srv
 from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig, PeerConfig
 from buoy.server import create_app
 
@@ -18,13 +17,8 @@ def _make_config(history=True, peers=None):
 
 @pytest.fixture(autouse=True)
 def isolate_store(tmp_path, monkeypatch):
-    """Each test gets its own DB in tmp_path and a clean global state."""
+    """Each test gets its own database path."""
     monkeypatch.chdir(tmp_path)
-    yield
-    # Reset module-level store so tests don't leak data
-    if srv._metric_store:
-        srv._metric_store.close()
-        srv._metric_store = None
 
 
 class TestFleetLatencyHistoryEndpoint:
@@ -56,8 +50,8 @@ class TestFleetLatencyHistoryEndpoint:
         app = create_app(_make_config())
         with TestClient(app, raise_server_exceptions=False) as client:
             # Seed data after startup (store is initialised by on_startup)
-            srv._metric_store.record_latency("harbor", 12.5)
-            srv._metric_store.record_latency("harbor", 15.0)
+            app.state.buoy.metric_store.record_latency("harbor", 12.5)
+            app.state.buoy.metric_store.record_latency("harbor", 15.0)
             r = client.get("/api/fleet/harbor/latency-history?hours=6")
         assert r.status_code == 200
         body = r.json()
