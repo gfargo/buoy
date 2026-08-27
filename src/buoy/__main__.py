@@ -4,6 +4,8 @@ import argparse
 import os
 import sys
 
+from buoy._version import VERSION
+
 
 def _add_serve_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -100,6 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="buoy",
         description="A lightweight, per-node system dashboard for homelabs.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     # Serve remains the default when no subcommand is given, so all its flags
     # live on the top-level parser too (kept in sync with the `serve` subparser).
     _add_serve_arguments(parser)

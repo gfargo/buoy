@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy source + metadata together (hatchling reads src/buoy/__init__.py for version)
+# Copy source + package metadata together; [project].version is canonical.
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 # static/ must be present before `pip install` so hatchling's force-include

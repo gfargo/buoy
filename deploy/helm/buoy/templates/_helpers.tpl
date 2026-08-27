@@ -10,10 +10,19 @@
 {{- end -}}
 {{- end -}}
 
+{{- define "buoy.imageTag" -}}
+{{- .Values.image.tag | default .Chart.AppVersion -}}
+{{- end -}}
+
+{{- define "buoy.versionLabel" -}}
+{{- $tag := include "buoy.imageTag" . -}}
+{{- regexReplaceAll "[^A-Za-z0-9._-]" $tag "-" | trunc 63 | trimAll "._-" | default "unknown" -}}
+{{- end -}}
+
 {{- define "buoy.labels" -}}
 app.kubernetes.io/name: {{ include "buoy.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/version: {{ include "buoy.versionLabel" . | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
