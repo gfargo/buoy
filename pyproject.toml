@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "buoy"
-version = "2.2.0"
+version = "2.2.1"
 description = "A lightweight, per-node system dashboard for homelabs"
 readme = "README.md"
 license = "MIT"

@@ -51,6 +51,29 @@ All notable changes to Buoy are documented here.
 - Frontend: correct `formatUptime` boundary and extract shared util (#218)
 - Alerts: webhook dispatch reads URL from `config.alerts` not `plugins.builtin` (#217)
 
+## [2.2.1](https://github.com/gfargo/buoy/compare/buoy-v2.2.0...buoy-v2.2.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **alerts:** escalate warnings to critical ([#288](https://github.com/gfargo/buoy/issues/288)) ([b39c7a0](https://github.com/gfargo/buoy/commit/b39c7a085eb6abc2ed2f3ea258ca84bd81498e5d))
+* **auth:** bound rate-limit client state ([#283](https://github.com/gfargo/buoy/issues/283)) ([132b431](https://github.com/gfargo/buoy/commit/132b43132e5768e5f30f8c1e07210aba0a123c9d))
+* **auth:** harden trusted proxy client resolution ([#286](https://github.com/gfargo/buoy/issues/286)) ([6703520](https://github.com/gfargo/buoy/commit/67035203a4d662a60180425071db1a7cc06613ab))
+* **auth:** support authenticated frontend actions ([#285](https://github.com/gfargo/buoy/issues/285)) ([bf499b2](https://github.com/gfargo/buoy/commit/bf499b27147ed86a626d50c7c07a7a92ce1991d1))
+* **ci:** ignore pre-release compare links ([#292](https://github.com/gfargo/buoy/issues/292)) ([c0b8197](https://github.com/gfargo/buoy/commit/c0b81975315cc2a44a362c30b72a41c436338e60))
+* **ci:** match release-please's actual tag format in Release workflow ([#278](https://github.com/gfargo/buoy/issues/278)) ([aed84ea](https://github.com/gfargo/buoy/commit/aed84ea59eaa327b18b7388c5f15b525e1327d01))
+* **config:** stop _parse_plugins from mutating the caller's raw dict ([#276](https://github.com/gfargo/buoy/issues/276)) ([c73815a](https://github.com/gfargo/buoy/commit/c73815a286983dc58e8c7c713691a9db07dd63d5))
+* **network:** add verify_ssl to fleet peer polling, replacing hardcoded verify=False ([#280](https://github.com/gfargo/buoy/issues/280)) ([3e64061](https://github.com/gfargo/buoy/commit/3e64061dc313acf5af50170474380b91f68ed450))
+* **plugins:** harden lifecycle and user configuration ([#284](https://github.com/gfargo/buoy/issues/284)) ([5ace982](https://github.com/gfargo/buoy/commit/5ace98228e7f9fb420e0c2efa2884a6335264f80))
+* **plugins:** stub every plugin in demo mode instead of calling collect() ([#273](https://github.com/gfargo/buoy/issues/273)) ([78b33f4](https://github.com/gfargo/buoy/commit/78b33f4b7e17452608d3dc69aea59c439cc7f47c)), closes [#97](https://github.com/gfargo/buoy/issues/97)
+* **server:** decouple history collection from websocket transport ([#275](https://github.com/gfargo/buoy/issues/275)) ([f24bfe1](https://github.com/gfargo/buoy/commit/f24bfe100bca8a61d1abb8d68f75b996837b677b))
+* **server:** isolate application runtime state ([#287](https://github.com/gfargo/buoy/issues/287)) ([b398216](https://github.com/gfargo/buoy/commit/b398216e494b3986319300291534451761ab2256))
+* **storage:** serialize close with database operations ([#282](https://github.com/gfargo/buoy/issues/282)) ([0874ba1](https://github.com/gfargo/buoy/commit/0874ba14c762d99d2dcec703b10f527809a4438c))
+* **subprocess:** bound timeout cleanup ([#281](https://github.com/gfargo/buoy/issues/281)) ([bb58ffb](https://github.com/gfargo/buoy/commit/bb58ffbdec08c43fedfb98e65ce64a17cb1ed392))
+* support reverse-proxy sub-path hosting (BUG-45) ([#274](https://github.com/gfargo/buoy/issues/274)) ([55411a8](https://github.com/gfargo/buoy/commit/55411a81220264a9e5fe06d9e2355349a5d32e93))
+* **version:** unify application version reporting ([#289](https://github.com/gfargo/buoy/issues/289)) ([b2cec09](https://github.com/gfargo/buoy/commit/b2cec094eea86fb57754317eab8bce5fe58c4bd9))
+* **ws:** iterate a snapshot when broadcasting to avoid RuntimeError ([#272](https://github.com/gfargo/buoy/issues/272)) ([ebde0a2](https://github.com/gfargo/buoy/commit/ebde0a2b39fbb5563526c27b7a31e08d80bffde3))
+
 ## [2.2.0](https://github.com/gfargo/buoy/compare/buoy-v2.1.0...buoy-v2.2.0) (2026-08-23)
 
 
