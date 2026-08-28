@@ -7,7 +7,7 @@
       "extra-files": [
         {
           "type": "generic",
-          "path": "src/buoy/__init__.py"
+          "path": "deploy/helm/buoy/Chart.yaml"
         }
       ]
     }

@@ -24,6 +24,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from buoy._version import VERSION
 from buoy.subprocess_utils import communicate
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ async def api_health(request: Request) -> JSONResponse:
         {
             "status": "ok",
             "hostname": state.config.node.name,
-            "version": "2.0.0-alpha.1",
+            "version": VERSION,
         }
     )
 
@@ -172,9 +173,7 @@ async def api_config_debug(request: Request) -> JSONResponse:
 
 async def api_deploy_info(request: Request) -> JSONResponse:
     """Deployment metadata — version, build time, git SHA."""
-    import buoy
-
-    info: dict = {"version": buoy.__version__}
+    info: dict = {"version": VERSION}
 
     # Container creation time (image build date)
     try:

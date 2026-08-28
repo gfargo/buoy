@@ -130,7 +130,8 @@ See [Plugin Development](https://github.com/gfargo/buoy/wiki/Plugins) for the fu
 Releases are automated via [release-please](https://github.com/googleapis/release-please):
 
 1. Every merge to `main` updates (or opens) a standing "chore(main): release X.Y.Z" PR with the
-   version bump (`pyproject.toml` + `src/buoy/__init__.py`) and a generated `CHANGELOG.md` entry.
+   canonical version bump in `pyproject.toml`, matching Helm `version`/`appVersion` values, and a
+   generated `CHANGELOG.md` entry.
 2. Merging that PR tags the release and publishes the GitHub Release.
 3. The tag push triggers `.github/workflows/release.yml`, which builds and pushes the multi-arch
    image to `ghcr.io/gfargo/buoy` (`latest`, `X.Y.Z`, `X.Y`, and short-SHA tags).

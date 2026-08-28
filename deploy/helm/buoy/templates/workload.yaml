@@ -21,7 +21,7 @@ spec:
       {{- end }}
       containers:
         - name: buoy
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ include "buoy.imageTag" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["--config", "/config/buoy.yaml"]
           {{- if or .Values.privileged (eq .Values.workloadKind "daemonset") }}
