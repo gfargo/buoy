@@ -7,6 +7,11 @@ import { escapeHtml, safeUrl } from './escape.js';
 import { formatUptime } from './format.js';
 import { apiUrl } from './paths.js';
 
+export function latencyClass(ms) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return null;
+  return ms < 50 ? 'lat-good' : ms < 200 ? 'lat-warn' : 'lat-bad';
+}
+
 export async function refreshFleet(config) {
   const peers = config.network?.peers || [];
   const currentHostname = document.getElementById('hostname')?.textContent;
@@ -27,11 +32,13 @@ export async function refreshFleet(config) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 4000);
       try {
+        const t0 = performance.now();
         const r = await fetch(node.url + '/api/stats', { signal: controller.signal });
+        const latency_ms = Math.round(performance.now() - t0);
         clearTimeout(timeout);
         if (!r.ok) return { ...node, online: false };
         const data = await r.json();
-        return { ...node, online: true, data };
+        return { ...node, online: true, data, latency_ms };
       } catch {
         clearTimeout(timeout);
         return { ...node, online: false };
@@ -60,6 +67,9 @@ export async function refreshFleet(config) {
         ).join('')}</div>`
       : '';
     const peerKey = encodeURIComponent(n.name);
+    const latCls = latencyClass(n.latency_ms);
+    const latHtml = latCls
+      ? `<span class="fn-latency ${latCls}">${n.latency_ms}ms</span>` : '';
     // Derive alert severity from structured fields only (never inject peer message strings)
     const alerts = d.alerts || [];
     const worst = alerts.some(a => a.level === 'crit') ? 'crit' : alerts.length ? 'warn' : '';
@@ -75,7 +85,7 @@ export async function refreshFleet(config) {
         <span>&#127777; <span class="fn-val">${d.temp || 0}&deg;</span></span>
         <span>&#11043; <span class="fn-val">${d.containers || 0}</span></span>
         <span>&uarr; <span class="fn-val">${formatUptime(d.uptime_h || 0, d.uptime_m || 0)}</span></span>
-        <span id="fn-latency-${peerKey}" class="fn-latency-wrap"></span>
+        <span id="fn-latency-${peerKey}" class="fn-latency-wrap" title="round-trip from this browser">${latHtml}</span>
       </div>
       <div id="fn-latency-spark-${peerKey}" class="sparkline fn-latency-spark"></div>
       ${pillRow}
@@ -83,6 +93,7 @@ export async function refreshFleet(config) {
   }).join('');
 
   // Fetch latency history for each online node (best-effort, non-blocking)
+  if (!config.features?.history) return;
   for (const n of nodes) {
     if (!n.online || !n.name) continue;
     const peerKey = encodeURIComponent(n.name);
@@ -96,13 +107,6 @@ async function fetchLatencyHistory(peerName, peerKey) {
     if (!r.ok) return;
     const { data } = await r.json();
     if (!data || data.length < 2) return;
-
-    // Update current latency label (last value)
-    const latEl = document.getElementById(`fn-latency-${peerKey}`);
-    if (latEl) {
-      const lastMs = data[data.length - 1][1];
-      latEl.textContent = `${lastMs}ms`;
-    }
 
     // Render sparkline using the exported helper
     const values = data.map(([, ms]) => ms);
