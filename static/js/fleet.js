@@ -34,11 +34,11 @@ export async function refreshFleet(config) {
       try {
         const t0 = performance.now();
         const r = await fetch(node.url + '/api/stats', { signal: controller.signal });
-        const latency_ms = Math.round(performance.now() - t0);
+        const latencyMs = Math.round(performance.now() - t0);
         clearTimeout(timeout);
         if (!r.ok) return { ...node, online: false };
         const data = await r.json();
-        return { ...node, online: true, data, latency_ms };
+        return { ...node, online: true, data, latencyMs };
       } catch {
         clearTimeout(timeout);
         return { ...node, online: false };
@@ -67,9 +67,9 @@ export async function refreshFleet(config) {
         ).join('')}</div>`
       : '';
     const peerKey = encodeURIComponent(n.name);
-    const latCls = latencyClass(n.latency_ms);
-    const latHtml = latCls
-      ? `<span class="fn-latency ${latCls}">${n.latency_ms}ms</span>` : '';
+    const latencyClassName = latencyClass(n.latencyMs);
+    const latHtml = latencyClassName
+      ? `<span class="fn-latency ${latencyClassName}">${n.latencyMs}ms</span>` : '';
     // Derive alert severity from structured fields only (never inject peer message strings)
     const alerts = d.alerts || [];
     const worst = alerts.some(a => a.level === 'crit') ? 'crit' : alerts.length ? 'warn' : '';
