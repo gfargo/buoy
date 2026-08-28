@@ -89,9 +89,15 @@ ruff format --check src/ tests/
 2. Subclass `Plugin` from `buoy.plugins.protocol`
 3. Implement `collect()` method
 4. Add config schema to `buoy.yaml.example`
-5. Optionally provide custom frontend JS via `frontend_js()`
+5. Implement `render()` to describe your panel using the declarative blocks in
+   `buoy.plugins.panel` (`text`, `table`, `keyvalue`, `badges`, `bar`,
+   `sparkline`, `list_`) — trusted frontend code (`static/js/panel.js`) turns
+   these into HTML and escapes every value for you. `frontend_js()` (raw JS
+   executed via `new Function()`) still works but is a deprecated escape
+   hatch — it can't be used under a strict CSP and every value must be
+   escaped by hand.
 
-See [docs/plugins.md](docs/plugins.md) for the full guide.
+See [Plugin Development](https://github.com/gfargo/buoy/wiki/Plugins) for the full guide.
 
 ## Code Style
 
@@ -124,7 +130,8 @@ See [docs/plugins.md](docs/plugins.md) for the full guide.
 Releases are automated via [release-please](https://github.com/googleapis/release-please):
 
 1. Every merge to `main` updates (or opens) a standing "chore(main): release X.Y.Z" PR with the
-   version bump (`pyproject.toml` + `src/buoy/__init__.py`) and a generated `CHANGELOG.md` entry.
+   canonical version bump in `pyproject.toml`, matching Helm `version`/`appVersion` values, and a
+   generated `CHANGELOG.md` entry.
 2. Merging that PR tags the release and publishes the GitHub Release.
 3. The tag push triggers `.github/workflows/release.yml`, which builds and pushes the multi-arch
    image to `ghcr.io/gfargo/buoy` (`latest`, `X.Y.Z`, `X.Y`, and short-SHA tags).

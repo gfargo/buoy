@@ -6,7 +6,9 @@ import asyncio
 import re
 from pathlib import Path
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
 
 
 class SnapraidPlugin(Plugin):
@@ -70,32 +72,40 @@ class SnapraidPlugin(Plugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            stdout, _ = await communicate(proc, timeout=5)
             return stdout.decode(errors="replace") if stdout else None
         except (TimeoutError, FileNotFoundError):
             return None
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_snapraid(data) {
-  const d = data.detail || {};
-  const status = data.status;
-  const color = status === 'ok' ? 'var(--green)' : status === 'warn' ? 'var(--amber)' : status === 'error' ? 'var(--red)' : 'var(--text-dim)';
-  let html = '<div style="font-size:0.6rem">';
-  html += '<div style="margin-bottom:0.3rem;color:' + color + ';font-weight:bold">' + (data.summary || '') + '</div>';
-  const rows = [];
-  if (d.last_sync_age_hours != null) rows.push(['Last sync', d.last_sync_age_hours + 'h ago']);
-  if (d.unsynced_count != null) rows.push(['Unsynced', d.unsynced_count.toLocaleString()]);
-  if (d.scrub_pct != null) rows.push(['Scrubbed', d.scrub_pct + '%']);
-  rows.push(['Disk errors', d.disk_errors ? 'YES' : 'none']);
-  html += '<table style="width:100%;border-collapse:collapse">';
-  rows.forEach(([k, v]) => {
-    html += '<tr><td style="padding:0.1rem 0.3rem;color:var(--text-dim)">' + k + '</td><td style="padding:0.1rem 0.3rem;color:var(--text)">' + v + '</td></tr>';
-  });
-  html += '</table></div>';
-  return html;
-}
-"""
+    def demo_data(self) -> PanelData:
+        detail = {
+            "unsynced_count": 0,
+            "last_sync_age_hours": 5.0,
+            "disk_errors": False,
+            "scrub_pct": 92,
+        }
+        return PanelData(status="ok", summary="synced 5h ago", detail=detail)
+
+    def render(self, data: PanelData) -> list[dict] | None:
+        d = data.detail or {}
+        rows: list[dict] = []
+        if d.get("last_sync_age_hours") is not None:
+            rows.append(
+                {"label": "Last sync", "value": f"{d['last_sync_age_hours']}h ago", "status": None}
+            )
+        if d.get("unsynced_count") is not None:
+            rows.append({"label": "Unsynced", "value": f"{d['unsynced_count']:,}", "status": None})
+        if d.get("scrub_pct") is not None:
+            rows.append({"label": "Scrubbed", "value": f"{d['scrub_pct']}%", "status": None})
+        disk_errors = bool(d.get("disk_errors"))
+        rows.append(
+            {
+                "label": "Disk errors",
+                "value": "YES" if disk_errors else "none",
+                "status": "error" if disk_errors else None,
+            }
+        )
+        return [panel.keyvalue(rows)]
 
 
 def _parse_status(text: str) -> dict:

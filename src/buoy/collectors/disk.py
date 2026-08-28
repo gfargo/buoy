@@ -7,11 +7,45 @@ Falls back to local filesystem info when nsenter is not available.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import shutil
 from typing import TYPE_CHECKING
 
+from buoy.subprocess_utils import communicate
+
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.collectors.disk")
+
+
+_VIRTUAL_FSTYPES = {
+    "tmpfs",
+    "devtmpfs",
+    "proc",
+    "sysfs",
+    "cgroup",
+    "cgroup2",
+    "overlay",
+    "squashfs",
+    "efivarfs",
+    "devpts",
+    "mqueue",
+    "pstore",
+    "bpf",
+    "tracefs",
+    "debugfs",
+    "securityfs",
+    "autofs",
+    "rpc_pipefs",
+    "nsfs",
+    "fusectl",
+    "configfs",
+    "binfmt_misc",
+    "hugetlbfs",
+    "ramfs",
+}
 
 
 class DiskCollector:
@@ -47,6 +81,7 @@ class DiskCollector:
             usage = shutil.disk_usage("/")
             return int((usage.used / usage.total) * 100)
         except Exception:
+            logger.debug("failed to read root disk usage", exc_info=True)
             return 0
 
     # ── All Mounts ─────────────────────────────────────────────────────────────
@@ -85,7 +120,7 @@ class DiskCollector:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            stdout, _ = await communicate(proc, timeout=5)
             if proc.returncode != 0:
                 return []
 
@@ -113,27 +148,73 @@ class DiskCollector:
             return []
 
     def _local_mounts(self) -> list[dict]:
-        """Fallback: get mount info from local filesystem."""
-        mounts = []
+        """Fallback when nsenter isn't available or permitted.
+
+        Reads /proc/mounts directly rather than shelling out. On a native
+        (non-container) install this process is already sitting in the
+        host's real mount namespace, so this gives the full host mount
+        list with no privilege beyond reading /proc — nsenter into PID 1's
+        mount namespace is redundant there and just fails under an
+        unprivileged user anyway. Inside an unprivileged container this
+        naturally only sees the container's own mounts.
+        """
+        # Keyed by st_dev: bind mounts (e.g. Docker's per-container
+        # /etc/hosts, /etc/resolv.conf) share the same underlying device as
+        # their real mount point, so keep only the shortest (real) path
+        # per device rather than listing every bind-mounted file too.
+        by_device: dict[int, dict] = {}
+        try:
+            with open("/proc/mounts") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 3:
+                        continue
+                    device, mount_point, fstype = parts[0], parts[1], parts[2]
+                    if fstype in _VIRTUAL_FSTYPES:
+                        continue
+                    if not os.path.isdir(mount_point):
+                        continue
+                    try:
+                        st_dev = os.stat(mount_point).st_dev
+                        usage = shutil.disk_usage(mount_point)
+                    except OSError:
+                        continue
+                    if usage.total == 0:
+                        continue
+                    existing = by_device.get(st_dev)
+                    if existing is not None and len(existing["mount"]) <= len(mount_point):
+                        continue
+                    pct = int((usage.used / usage.total) * 100)
+                    by_device[st_dev] = {
+                        "fs": device,
+                        "size": f"{usage.total / (1024**3):.1f}G",
+                        "used": f"{usage.used / (1024**3):.1f}G",
+                        "avail": f"{usage.free / (1024**3):.1f}G",
+                        "pct": pct,
+                        "mount": mount_point,
+                    }
+        except OSError:
+            logger.debug("failed to read /proc/mounts", exc_info=True)
+        return list(by_device.values()) or self._root_only_mount()
+
+    def _root_only_mount(self) -> list[dict]:
+        """Ultimate fallback if /proc/mounts is unreadable: just report root."""
         try:
             usage = shutil.disk_usage("/")
-            total_gb = usage.total / (1024**3)
-            used_gb = usage.used / (1024**3)
-            avail_gb = usage.free / (1024**3)
             pct = int((usage.used / usage.total) * 100)
-            mounts.append(
+            return [
                 {
                     "fs": "/",
-                    "size": f"{total_gb:.1f}G",
-                    "used": f"{used_gb:.1f}G",
-                    "avail": f"{avail_gb:.1f}G",
+                    "size": f"{usage.total / (1024**3):.1f}G",
+                    "used": f"{usage.used / (1024**3):.1f}G",
+                    "avail": f"{usage.free / (1024**3):.1f}G",
                     "pct": pct,
                     "mount": "/",
                 }
-            )
+            ]
         except Exception:
-            pass
-        return mounts
+            logger.debug("failed to read root mount usage", exc_info=True)
+            return []
 
     # ── NVMe SMART ─────────────────────────────────────────────────────────────
 
@@ -155,7 +236,7 @@ class DiskCollector:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                stdout, _ = await communicate(proc, timeout=5)
                 if proc.returncode is not None and stdout:
                     output = stdout.decode()
                     break
@@ -198,7 +279,7 @@ class DiskCollector:
                             "write_gb": round(sectors_written * 512 / (1024**3), 1),
                         }
         except Exception:
-            pass
+            logger.debug("failed to read /proc/diskstats", exc_info=True)
         return {"read_gb": 0, "write_gb": 0}
 
     # ── Helpers ────────────────────────────────────────────────────────────────

@@ -15,12 +15,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import statistics
 import time
 from pathlib import Path
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
+
+logger = logging.getLogger("buoy.plugins.speedtest")
 
 _HISTORY_PATHS = [Path("/data/speedtest_history.json"), Path("speedtest_history.json")]
 _MAX_HISTORY = 100
@@ -111,6 +116,26 @@ class SpeedtestPlugin(Plugin):
             },
         )
 
+    def demo_data(self) -> PanelData:
+        now = time.time()
+        history = [
+            {
+                "ts": now - (19 - i) * 3600,
+                "download_mbps": 480 + (i % 5) * 6,
+                "upload_mbps": 90 + (i % 3) * 4,
+                "ping_ms": 8 + (i % 4),
+                "server": "Demo ISP - Metro",
+                "ok": True,
+            }
+            for i in range(20)
+        ]
+        latest = history[-1]
+        return PanelData(
+            status="ok",
+            summary=f"↓ {latest['download_mbps']:.0f} Mbps · ↑ {latest['upload_mbps']:.0f} Mbps · {latest['ping_ms']:.0f} ms",
+            detail={"latest": latest, "history": history, "baseline_mbps": 480.0},
+        )
+
     # ── Background task ────────────────────────────────────────────────────────
 
     async def _loop(self) -> None:
@@ -165,7 +190,7 @@ class SpeedtestPlugin(Plugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+            stdout, _ = await communicate(proc, timeout=120)
             data = json.loads(stdout.decode())
 
             if is_ookla:
@@ -240,7 +265,7 @@ class SpeedtestPlugin(Plugin):
                     self._history = raw[-_MAX_HISTORY:]
                     return
             except Exception:
-                pass
+                logger.debug("speedtest: failed to load history from %s", path, exc_info=True)
 
     def _save_history(self) -> None:
         for path in _HISTORY_PATHS:
@@ -248,59 +273,34 @@ class SpeedtestPlugin(Plugin):
                 path.write_text(json.dumps(self._history))
                 return
             except Exception:
-                pass
+                logger.debug("speedtest: failed to save history to %s", path, exc_info=True)
 
     # ── Frontend ───────────────────────────────────────────────────────────────
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_speedtest(data) {
-  const detail = data.detail || {};
-  const latest = detail.latest || {};
-  const history = detail.history || [];
-  const baseline = detail.baseline_mbps || 0;
+    def render(self, data: PanelData) -> list[dict] | None:
+        detail = data.detail or {}
+        latest = detail.get("latest") or {}
+        history = detail.get("history") or []
+        baseline = detail.get("baseline_mbps") or 0
 
-  if (!latest || !latest.ok) {
-    const msg = (latest && latest.error) ? latest.error : 'Measuring…';
-    return '<div style="font-size:0.6rem;color:var(--text-dim);padding:0.4rem">' + msg + '</div>';
-  }
+        if not latest or not latest.get("ok"):
+            msg = latest.get("error") if latest else None
+            return [panel.text(msg or "Measuring…", status="dim")]
 
-  const dl = (latest.download_mbps || 0).toFixed(0);
-  const ul = (latest.upload_mbps || 0).toFixed(0);
-  const ping = (latest.ping_ms || 0).toFixed(0);
-  const server = latest.server || '';
+        blocks: list[dict] = []
+        dl_points = [e.get("download_mbps", 0) for e in history if e.get("ok")]
+        if len(dl_points) > 1:
+            spark_status = "warn" if data.status == "warn" else "info"
+            blocks.append(panel.sparkline(dl_points, status=spark_status))
 
-  // Sparkline bars for download history
-  const dlPoints = history.filter(e => e.ok).map(e => e.download_mbps || 0);
-  let sparkHtml = '';
-  if (dlPoints.length > 1) {
-    const max = Math.max(...dlPoints) || 1;
-    const H = 20;
-    const bw = Math.max(3, Math.floor(120 / dlPoints.length));
-    const statusColor = data.status === 'warn' ? 'var(--amber)' : 'var(--cyan)';
-    sparkHtml = '<svg width="' + (dlPoints.length * bw) + '" height="' + H + '" style="display:block;margin-bottom:0.3rem">';
-    dlPoints.forEach(function(v, i) {
-      const h = Math.max(2, Math.round((v / max) * H));
-      const fill = (i === dlPoints.length - 1) ? statusColor : 'var(--border)';
-      sparkHtml += '<rect x="' + (i * bw) + '" y="' + (H - h) + '" width="' + (bw - 1) + '" height="' + h + '" fill="' + fill + '"/>';
-    });
-    sparkHtml += '</svg>';
-  }
-
-  let html = '<div style="padding:0.4rem 0.5rem;font-size:0.6rem">';
-  html += sparkHtml;
-  html += '<div style="display:flex;gap:1rem">';
-  html += '<span style="color:var(--text)">↓ ' + dl + ' Mbps</span>';
-  html += '<span style="color:var(--text)">↑ ' + ul + ' Mbps</span>';
-  html += '<span style="color:var(--text-dim)">⏱ ' + ping + ' ms</span>';
-  html += '</div>';
-  if (server) {
-    html += '<div style="color:var(--text-dim);margin-top:0.2rem;font-size:0.55rem">' + server + '</div>';
-  }
-  if (baseline > 0) {
-    html += '<div style="color:var(--text-dim);margin-top:0.2rem;font-size:0.55rem">baseline: ' + baseline.toFixed(0) + ' Mbps</div>';
-  }
-  html += '</div>';
-  return html;
-}
-"""
+        rows = [
+            ("↓ Download", f"{latest.get('download_mbps', 0):.0f} Mbps"),
+            ("↑ Upload", f"{latest.get('upload_mbps', 0):.0f} Mbps"),
+            ("⏱ Ping", f"{latest.get('ping_ms', 0):.0f} ms"),
+        ]
+        if latest.get("server"):
+            rows.append(("Server", latest["server"]))
+        if baseline > 0:
+            rows.append(("Baseline", f"{baseline:.0f} Mbps"))
+        blocks.append(panel.keyvalue(rows))
+        return blocks

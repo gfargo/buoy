@@ -1,0 +1,40 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Buoy — per-node system dashboard
+Documentation=https://github.com/gfargo/buoy
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ buoy_venv_dir }}/bin/buoy --config {{ buoy_config_dir }}/buoy.yaml
+WorkingDirectory={{ buoy_data_dir }}
+User={{ buoy_user }}
+Group={{ buoy_group }}
+Restart=on-failure
+RestartSec=5
+
+EnvironmentFile=-{{ buoy_config_dir }}/buoy.env
+
+# Uncomment to let smartctl's NVMe admin-passthrough ioctl succeed for
+# /dev/nvme0n1 SMART data (see docs/deployment/privilege-matrix.md) — the
+# kernel requires CAP_SYS_ADMIN for it regardless of file permissions.
+# Everything except NVMe SMART works fine without this.
+#AmbientCapabilities=CAP_SYS_ADMIN
+#CapabilityBoundingSet=CAP_SYS_ADMIN
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths={{ buoy_data_dir }}
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

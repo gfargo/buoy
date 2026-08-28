@@ -112,8 +112,24 @@ class TestProxmoxPlugin:
         assert result.status == "error"
         assert "Unreachable" in result.summary
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_keyvalue_and_guest_badges(self):
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_proxmox" in js
+
+        node_status = {
+            "cpu": 0.12,
+            "memory": {"used": 4 * 2**30, "total": 32 * 2**30},
+            "uptime": 3600,
+        }
+        vms = [{"vmid": 100, "name": "vm-web", "status": "running"}]
+        cts = [{"vmid": 200, "name": "ct-stopped", "status": "stopped"}]
+
+        with patch("urllib.request.urlopen", side_effect=self._mock_urlopen(node_status, vms, cts)):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "keyvalue"
+        assert blocks[1]["type"] == "badges"
+        items_by_name = {b["label"]: b for b in blocks[1]["items"]}
+        assert items_by_name["vm-web"]["status"] == "ok"
+        assert items_by_name["ct-stopped"]["status"] == "error"

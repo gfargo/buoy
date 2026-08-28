@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import re
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
 
 
 class JournalErrorsPlugin(Plugin):
@@ -52,7 +54,7 @@ class JournalErrorsPlugin(Plugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            stdout, _ = await communicate(proc, timeout=5)
             if not stdout:
                 return []
 
@@ -76,18 +78,27 @@ class JournalErrorsPlugin(Plugin):
         except (TimeoutError, FileNotFoundError):
             return []
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_journal_errors(data) {
-  const entries = data.detail.entries || [];
-  if (!entries.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No journal errors in 24h</div>';
-  let html = '<div style="max-height:200px;overflow-y:auto">';
-  html += '<table style="width:100%;border-collapse:collapse;font-size:0.5rem">';
-  html += '<tr><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Time</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Unit</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Message</th></tr>';
-  entries.forEach(e => {
-    html += '<tr><td style="padding:0.2rem 0.4rem;color:var(--text-dim);white-space:nowrap">' + e.time.slice(4) + '</td><td style="padding:0.2rem 0.4rem;color:var(--text);white-space:nowrap">' + e.unit + '</td><td style="padding:0.2rem 0.4rem;color:var(--red);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + e.message + '</td></tr>';
-  });
-  html += '</table></div>';
-  return html;
-}
-"""
+    def demo_data(self) -> PanelData:
+        entries = [
+            {
+                "time": "Aug 23 09:14:02",
+                "unit": "docker",
+                "message": "Container jellyfin health check failed, retrying",
+            },
+        ]
+        return PanelData(status="warn", summary="1 error (24h)", detail={"entries": entries})
+
+    def render(self, data: PanelData) -> list[dict] | None:
+        entries = data.detail.get("entries") or []
+        if not entries:
+            return [panel.text("No journal errors in 24h", status="dim")]
+
+        rows = [
+            [
+                panel.cell(e.get("time", "")[4:], status="dim"),
+                panel.cell(e.get("unit", "")),
+                panel.cell(e.get("message", ""), status="error", truncate=True),
+            ]
+            for e in entries
+        ]
+        return [panel.table(["Time", "Unit", "Message"], rows)]

@@ -3,10 +3,11 @@
  */
 
 import { escapeHtml, safeUrl } from './escape.js';
+import { apiUrl } from './paths.js';
 
 export async function refreshServices(config) {
   try {
-    const r = await fetch('/api/services');
+    const r = await fetch(apiUrl('services'));
     if (!r.ok) return;
     const data = await r.json();
 

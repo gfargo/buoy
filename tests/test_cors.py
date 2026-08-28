@@ -3,7 +3,6 @@
 import pytest
 from starlette.testclient import TestClient
 
-import buoy.server as srv
 from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig
 from buoy.server import create_app
 
@@ -21,12 +20,8 @@ def _make_config(allowed_origins=None):
 
 @pytest.fixture(autouse=True)
 def isolate_store(tmp_path, monkeypatch):
-    """Each test gets its own DB in tmp_path and a clean global state."""
+    """Each test gets its own working directory."""
     monkeypatch.chdir(tmp_path)
-    yield
-    if srv._metric_store:
-        srv._metric_store.close()
-        srv._metric_store = None
 
 
 def _preflight(client, origin):

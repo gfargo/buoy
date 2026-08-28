@@ -1,0 +1,58 @@
+# Default values for buoy. See docs/deployment/kubernetes.md and
+# docs/deployment/privilege-matrix.md before changing privileged/hostPID.
+
+image:
+  repository: ghcr.io/gfargo/buoy
+  tag: "" # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# "deployment" (single/multi replica, unprivileged, Tier 3 in the privilege
+# matrix) or "daemonset" (one per node, full metrics, Tier 1 — sets
+# privileged + hostPID automatically when selected).
+workloadKind: deployment
+replicaCount: 1
+
+# Full host metrics (temperature, all disk mounts, NVMe SMART, host
+# top-processes) require both of these. Leave both false for the safest
+# unprivileged deployment — see docs/deployment/privilege-matrix.md.
+privileged: false
+hostPID: false
+
+service:
+  type: ClusterIP
+  port: 8090
+
+# buoy.yaml contents, rendered into a ConfigMap. At minimum set node.name
+# (or leave it and override via env.BUOY_NODE_NAME per-pod, e.g. from
+# spec.nodeName — see the daemonset template).
+config: |
+  node:
+    name: my-node
+
+# Mount the Docker socket for service discovery. Disable if buoy shouldn't
+# see the host's containers (e.g. a demo-mode-only deployment).
+dockerSocket:
+  enabled: true
+  path: /var/run/docker.sock
+
+# Auth token, stored in a Secret. Leave empty to run without auth (matches
+# the default in buoy.yaml.example — read-only APIs are public either way,
+# only /api/container/*, /api/config/debug, and /metrics are gated).
+auth:
+  token: ""
+  # Reference an existing Secret instead of creating one from `auth.token`:
+  existingSecret: ""
+  existingSecretKey: token
+
+# Persist history (features.history in buoy.yaml) across pod restarts.
+# Ignored by the daemonset kind, which always uses emptyDir per node.
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClassName: ""
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

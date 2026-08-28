@@ -32,6 +32,22 @@ _DEMO_CONTAINERS = [
 
 _START_TIME = time.time()
 
+# Curated builtins auto-enabled for `--demo` when the operator hasn't
+# configured any plugins, so a bare `docker run ... --demo` shows a populated
+# dashboard instead of an empty one. Deliberately excludes prometheus_exporter:
+# its /metrics route is registered from config at app-build time (server.py),
+# so auto-enabling it here would desync the route from the plugin state.
+DEMO_PLUGIN_IDS = (
+    "github",
+    "uptime_kuma",
+    "tailscale",
+    "smart_disk",
+    "immich",
+    "jellyfin",
+    "proxmox",
+    "dns_filter",
+)
+
 
 def _sinusoidal(base: float, amplitude: float, period: float = 300) -> float:
     """Generate a sinusoidal value with noise for realistic fluctuation."""

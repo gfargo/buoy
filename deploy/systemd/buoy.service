@@ -1,0 +1,49 @@
+[Unit]
+Description=Buoy — per-node system dashboard
+Documentation=https://github.com/gfargo/buoy
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/buoy/venv/bin/buoy --config /etc/buoy/buoy.yaml
+WorkingDirectory=/var/lib/buoy
+Restart=on-failure
+RestartSec=5
+
+# Read /etc/buoy/buoy.yaml (secrets may live here) and BUOY_AUTH_TOKEN etc.
+EnvironmentFile=-/etc/buoy/buoy.env
+
+# Dedicated, dynamically-allocated user — no shared "buoy" account to manage.
+# Add SupplementaryGroups=docker below if the docker socket isn't world-readable.
+DynamicUser=yes
+StateDirectory=buoy
+StateDirectoryMode=0750
+SupplementaryGroups=docker
+
+# Uncomment to let smartctl's NVMe admin-passthrough ioctl succeed for
+# /dev/nvme0n1 SMART data (see docs/deployment/privilege-matrix.md) — the
+# kernel requires CAP_SYS_ADMIN for it regardless of file permissions, so
+# nothing else below grants access to it. Everything except NVMe SMART
+# works fine without this.
+#AmbientCapabilities=CAP_SYS_ADMIN
+#CapabilityBoundingSet=CAP_SYS_ADMIN
+
+# Hardening. Buoy needs real read access to host /proc and /sys for CPU/mem/
+# temperature metrics and to the Docker socket for service discovery — the
+# options below keep everything else locked down.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/buoy
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

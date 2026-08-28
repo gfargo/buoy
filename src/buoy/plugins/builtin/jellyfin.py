@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import urllib.request
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -91,25 +92,47 @@ class JellyfinPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_jellyfin(data) {
-  const streams = data.detail.streams || [];
-  const libs = data.detail.libraries || [];
-  let html = '';
-  if (streams.length) {
-    html += '<div style="margin-bottom:0.5rem">' + streams.map(s => {
-      const color = s.transcoding ? 'var(--amber)' : 'var(--cyan)';
-      return '<div style="font-size:0.55rem;padding:0.25rem 0.5rem;border:1px solid var(--border);border-radius:3px;margin-bottom:0.25rem"><span style="color:' + color + '">' + (s.transcoding ? '⚡' : '▶') + '</span> <strong>' + s.title + '</strong><span style="color:var(--text-dim);margin-left:0.3rem">· ' + s.user + '</span></div>';
-    }).join('') + '</div>';
-  } else {
-    html += '<div style="font-size:0.6rem;color:var(--text-dim);margin-bottom:0.4rem">No active streams</div>';
-  }
-  if (libs.length) {
-    html += '<div style="display:flex;flex-wrap:wrap;gap:0.3rem">' + libs.map(l =>
-      '<div style="font-size:0.5rem;padding:0.15rem 0.4rem;border:1px solid var(--border);border-radius:3px;color:var(--text-dim)">' + l.name + '</div>'
-    ).join('') + '</div>';
-  }
-  return html || '<div style="font-size:0.6rem;color:var(--text-dim)">No data</div>';
-}
-"""
+    def demo_data(self) -> PanelData:
+        streams = [
+            {"title": "The Matrix", "user": "alex", "transcoding": True},
+        ]
+        libraries = [
+            {"name": "Movies", "type": "movies"},
+            {"name": "TV Shows", "type": "tvshows"},
+            {"name": "Music", "type": "music"},
+        ]
+        return PanelData(
+            status="warn",
+            summary="1 stream (1 transcoding)",
+            detail={"streams": streams, "transcoding_count": 1, "libraries": libraries},
+        )
+
+    def render(self, data: PanelData) -> list[dict] | None:
+        streams = data.detail.get("streams") or []
+        libs = data.detail.get("libraries") or []
+
+        blocks: list[dict] = []
+        if streams:
+            blocks.append(
+                panel.list_(
+                    [
+                        panel.list_item(
+                            f"{'⚡' if s.get('transcoding') else '▶'} {s.get('title', '')}",
+                            secondary=s.get("user", ""),
+                            status="warn" if s.get("transcoding") else "info",
+                        )
+                        for s in streams
+                    ]
+                )
+            )
+        else:
+            blocks.append(panel.text("No active streams", status="dim"))
+
+        if libs:
+            blocks.append(
+                panel.badges(
+                    [panel.badge(lib.get("name", ""), status="dim", dot=False) for lib in libs]
+                )
+            )
+
+        return blocks

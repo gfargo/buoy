@@ -6,6 +6,7 @@ import json
 import ssl
 import urllib.request
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -79,12 +80,34 @@ class ImmichPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_immich(data) {
-  const d = data.detail;
-  const pct = d.disk_pct ?? 0;
-  const barColor = pct > 80 ? 'var(--amber)' : 'var(--cyan)';
-  return '<div style="padding:0.5rem 0"><div style="display:flex;gap:1rem;font-size:0.6rem;color:var(--text-bright);margin-bottom:0.4rem"><span>' + (d.photos ?? 0).toLocaleString() + ' photos</span><span>' + (d.videos ?? 0).toLocaleString() + ' videos</span></div><div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-bottom:0.3rem"><div style="height:100%;width:' + pct + '%;background:' + barColor + ';border-radius:3px"></div></div><div style="font-size:0.55rem;color:var(--text-dim)">' + pct + '% disk used' + (d.disk_use ? ' · ' + d.disk_use + ' / ' + d.disk_size : '') + '</div></div>';
-}
-"""
+    def demo_data(self) -> PanelData:
+        return PanelData(
+            status="ok",
+            summary="18,204 photos · 1,092 videos · 62.4% disk",
+            detail={
+                "photos": 18204,
+                "videos": 1092,
+                "usage_bytes": 214748364800,
+                "disk_pct": 62.4,
+                "disk_use": "200 GiB",
+                "disk_size": "320 GiB",
+            },
+        )
+
+    def render(self, data: PanelData) -> list[dict] | None:
+        d = data.detail or {}
+        pct = d.get("disk_pct") or 0
+        bar_status = "warn" if pct > 80 else "info"
+        label = f"{pct}% disk used"
+        if d.get("disk_use"):
+            label += f" · {d['disk_use']} / {d.get('disk_size', '')}"
+
+        return [
+            panel.keyvalue(
+                [
+                    ("Photos", f"{d.get('photos', 0):,}"),
+                    ("Videos", f"{d.get('videos', 0):,}"),
+                ]
+            ),
+            panel.bar(pct, label=label, status=bar_status),
+        ]

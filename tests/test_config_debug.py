@@ -5,19 +5,9 @@ import dataclasses
 import pytest
 from starlette.testclient import TestClient
 
-import buoy.server as server_module
 from buoy.auth import PROTECTED_PATHS, AuthMiddleware, _rate_limit
 from buoy.config import _build_config
 from buoy.server import _redact_secrets, create_app
-
-
-@pytest.fixture(autouse=True)
-def _restore_server_config():
-    """Handler tests below patch the module-level ``_config`` global directly;
-    restore it afterward so state doesn't leak into unrelated tests."""
-    original = server_module._config
-    yield
-    server_module._config = original
 
 
 @pytest.fixture(autouse=True)
@@ -40,6 +30,7 @@ class FakeAuthConfig:
 def _make_middleware():
     mw = AuthMiddleware.__new__(AuthMiddleware)
     mw.auth_config = FakeAuthConfig()
+    mw.base_path = ""
     return mw
 
 
@@ -161,14 +152,9 @@ class TestConfigDebugProtectedPath:
 
 
 def _make_test_client(token: str, auth_enabled: bool = False) -> TestClient:
-    """Create a TestClient with a minimal config wired into the server module."""
+    """Create a TestClient with a minimal app-local config."""
     config = _build_config({"auth": {"enabled": auth_enabled, "type": "token", "token": token}})
-    # Patch the module-level _config so the handler can read it without startup
-    server_module._config = config
-    app = create_app(config)
-    # Override _config again after create_app (which also sets it)
-    server_module._config = config
-    return TestClient(app, raise_server_exceptions=False)
+    return TestClient(create_app(config), raise_server_exceptions=False)
 
 
 class TestConfigDebugHandlerAuth:
@@ -181,9 +167,7 @@ class TestConfigDebugHandlerAuth:
     def test_no_token_configured_returns_403(self):
         """Default install: auth.enabled=False, no token → 403."""
         config = _build_config({})  # all defaults: auth.enabled=False, token=""
-        server_module._config = config
         app = create_app(config)
-        server_module._config = config
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/api/config/debug")
         assert resp.status_code == 403
@@ -248,9 +232,7 @@ class TestConfigDebugHandlerAuth:
                 }
             }
         )
-        server_module._config = config
         app = create_app(config)
-        server_module._config = config
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get(
             "/api/config/debug",
@@ -279,9 +261,7 @@ class TestConfigDebugRateLimit:
         from buoy.auth import RATE_LIMIT_MAX
 
         config = _build_config({})  # auth.enabled=False, token=""
-        server_module._config = config
         app = create_app(config)
-        server_module._config = config
         client = TestClient(app, raise_server_exceptions=False)
         for _ in range(RATE_LIMIT_MAX):
             resp = client.get("/api/config/debug")

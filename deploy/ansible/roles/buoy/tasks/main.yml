@@ -1,0 +1,103 @@
+---
+- name: Install host packages used by buoy's collectors
+  ansible.builtin.apt:
+    name: "{{ buoy_host_packages }}"
+    state: present
+    update_cache: true
+  when: buoy_install_host_packages and ansible_facts['os_family'] == 'Debian'
+
+- name: Create buoy group
+  ansible.builtin.group:
+    name: "{{ buoy_group }}"
+    system: true
+    state: present
+
+- name: Check whether a docker group exists on this host
+  ansible.builtin.command: getent group docker
+  register: buoy_docker_group_check
+  changed_when: false
+  failed_when: false
+  when: buoy_docker_group
+
+# buoy_docker_group defaults true, but this role never installs Docker
+# itself — on a host without Docker Engine the "docker" group doesn't
+# exist, and adding a user to a nonexistent group aborts the play. Skip
+# group membership gracefully instead; Docker-backed service discovery
+# just stays unavailable (see docs/deployment/ansible.md).
+- name: Warn that Docker isn't installed, so docker group membership is skipped
+  ansible.builtin.debug:
+    msg: >-
+      buoy_docker_group is true but no 'docker' group exists on this host.
+      Skipping docker group membership — install Docker Engine first if you
+      want service discovery, or set buoy_docker_group: false to silence
+      this warning.
+  when: buoy_docker_group and buoy_docker_group_check.rc != 0
+
+- name: Create buoy user
+  ansible.builtin.user:
+    name: "{{ buoy_user }}"
+    group: "{{ buoy_group }}"
+    groups: "{{ 'docker' if (buoy_docker_group and buoy_docker_group_check.rc == 0) else omit }}"
+    append: true
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+    state: present
+
+- name: Create config, data, and venv directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ buoy_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ buoy_config_dir }}", owner: "root", mode: "0755" }
+    - { path: "{{ buoy_data_dir }}", owner: "{{ buoy_user }}", mode: "0750" }
+    - { path: "{{ buoy_venv_dir | dirname }}", owner: "root", mode: "0755" }
+
+- name: Create the buoy virtualenv
+  ansible.builtin.command:
+    cmd: python3 -m venv {{ buoy_venv_dir }}
+    creates: "{{ buoy_venv_dir }}/bin/python"
+
+- name: Install buoy into the virtualenv
+  ansible.builtin.pip:
+    name: "{{ buoy_pip_spec }}"
+    virtualenv: "{{ buoy_venv_dir }}"
+    state: "{{ buoy_pip_state }}"
+  notify: Restart buoy
+
+- name: Render buoy.yaml
+  ansible.builtin.template:
+    src: buoy.yaml.j2
+    dest: "{{ buoy_config_dir }}/buoy.yaml"
+    owner: root
+    group: "{{ buoy_group }}"
+    mode: "0640"
+  notify: Restart buoy
+
+- name: Render buoy.env (secrets, e.g. BUOY_AUTH_TOKEN)
+  ansible.builtin.template:
+    src: buoy.env.j2
+    dest: "{{ buoy_config_dir }}/buoy.env"
+    owner: root
+    group: "{{ buoy_group }}"
+    mode: "0640"
+  notify: Restart buoy
+
+- name: Install the buoy systemd unit
+  ansible.builtin.template:
+    src: buoy.service.j2
+    dest: /etc/systemd/system/buoy.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd and restart buoy
+
+- name: Enable and start buoy
+  ansible.builtin.systemd:
+    name: buoy
+    enabled: true
+    state: started
+    daemon_reload: true

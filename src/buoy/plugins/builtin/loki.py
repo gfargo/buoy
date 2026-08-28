@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 import urllib.request
+from datetime import UTC, datetime
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -57,14 +60,32 @@ class LokiPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_loki(data) {
-  const entries = data.detail.entries || [];
-  if (!entries.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No recent errors</div>';
-  return '<div style="max-height:150px;overflow-y:auto">' + entries.map(e => {
-    const ts = e.ts ? new Date(parseInt(e.ts) / 1000000).toLocaleTimeString() : '';
-    return '<div style="font-size:0.5rem;margin-bottom:0.3rem;padding:0.3rem 0.5rem;border:1px solid var(--border);border-radius:3px"><div style="color:var(--text-dim);font-size:0.45rem">' + ts + ' · ' + e.job + '</div><div style="color:var(--red);word-break:break-all">' + e.line + '</div></div>';
-  }).join('') + '</div>';
-}
-"""
+    def demo_data(self) -> PanelData:
+        now_ns = str(int(time.time() * 1_000_000_000))
+        entries = [
+            {"ts": now_ns, "line": "connection refused: upstream timeout", "job": "nginx-proxy"},
+            {"ts": now_ns, "line": "failed to acquire lock: retrying", "job": "postgres"},
+        ]
+        return PanelData(status="warn", summary="2 recent errors", detail={"entries": entries})
+
+    def render(self, data: PanelData) -> list[dict] | None:
+        entries = data.detail.get("entries") or []
+        if not entries:
+            return [panel.text("No recent errors", status="dim")]
+
+        items = []
+        for e in entries:
+            ts = e.get("ts")
+            time_label = _fmt_ns_timestamp(ts) if ts else ""
+            secondary = f"{time_label} · {e.get('job', '')}" if time_label else e.get("job", "")
+            items.append(panel.list_item(e.get("line", ""), secondary=secondary, status="error"))
+        return [panel.list_(items)]
+
+
+def _fmt_ns_timestamp(ts: str) -> str:
+    """Format a Loki nanosecond-epoch timestamp string as HH:MM:SS UTC."""
+    try:
+        seconds = int(ts) / 1_000_000_000
+        return datetime.fromtimestamp(seconds, tz=UTC).strftime("%H:%M:%S UTC")
+    except (ValueError, OverflowError, OSError):
+        return ""

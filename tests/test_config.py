@@ -1,8 +1,9 @@
 """Tests for the Buoy configuration system."""
 
+import pytest
 import yaml
 
-from buoy.config import _apply_env_overrides, _build_config, load_config
+from buoy.config import ConfigError, _apply_env_overrides, _build_config, load_config
 
 
 class TestConfigDefaults:
@@ -37,6 +38,10 @@ class TestConfigDefaults:
         assert config.refresh.stats_interval == 5
         assert config.refresh.fleet_interval == 15
         assert config.refresh.image_updates_interval == 21600
+
+    def test_default_logging_level(self):
+        config = _build_config({})
+        assert config.logging.level == "INFO"
 
 
 class TestConfigFromYAML:
@@ -102,6 +107,25 @@ class TestConfigFromYAML:
         assert config.plugins.builtin["github"].enabled is True
         assert config.plugins.builtin["github"].settings["token"] == "ghp_xxx"
 
+    def test_plugins_builtin_refresh_interval_override(self):
+        raw = {
+            "plugins": {
+                "builtin": {
+                    "github": {"enabled": True, "refresh_interval": 600, "token": "ghp_xxx"},
+                }
+            }
+        }
+        config = _build_config(raw)
+        assert config.plugins.builtin["github"].refresh_interval == 600
+        # Must not leak into settings passed to the plugin's configure().
+        assert "refresh_interval" not in config.plugins.builtin["github"].settings
+        assert config.plugins.builtin["github"].settings["token"] == "ghp_xxx"
+
+    def test_plugins_builtin_refresh_interval_defaults_to_none(self):
+        raw = {"plugins": {"builtin": {"github": {"enabled": True}}}}
+        config = _build_config(raw)
+        assert config.plugins.builtin["github"].refresh_interval is None
+
     def test_plugins_user(self):
         raw = {
             "plugins": {
@@ -134,6 +158,17 @@ class TestConfigFromYAML:
         config = _build_config(raw)
         assert config.plugins.builtin["github"].enabled is False
 
+    def test_build_config_does_not_mutate_raw_dict(self):
+        """_build_config must not pop keys off the caller's raw dict (BUG-17):
+        building twice from the same raw dict must yield the same result."""
+        raw = {"plugins": {"builtin": {"github": {"enabled": True, "token": "ghp_xxx"}}}}
+        _build_config(raw)
+        assert raw["plugins"]["builtin"]["github"] == {"enabled": True, "token": "ghp_xxx"}
+
+        config = _build_config(raw)
+        assert config.plugins.builtin["github"].enabled is True
+        assert config.plugins.builtin["github"].settings["token"] == "ghp_xxx"
+
     def test_theme_preset_light(self):
         config = _build_config({"theme": {"preset": "light"}})
         assert config.theme.preset == "light"
@@ -155,6 +190,10 @@ class TestConfigFromYAML:
         config = _build_config(raw)
         assert config.theme.custom["bg"] == "#ff0000"
         assert config.theme.custom["amber"] == "#00ff00"
+
+    def test_logging_level_from_yaml(self):
+        config = _build_config({"logging": {"level": "DEBUG"}})
+        assert config.logging.level == "DEBUG"
 
 
 class TestEnvOverrides:
@@ -239,6 +278,51 @@ class TestEnvOverrides:
         config = _build_config(raw)
         assert config.alerts.webhook_url == "https://hooks.example/test"
 
+    def test_log_level_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOG_LEVEL", "DEBUG")
+        raw = _apply_env_overrides({})
+        assert raw["logging"]["level"] == "DEBUG"
+
+    def test_log_level_env_builds_config(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOG_LEVEL", "WARNING")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.logging.level == "WARNING"
+
+    def test_port_override_invalid_raises(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_LISTEN_PORT", "eighty-ninety")
+        with pytest.raises(ConfigError) as exc_info:
+            _apply_env_overrides({})
+        assert "BUOY_NETWORK_LISTEN_PORT" in str(exc_info.value)
+        assert "eighty-ninety" in str(exc_info.value)
+
+    def test_port_override_empty_string_raises(self, monkeypatch):
+        """An explicitly-set but empty env var is an invalid int, not "unset"."""
+        monkeypatch.setenv("BUOY_NETWORK_LISTEN_PORT", "")
+        with pytest.raises(ConfigError) as exc_info:
+            _apply_env_overrides({})
+        assert "BUOY_NETWORK_LISTEN_PORT" in str(exc_info.value)
+
+    def test_stats_interval_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_REFRESH_STATS_INTERVAL", "10")
+        result = _apply_env_overrides({})
+        assert result["refresh"]["stats_interval"] == 10
+
+    def test_services_interval_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_REFRESH_SERVICES_INTERVAL", "45")
+        result = _apply_env_overrides({})
+        assert result["refresh"]["services_interval"] == 45
+
+    def test_fleet_interval_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_REFRESH_FLEET_INTERVAL", "20")
+        result = _apply_env_overrides({})
+        assert result["refresh"]["fleet_interval"] == 20
+
+    def test_plugins_interval_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_REFRESH_PLUGINS_INTERVAL", "90")
+        result = _apply_env_overrides({})
+        assert result["refresh"]["plugins_interval"] == 90
+
 
 class TestLoadConfig:
     """Integration test for the full load_config flow."""
@@ -285,3 +369,106 @@ class TestLoadConfig:
 
         config = load_config(path=str(config_file))
         assert config.network.allowed_origins == ["https://harbor.example.ts.net"]
+
+    def test_plugins_interval_from_env(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "buoy.yaml"
+        config_file.write_text(yaml.dump({"node": {"name": "compass"}}))
+        monkeypatch.setenv("BUOY_REFRESH_PLUGINS_INTERVAL", "120")
+
+        config = load_config(path=str(config_file))
+        assert config.refresh.plugins_interval == 120
+
+    def test_invalid_port_env_raises_config_error(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "buoy.yaml"
+        config_file.write_text(yaml.dump({"node": {"name": "compass"}}))
+        monkeypatch.setenv("BUOY_NETWORK_LISTEN_PORT", "eighty-ninety")
+
+        with pytest.raises(ConfigError):
+            load_config(path=str(config_file))
+
+
+class TestNetworkVerifySsl:
+    """Tests for network.verify_ssl and per-peer verify_ssl config."""
+
+    # --- defaults ---
+
+    def test_network_verify_ssl_default_true(self):
+        config = _build_config({})
+        assert config.network.verify_ssl is True
+
+    def test_peer_verify_ssl_default_none(self):
+        raw = {"network": {"peers": [{"name": "harbor", "url": "https://harbor.example.ts.net"}]}}
+        config = _build_config(raw)
+        assert config.network.peers[0].verify_ssl is None
+
+    # --- YAML overrides ---
+
+    def test_network_verify_ssl_false_from_yaml(self):
+        raw = {"network": {"verify_ssl": False}}
+        config = _build_config(raw)
+        assert config.network.verify_ssl is False
+
+    def test_network_verify_ssl_true_explicit(self):
+        raw = {"network": {"verify_ssl": True}}
+        config = _build_config(raw)
+        assert config.network.verify_ssl is True
+
+    def test_per_peer_verify_ssl_false(self):
+        raw = {
+            "network": {
+                "peers": [
+                    {"name": "harbor", "url": "https://harbor.local", "verify_ssl": False},
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert config.network.peers[0].verify_ssl is False
+
+    def test_per_peer_verify_ssl_true(self):
+        raw = {
+            "network": {
+                "peers": [
+                    {"name": "harbor", "url": "https://harbor.local", "verify_ssl": True},
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert config.network.peers[0].verify_ssl is True
+
+    def test_per_peer_without_verify_ssl_stays_none(self):
+        """A peer without verify_ssl must stay None (inherit, not default-False)."""
+        raw = {
+            "network": {
+                "peers": [
+                    {"name": "harbor", "url": "https://harbor.local"},
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert config.network.peers[0].verify_ssl is None
+
+    # --- env override ---
+
+    def test_env_verify_ssl_false(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_VERIFY_SSL", "false")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.network.verify_ssl is False
+
+    def test_env_verify_ssl_true(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_VERIFY_SSL", "true")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.network.verify_ssl is True
+
+    def test_env_verify_ssl_zero_is_false(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_VERIFY_SSL", "0")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.network.verify_ssl is False
+
+    def test_env_verify_ssl_overrides_yaml(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_VERIFY_SSL", "false")
+        raw = _apply_env_overrides({"network": {"verify_ssl": True}})
+        config = _build_config(raw)
+        assert config.network.verify_ssl is False

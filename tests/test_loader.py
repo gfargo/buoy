@@ -1,13 +1,14 @@
 """Tests for Buoy plugin loader/manager."""
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from buoy.config import BuoyConfig, FeaturesConfig, NetworkConfig, NodeConfig, RefreshConfig
-from buoy.plugins.loader import PluginManager, resolve_plugin_env
+from buoy.plugins.loader import PluginManager, resolve_plugin_env, validate_plugin_config
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 # =============================================================================
@@ -22,6 +23,7 @@ class PluginEntry:
     # opt-out, so this stub defaults to True to match _parse_plugins'
     # default_enabled=True for the user map.
     enabled: bool = True
+    refresh_interval: int | None = None
     settings: dict = field(default_factory=dict)
 
 
@@ -33,11 +35,11 @@ class PluginsConfig:
     user: dict = field(default_factory=dict)
 
 
-def _make_config(plugins_enabled=True, builtin=None, user=None):
+def _make_config(plugins_enabled=True, builtin=None, user=None, features=None):
     config = BuoyConfig()
     config.node = NodeConfig(name="test")
     config.network = NetworkConfig()
-    config.features = FeaturesConfig()
+    config.features = features or FeaturesConfig()
     config.plugins = PluginsConfig(
         enabled=plugins_enabled,
         builtin=builtin or {},
@@ -455,6 +457,38 @@ class TestLoadEntrypointPlugins:
 
         assert mgr.plugins["github"].manifest.name == "Overriding GitHub"
 
+    @pytest.mark.asyncio
+    async def test_entry_point_override_clears_stale_disabled_state(self):
+        """A valid override must clear the disabled card left by a failed builtin.
+
+        The builtin registration for "uptime_kuma" fails config validation
+        (missing required "url") and gets flagged disabled. An entry point
+        plugin then overrides it with a schema-less config that validates
+        cleanly; the stale disabled id/card must not survive the override.
+        """
+
+        class OverridingPlugin(Plugin):
+            manifest = PluginManifest(id="uptime_kuma", name="Overriding Uptime Kuma")
+
+            async def collect(self) -> PanelData:
+                return PanelData(status="ok", summary="")
+
+        config = _make_config(builtin={"uptime_kuma": PluginEntry(enabled=True, settings={})})
+        mgr = PluginManager(config)
+
+        with (
+            patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock),
+            patch(
+                "buoy.plugins.loader.importlib.metadata.entry_points",
+                return_value=[_fake_entry_point("uptime_kuma_override", OverridingPlugin)],
+            ),
+        ):
+            await mgr.start()
+
+        assert mgr.plugins["uptime_kuma"].manifest.name == "Overriding Uptime Kuma"
+        assert "uptime_kuma" not in mgr._disabled_ids
+        assert "uptime_kuma" not in mgr.latest_data
+
 
 # =============================================================================
 # discover_all: CLI-facing enumeration without starting collection loops
@@ -527,6 +561,31 @@ class TestDiscoverAll:
 
         assert result["custom"]["source"] == "dir"
         assert result["custom"]["enabled"] is False
+
+    def test_dir_plugins_report_refresh_interval_override(self, tmp_path):
+        # Directory plugins use plugins.user entries, so discovery must report
+        # the same refresh_interval override that _resolve_interval honors.
+        (tmp_path / "custom.py").write_text(
+            "from buoy.plugins.protocol import PanelData, Plugin, PluginManifest\n"
+            "class CustomPlugin(Plugin):\n"
+            "    manifest = PluginManifest(id='custom', name='Custom')\n"
+            "    async def collect(self):\n"
+            "        return PanelData(status='ok', summary='')\n"
+        )
+        config = _make_config(
+            builtin={},
+            user={"custom": PluginEntry(enabled=True, refresh_interval=600, settings={})},
+        )
+        config.plugins.directory = str(tmp_path)
+
+        with patch(
+            "buoy.plugins.loader.importlib.metadata.entry_points",
+            return_value=[],
+        ):
+            result = {p["id"]: p for p in PluginManager.discover_all(config)}
+
+        assert result["custom"]["source"] == "dir"
+        assert result["custom"]["refresh_interval_override"] == 600
 
     def test_manifest_fields_present(self):
         config = _make_config(builtin={})
@@ -710,6 +769,37 @@ class WeatherPlugin(Plugin):
         await mgr._load_user_plugins()
         assert len(mgr.plugins) == 0
 
+    @pytest.mark.asyncio
+    async def test_user_plugin_override_clears_stale_disabled_state(self, tmp_path):
+        """A valid user-directory override must clear the disabled card left by a failed builtin.
+
+        The builtin registration for "uptime_kuma" fails config validation
+        (missing required "url") and gets flagged disabled. A user plugin
+        with the same id is then loaded from the plugins directory; the
+        stale disabled id/card must not survive the override.
+        """
+        (tmp_path / "override.py").write_text(
+            "from buoy.plugins.protocol import PanelData, Plugin, PluginManifest\n"
+            "class OverridingPlugin(Plugin):\n"
+            "    manifest = PluginManifest(id='uptime_kuma', name='Overriding Uptime Kuma')\n"
+            "    async def collect(self):\n"
+            "        return PanelData(status='ok', summary='')\n"
+        )
+
+        config = _make_config(builtin={"uptime_kuma": PluginEntry(enabled=True, settings={})})
+        config.plugins.directory = str(tmp_path)
+        mgr = PluginManager(config)
+
+        with patch(
+            "buoy.plugins.loader.importlib.metadata.entry_points",
+            return_value=[],
+        ):
+            await mgr.start()
+
+        assert mgr.plugins["uptime_kuma"].manifest.name == "Overriding Uptime Kuma"
+        assert "uptime_kuma" not in mgr._disabled_ids
+        assert "uptime_kuma" not in mgr.latest_data
+
 
 # =============================================================================
 # Collection and data access
@@ -742,6 +832,18 @@ class TestPluginCollection:
         assert "failing" in mgr.latest_data
         assert mgr.latest_data["failing"].status == "error"
         assert "Something broke" in mgr.latest_data["failing"].detail["error"]
+
+    @pytest.mark.asyncio
+    async def test_safe_collect_logs_failure(self, caplog):
+        """A failing collect() leaves a diagnostic trail instead of vanishing silently."""
+        config = _make_config()
+        mgr = PluginManager(config)
+        plugin = FailingPlugin()
+
+        with caplog.at_level(logging.DEBUG, logger="buoy.plugins"):
+            await mgr._safe_collect("failing", plugin)
+
+        assert any("failing" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_safe_collect_handles_timeout(self):
@@ -801,6 +903,61 @@ class TestPluginCollection:
         assert result["another"]["name"] == "Another"
         assert result["another"]["status"] == "pending"
         assert result["another"]["detail"] == {}
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_includes_panel_from_render(self):
+        class PanelPlugin(Plugin):
+            manifest = PluginManifest(id="panel_plugin", name="Panel Plugin")
+
+            async def collect(self) -> PanelData:
+                return PanelData(status="ok", summary="ok")
+
+            def render(self, data):
+                return [{"type": "text", "value": data.summary, "status": None}]
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"panel_plugin": PanelPlugin()}
+        mgr._latest_data = {"panel_plugin": PanelData(status="ok", summary="ok")}
+
+        result = await mgr.collect_all_now()
+
+        assert result["panel_plugin"]["panel"] == [{"type": "text", "value": "ok", "status": None}]
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_panel_is_none_when_render_not_overridden(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok", summary="Fake data")}
+
+        result = await mgr.collect_all_now()
+
+        assert result["fake"]["panel"] is None
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_isolates_render_errors(self):
+        class BrokenRenderPlugin(Plugin):
+            manifest = PluginManifest(id="broken_render", name="Broken Render")
+
+            async def collect(self) -> PanelData:
+                return PanelData(status="ok")
+
+            def render(self, data):
+                raise RuntimeError("boom")
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"broken_render": BrokenRenderPlugin(), "fake": FakePlugin()}
+        mgr._latest_data = {
+            "broken_render": PanelData(status="ok"),
+            "fake": PanelData(status="ok", summary="Fake data"),
+        }
+
+        result = await mgr.collect_all_now()
+
+        assert result["broken_render"]["panel"] is None
+        assert result["fake"]["status"] == "ok"
 
     @pytest.mark.asyncio
     async def test_safe_collect_success_records_health(self):
@@ -980,6 +1137,63 @@ class TestPluginManagerStop:
 
 
 # =============================================================================
+# Demo mode (BUG-40 / OSS-1304)
+# =============================================================================
+
+
+class RaisingPlugin(Plugin):
+    """A plugin whose setup(), collect(), and teardown() all raise."""
+
+    manifest = PluginManifest(id="raising", name="Raising", refresh_interval=5)
+
+    async def setup(self) -> None:
+        raise RuntimeError("setup should never be called in demo mode")
+
+    async def collect(self) -> PanelData:
+        raise RuntimeError("collect should never be called in demo mode")
+
+    async def teardown(self) -> None:
+        raise RuntimeError("teardown should never be called in demo mode")
+
+
+class TestDemoMode:
+    """PluginManager must never reach a plugin's I/O when demo_mode is on."""
+
+    @pytest.mark.asyncio
+    async def test_raising_plugin_still_registers_via_demo_data(self):
+        config = _make_config(
+            builtin={"raising": PluginEntry(enabled=True)},
+            features=FeaturesConfig(demo_mode=True),
+        )
+        mgr = PluginManager(config)
+        mgr._iter_builtin_classes = lambda: iter([RaisingPlugin])
+
+        await mgr.start()
+
+        assert "raising" in mgr.plugins
+        assert mgr._tasks == []
+
+        results = await mgr.collect_all_now()
+        assert results["raising"]["loaded"] is True
+        assert results["raising"]["last_collect_at"] is not None
+
+        # Should not raise, even though teardown() would if it were called.
+        await mgr.stop()
+
+    @pytest.mark.asyncio
+    async def test_no_tasks_started_in_demo_mode(self):
+        config = _make_config(
+            builtin={"fake": PluginEntry(enabled=True)},
+            features=FeaturesConfig(demo_mode=True),
+        )
+        mgr = PluginManager(config)
+        mgr._iter_builtin_classes = lambda: iter([FakePlugin])
+
+        await mgr.start()
+        assert mgr._tasks == []
+
+
+# =============================================================================
 # resolve_plugin_env unit tests
 # =============================================================================
 
@@ -1117,9 +1331,9 @@ class TestPluginEnvInjection:
 # =============================================================================
 
 
-def _make_config_with_refresh(plugins_interval: int):
+def _make_config_with_refresh(plugins_interval: int, builtin=None):
     """Build a minimal BuoyConfig with the given refresh.plugins_interval."""
-    config = _make_config()
+    config = _make_config(builtin=builtin)
     config.refresh = RefreshConfig(plugins_interval=plugins_interval)
     return config
 
@@ -1184,3 +1398,287 @@ class TestResolveInterval:
         mgr = PluginManager(config)
         plugin = FakePlugin()  # manifest.refresh_interval = 60
         assert mgr._resolve_interval(plugin) == 60
+
+    def test_override_raises_above_manifest(self):
+        """override=600, manifest=60, config floor=60 → 600 (override wins)."""
+        config = _make_config_with_refresh(
+            plugins_interval=60, builtin={"fake": PluginEntry(refresh_interval=600)}
+        )
+        mgr = PluginManager(config)
+        plugin = FakePlugin()  # manifest.refresh_interval = 60
+        assert mgr._resolve_interval(plugin) == 600
+
+    def test_override_below_floor_is_clamped(self):
+        """override=30, config floor=60 → 60 (global floor still wins over override)."""
+        config = _make_config_with_refresh(
+            plugins_interval=60, builtin={"fake": PluginEntry(refresh_interval=30)}
+        )
+        mgr = PluginManager(config)
+        plugin = FakePlugin()  # manifest.refresh_interval = 60
+        assert mgr._resolve_interval(plugin) == 60
+
+    def test_override_raises_low_manifest_plugin(self):
+        """manifest=30, override=120, config floor=60 → 120 (override replaces manifest base)."""
+        config = _make_config_with_refresh(
+            plugins_interval=60, builtin={"another": PluginEntry(refresh_interval=120)}
+        )
+        mgr = PluginManager(config)
+        plugin = AnotherFakePlugin()  # manifest.refresh_interval = 30
+        assert mgr._resolve_interval(plugin) == 120
+
+    def test_no_override_uses_manifest(self):
+        """No PluginEntry for this plugin id → falls back to manifest, unchanged behavior."""
+        config = _make_config_with_refresh(plugins_interval=60, builtin={})
+        mgr = PluginManager(config)
+        plugin = FakePlugin()  # manifest.refresh_interval = 60
+        assert mgr._resolve_interval(plugin) == 60
+
+
+# =============================================================================
+# validate_plugin_config unit tests (OSS-1252 / buoy#130)
+# =============================================================================
+
+
+class TestValidatePluginConfig:
+    """Unit tests for the validate_plugin_config helper."""
+
+    def test_empty_schema_passthrough(self):
+        settings = {"anything": "goes"}
+        result, errors = validate_plugin_config("noop", {}, settings)
+        assert result == settings
+        assert errors == []
+
+    def test_default_injected_when_missing(self):
+        schema = {"warn_days": {"type": "integer", "default": 30}}
+        result, errors = validate_plugin_config("cert_expiry", schema, {})
+        assert result["warn_days"] == 30
+        assert errors == []
+
+    def test_default_not_overridden_when_supplied(self):
+        schema = {"warn_days": {"type": "integer", "default": 30}}
+        result, errors = validate_plugin_config("cert_expiry", schema, {"warn_days": 10})
+        assert result["warn_days"] == 10
+        assert errors == []
+
+    def test_list_default_not_shared_across_calls(self):
+        """Mutable list defaults must be copied, not shared by reference."""
+        schema = {"units": {"type": "array", "default": []}}
+        result1, _ = validate_plugin_config("systemd_health", schema, {})
+        result1["units"].append("nginx.service")
+        result2, _ = validate_plugin_config("systemd_health", schema, {})
+        assert result2["units"] == []
+
+    def test_coerce_integer_from_string(self):
+        schema = {"warn_days": {"type": "integer"}}
+        result, errors = validate_plugin_config("cert_expiry", schema, {"warn_days": "30"})
+        assert result["warn_days"] == 30
+        assert isinstance(result["warn_days"], int)
+        assert errors == []
+
+    def test_coerce_number_from_string(self):
+        schema = {"threshold": {"type": "number"}}
+        result, errors = validate_plugin_config("x", schema, {"threshold": "6"})
+        assert result["threshold"] == 6.0
+        assert isinstance(result["threshold"], float)
+        assert errors == []
+
+    def test_coerce_boolean_from_string_true(self):
+        """BUG-35: env/YAML string 'true' must become real bool True."""
+        schema = {"verify_ssl": {"type": "boolean"}}
+        result, errors = validate_plugin_config("dns_filter", schema, {"verify_ssl": "true"})
+        assert result["verify_ssl"] is True
+        assert errors == []
+
+    def test_coerce_bool_spelling_from_string_false(self):
+        """Both 'bool' (proxmox) and 'boolean' (dns_filter) spellings must work."""
+        schema = {"verify_ssl": {"type": "bool"}}
+        result, errors = validate_plugin_config("proxmox", schema, {"verify_ssl": "false"})
+        assert result["verify_ssl"] is False
+        assert errors == []
+
+    def test_coerce_boolean_case_insensitive_yes_1(self):
+        schema = {"a": {"type": "boolean"}, "b": {"type": "boolean"}}
+        result, errors = validate_plugin_config("x", schema, {"a": "YES", "b": "1"})
+        assert result["a"] is True
+        assert result["b"] is True
+        assert errors == []
+
+    def test_coerce_boolean_native_bool_passthrough(self):
+        """A real bool from YAML is left as-is, not re-stringified."""
+        schema = {"verify_ssl": {"type": "boolean"}}
+        result, errors = validate_plugin_config("dns_filter", schema, {"verify_ssl": True})
+        assert result["verify_ssl"] is True
+        assert errors == []
+
+    def test_coerce_array_from_comma_string(self):
+        schema = {"drives": {"type": "array"}}
+        result, errors = validate_plugin_config("smart_disk", schema, {"drives": "a,b, c"})
+        assert result["drives"] == ["a", "b", "c"]
+        assert errors == []
+
+    def test_coerce_array_native_list_passthrough(self):
+        schema = {"drives": {"type": "array"}}
+        result, errors = validate_plugin_config("smart_disk", schema, {"drives": ["sda", "sdb"]})
+        assert result["drives"] == ["sda", "sdb"]
+        assert errors == []
+
+    def test_required_missing_reports_error(self):
+        schema = {"url": {"type": "string", "required": True}}
+        result, errors = validate_plugin_config("uptime_kuma", schema, {})
+        assert len(errors) == 1
+        assert "url" in errors[0]
+
+    def test_required_empty_string_reports_error(self):
+        """An empty-string required value (e.g. from env overlay) counts as missing."""
+        schema = {"url": {"type": "string", "required": True}}
+        result, errors = validate_plugin_config("uptime_kuma", schema, {"url": ""})
+        assert len(errors) == 1
+        assert "url" in errors[0]
+
+    def test_required_satisfied_no_error(self):
+        schema = {"url": {"type": "string", "required": True}}
+        result, errors = validate_plugin_config("uptime_kuma", schema, {"url": "http://kuma.local"})
+        assert errors == []
+        assert result["url"] == "http://kuma.local"
+
+    def test_required_empty_coerced_array_reports_error(self):
+        """An empty string coerces to [] for an array field; that still counts as missing."""
+        schema = {"tags": {"type": "array", "required": True}}
+        result, errors = validate_plugin_config("smart_disk", schema, {"tags": ""})
+        assert result["tags"] == []
+        assert len(errors) == 1
+        assert "tags" in errors[0]
+
+    def test_required_zero_integer_is_not_missing(self):
+        """0 is a legitimate required value and must not be flagged as empty."""
+        schema = {"warn_days": {"type": "integer", "required": True}}
+        result, errors = validate_plugin_config("cert_expiry", schema, {"warn_days": 0})
+        assert result["warn_days"] == 0
+        assert errors == []
+
+    def test_required_false_boolean_is_not_missing(self):
+        """False is a legitimate required value and must not be flagged as empty."""
+        schema = {"strict": {"type": "boolean", "required": True}}
+        result, errors = validate_plugin_config("proxmox", schema, {"strict": False})
+        assert result["strict"] is False
+        assert errors == []
+
+    def test_optional_field_without_default_stays_absent(self):
+        """An optional secret (no default, not required) must not be defaulted to ''."""
+        schema = {"api_key": {"type": "string"}}
+        result, errors = validate_plugin_config("dns_filter", schema, {})
+        assert "api_key" not in result
+        assert errors == []
+
+    def test_uncoercible_value_reports_error(self):
+        schema = {"warn_days": {"type": "integer"}}
+        result, errors = validate_plugin_config(
+            "cert_expiry", schema, {"warn_days": "not-a-number"}
+        )
+        assert len(errors) == 1
+        assert "warn_days" in errors[0]
+
+    def test_multiple_errors_all_reported(self):
+        schema = {
+            "url": {"type": "string", "required": True},
+            "token_id": {"type": "string", "required": True},
+        }
+        result, errors = validate_plugin_config("proxmox", schema, {})
+        assert len(errors) == 2
+
+    def test_does_not_mutate_input(self):
+        schema = {"warn_days": {"type": "integer", "default": 30}}
+        original = {}
+        validate_plugin_config("cert_expiry", schema, original)
+        assert original == {}
+
+
+# =============================================================================
+# Integration: config validation gates plugin start (OSS-1252 / buoy#130)
+# =============================================================================
+
+
+class TestConfigValidationGate:
+    """Integration tests: a plugin with an invalid/missing config is registered
+    but shown as a disabled card, and never runs setup()/collect()."""
+
+    @pytest.mark.asyncio
+    async def test_missing_required_field_yields_disabled_card(self):
+        config = _make_config(builtin={"uptime_kuma": PluginEntry(enabled=True, settings={})})
+        mgr = PluginManager(config)
+
+        with patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock):
+            await mgr.start()
+
+        assert "uptime_kuma" in mgr.plugins
+        assert "uptime_kuma" in mgr.latest_data
+        data = mgr.latest_data["uptime_kuma"]
+        assert data.status == "disabled"
+        assert "url" in data.summary
+
+    @pytest.mark.asyncio
+    async def test_disabled_plugin_setup_not_called(self):
+        config = _make_config(builtin={"uptime_kuma": PluginEntry(enabled=True, settings={})})
+        mgr = PluginManager(config)
+
+        with (
+            patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock),
+            patch.object(Plugin, "setup", new_callable=AsyncMock) as mock_setup,
+        ):
+            await mgr.start()
+
+        mock_setup.assert_not_called()
+        assert mgr._tasks == []
+
+    @pytest.mark.asyncio
+    async def test_valid_config_not_disabled(self):
+        config = _make_config(
+            builtin={
+                "uptime_kuma": PluginEntry(enabled=True, settings={"url": "http://kuma.local"})
+            }
+        )
+        mgr = PluginManager(config)
+
+        with patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock):
+            await mgr.start()
+
+        assert "uptime_kuma" in mgr.plugins
+        assert "uptime_kuma" not in mgr._disabled_ids
+
+    @pytest.mark.asyncio
+    async def test_bug_35_string_bool_coerced_before_configure(self):
+        """BUG-35: an env/YAML string 'true' reaches plugin.config as real bool."""
+        config = _make_config(
+            builtin={
+                "proxmox": PluginEntry(
+                    enabled=True,
+                    settings={
+                        "url": "https://pve.local",
+                        "token_id": "id",
+                        "token_secret": "secret",
+                        "node": "pve",
+                        "verify_ssl": "true",
+                    },
+                )
+            }
+        )
+        mgr = PluginManager(config)
+
+        with patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock):
+            await mgr.start()
+
+        assert mgr.plugins["proxmox"].config["verify_ssl"] is True
+
+    @pytest.mark.asyncio
+    async def test_bug_35_string_int_coerced_before_configure(self):
+        """BUG-35: an env/YAML string '15' reaches plugin.config as real int."""
+        config = _make_config(
+            builtin={"cert_expiry": PluginEntry(enabled=True, settings={"warn_days": "15"})}
+        )
+        mgr = PluginManager(config)
+
+        with patch.object(mgr, "_load_user_plugins", new_callable=AsyncMock):
+            await mgr.start()
+
+        assert mgr.plugins["cert_expiry"].config["warn_days"] == 15
+        assert isinstance(mgr.plugins["cert_expiry"].config["warn_days"], int)

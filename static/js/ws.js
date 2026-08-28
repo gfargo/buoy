@@ -2,6 +2,8 @@
  * WebSocket module — connects to /ws with auto-reconnect and exponential backoff.
  */
 
+import { wsUrl } from './paths.js';
+
 let ws = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_DELAY = 30000;
@@ -54,8 +56,7 @@ function _setStatus(state) {
 }
 
 function _connect() {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${protocol}//${location.host}/ws`;
+  const url = wsUrl('ws');
 
   try {
     ws = new WebSocket(url);

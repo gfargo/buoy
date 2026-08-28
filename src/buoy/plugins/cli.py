@@ -44,6 +44,8 @@ def cmd_info(config, plugin_id: str) -> int:
     print(f"source:           {plugin['source']}")
     print(f"enabled:          {'yes' if plugin['enabled'] else 'no'}")
     print(f"refresh_interval: {plugin['refresh_interval']}")
+    if plugin["refresh_interval_override"] is not None:
+        print(f"refresh_interval_override: {plugin['refresh_interval_override']}")
     print("config_schema:")
     if plugin["config_schema"]:
         for key, meta in plugin["config_schema"].items():
