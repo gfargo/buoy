@@ -6,6 +6,7 @@ import json
 import ssl
 import urllib.request
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -87,20 +88,47 @@ class ProxmoxPlugin(Plugin):
             },
         )
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_proxmox(data) {
-  const d = data.detail;
-  const node = d.node || {};
-  let html = '<div style="font-size:0.55rem;color:var(--text-dim);margin-bottom:0.4rem">CPU ' + (node.cpu_pct || 0) + '% · MEM ' + (node.mem_pct || 0) + '%</div>';
-  html += '<div style="display:flex;flex-wrap:wrap;gap:0.3rem">';
-  const guests = (d.vms || []).concat(d.cts || []);
-  guests.forEach(g => {
-    const up = g.status === 'running';
-    const color = up ? 'var(--green)' : 'var(--red)';
-    html += '<div style="display:inline-flex;align-items:center;gap:0.25rem;font-size:0.5rem;padding:0.15rem 0.4rem;border:1px solid var(--border);border-radius:3px"><div style="width:5px;height:5px;border-radius:50%;background:' + color + '"></div>' + g.name + '</div>';
-  });
-  html += '</div>';
-  return html;
-}
-"""
+    def demo_data(self) -> PanelData:
+        vms = [
+            {"name": "vm-plex", "status": "running", "vmid": 101},
+            {"name": "vm-nas", "status": "running", "vmid": 102},
+        ]
+        cts = [
+            {"name": "ct-pihole", "status": "running", "vmid": 201},
+            {"name": "ct-vaultwarden", "status": "stopped", "vmid": 202},
+        ]
+        return PanelData(
+            status="warn",
+            summary="2/2 VMs · 1/2 CTs · CPU 34%",
+            detail={
+                "vms": vms,
+                "cts": cts,
+                "node": {"cpu_pct": 34, "mem_pct": 58, "uptime": 1209600},
+            },
+        )
+
+    def render(self, data: PanelData) -> list[dict] | None:
+        d = data.detail or {}
+        node = d.get("node") or {}
+        blocks: list[dict] = [
+            panel.keyvalue(
+                [
+                    ("CPU", f"{node.get('cpu_pct', 0)}%"),
+                    ("MEM", f"{node.get('mem_pct', 0)}%"),
+                ]
+            )
+        ]
+        guests = (d.get("vms") or []) + (d.get("cts") or [])
+        if guests:
+            blocks.append(
+                panel.badges(
+                    [
+                        panel.badge(
+                            g.get("name", ""),
+                            status="ok" if g.get("status") == "running" else "error",
+                        )
+                        for g in guests
+                    ]
+                )
+            )
+        return blocks

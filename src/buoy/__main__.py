@@ -1,7 +1,10 @@
 """Entry point for `python -m buoy` or the `buoy` CLI command."""
 
 import argparse
+import os
 import sys
+
+from buoy._version import VERSION
 
 
 def _add_serve_arguments(parser: argparse.ArgumentParser) -> None:
@@ -34,16 +37,28 @@ def _add_serve_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _serve(args) -> None:
-    from buoy.config import load_config
+    from buoy.config import ConfigError, load_config
+    from buoy.logging_setup import setup_logging
 
-    config = load_config(path=args.config, demo=args.demo)
+    # Bootstrap logging before config load so the config-loading log messages
+    # are visible; re-applied below once the configured/--dev level is known.
+    setup_logging(os.environ.get("BUOY_LOG_LEVEL", "INFO"))
+
+    if args.dev:
+        # --dev raises the *application* log level to DEBUG, not just uvicorn's.
+        os.environ["BUOY_LOG_LEVEL"] = "DEBUG"
+
+    try:
+        config = load_config(path=args.config, demo=args.demo)
+    except ConfigError as exc:
+        print(f"[buoy] {exc}", file=sys.stderr)
+        sys.exit(2)
+    setup_logging(config.logging.level)
     port = args.port or config.network.listen_port
 
     import uvicorn
 
     if args.dev:
-        import os
-
         os.environ["BUOY_CONFIG"] = args.config or ""
         os.environ["BUOY_DEMO"] = "1" if args.demo else "0"
         uvicorn.run(
@@ -53,19 +68,24 @@ def _serve(args) -> None:
             port=port,
             reload=True,
             log_level="debug",
+            proxy_headers=False,
         )
     else:
         from buoy.server import create_app
 
         app = create_app(config)
-        uvicorn.run(app, host=args.host, port=port, log_level="info")
+        uvicorn.run(app, host=args.host, port=port, log_level="info", proxy_headers=False)
 
 
 def _plugin(args) -> int:
-    from buoy.config import load_config
+    from buoy.config import ConfigError, load_config
     from buoy.plugins import cli as plugin_cli
 
-    config = load_config(path=args.config, demo=False)
+    try:
+        config = load_config(path=args.config, demo=False)
+    except ConfigError as exc:
+        print(f"[buoy] {exc}", file=sys.stderr)
+        sys.exit(2)
 
     if args.plugin_command == "list":
         return plugin_cli.cmd_list(config)
@@ -82,6 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="buoy",
         description="A lightweight, per-node system dashboard for homelabs.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     # Serve remains the default when no subcommand is given, so all its flags
     # live on the top-level parser too (kept in sync with the `serve` subparser).
     _add_serve_arguments(parser)

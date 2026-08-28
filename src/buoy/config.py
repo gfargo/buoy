@@ -10,13 +10,20 @@ Minimal config: just `node.name`. Everything else has sensible defaults.
 
 from __future__ import annotations
 
+import logging
 import os
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger("buoy.config")
+
+
+class ConfigError(Exception):
+    """Raised when configuration input is invalid (bad env value, etc.)."""
+
 
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 
@@ -33,14 +40,18 @@ class PeerConfig:
     name: str = ""
     url: str = ""
     tier: str = ""
+    verify_ssl: bool | None = None  # None = inherit network.verify_ssl
 
 
 @dataclass
 class NetworkConfig:
     tailnet_domain: str = ""
     listen_port: int = 8090
+    base_path: str = ""
     peers: list[PeerConfig] = field(default_factory=list)
     allowed_origins: list[str] = field(default_factory=list)
+    trusted_proxies: list[str] = field(default_factory=list)
+    verify_ssl: bool = True  # TLS verification for peer polling (default on)
 
 
 @dataclass
@@ -95,6 +106,9 @@ class RefreshConfig:
 @dataclass
 class PluginEntry:
     enabled: bool = False
+    # Per-instance override for manifest.refresh_interval (seconds); None means
+    # use the plugin's author-set default.
+    refresh_interval: int | None = None
     # Additional plugin-specific config stored as dict
     settings: dict[str, Any] = field(default_factory=dict)
 
@@ -113,6 +127,11 @@ class AlertsConfig:
 
 
 @dataclass
+class LoggingConfig:
+    level: str = "INFO"
+
+
+@dataclass
 class BuoyConfig:
     node: NodeConfig = field(default_factory=NodeConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
@@ -123,6 +142,7 @@ class BuoyConfig:
     refresh: RefreshConfig = field(default_factory=RefreshConfig)
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
 # ── Loader ─────────────────────────────────────────────────────────────────────
@@ -134,7 +154,7 @@ def _find_config_path(explicit_path: str | None) -> Path | None:
         p = Path(explicit_path)
         if p.exists():
             return p
-        print(f"[buoy] Config file not found: {explicit_path}", file=sys.stderr)
+        logger.warning("Config file not found: %s", explicit_path)
         return None
 
     # Check env var
@@ -168,8 +188,11 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_NODE_TIER": ("node", "tier"),
         "BUOY_NODE_ROLE": ("node", "role"),
         "BUOY_NETWORK_LISTEN_PORT": ("network", "listen_port"),
+        "BUOY_NETWORK_BASE_PATH": ("network", "base_path"),
         "BUOY_NETWORK_TAILNET_DOMAIN": ("network", "tailnet_domain"),
         "BUOY_NETWORK_ALLOWED_ORIGINS": ("network", "allowed_origins"),
+        "BUOY_NETWORK_TRUSTED_PROXIES": ("network", "trusted_proxies"),
+        "BUOY_NETWORK_VERIFY_SSL": ("network", "verify_ssl"),
         "BUOY_AUTH_ENABLED": ("auth", "enabled"),
         "BUOY_AUTH_TOKEN": ("auth", "token"),
         "BUOY_AUTH_TYPE": ("auth", "type"),
@@ -180,8 +203,13 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_WEBSOCKET": ("features", "websocket"),
         "BUOY_FEATURES_HISTORY": ("features", "history"),
         "BUOY_FEATURES_IMAGE_UPDATES": ("features", "image_updates"),
+        "BUOY_REFRESH_STATS_INTERVAL": ("refresh", "stats_interval"),
+        "BUOY_REFRESH_SERVICES_INTERVAL": ("refresh", "services_interval"),
+        "BUOY_REFRESH_FLEET_INTERVAL": ("refresh", "fleet_interval"),
+        "BUOY_REFRESH_PLUGINS_INTERVAL": ("refresh", "plugins_interval"),
         "BUOY_REFRESH_IMAGE_UPDATES_INTERVAL": ("refresh", "image_updates_interval"),
         "BUOY_ALERTS_WEBHOOK_URL": ("alerts", "webhook_url"),
+        "BUOY_LOG_LEVEL": ("logging", "level"),
     }
 
     for env_key, path in env_map.items():
@@ -194,27 +222,61 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             raw[section] = {}
 
         # Type coercion
-        if key in ("listen_port", "stats_interval", "fleet_interval", "image_updates_interval"):
-            raw[section][key] = int(value)
-        elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates"):
+        if key in (
+            "listen_port",
+            "stats_interval",
+            "services_interval",
+            "fleet_interval",
+            "plugins_interval",
+            "image_updates_interval",
+        ):
+            # An empty string (e.g. `BUOY_NETWORK_LISTEN_PORT=`) is treated as an
+            # explicit invalid value, not "unset" — only a missing env var (checked
+            # above) falls back to the YAML/default. There's no sensible int for "",
+            # so we surface the same ConfigError as any other unparsable value.
+            try:
+                raw[section][key] = int(value)
+            except ValueError as exc:
+                raise ConfigError(
+                    f"Invalid value for {env_key}: {value!r} (expected an integer)"
+                ) from exc
+        elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates", "verify_ssl"):
             raw[section][key] = value.lower() in ("true", "1", "yes")
         elif key == "allowed_origins":
             raw[section][key] = [origin.strip() for origin in value.split(",") if origin.strip()]
+        elif key == "trusted_proxies":
+            raw[section][key] = [entry.strip() for entry in value.split(",") if entry.strip()]
         else:
             raw[section][key] = value
 
     return raw
 
 
+def normalize_base_path(value: str) -> str:
+    """Normalize a reverse-proxy base path to '' or '/seg[/seg…]'.
+
+    Strips leading/trailing/duplicate slashes so 'buoy', '/buoy/', and
+    '//buoy//' all collapse to the same '/buoy', with a leading slash and
+    no trailing slash. An empty or all-slashes input normalizes to ''.
+    """
+    cleaned = "/".join(seg for seg in (value or "").split("/") if seg)
+    return f"/{cleaned}" if cleaned else ""
+
+
 def _parse_peers(raw_peers: list[dict]) -> list[PeerConfig]:
     """Parse peer config entries."""
     peers = []
     for p in raw_peers:
+        raw_verify = p.get("verify_ssl")
+        # Keep None when absent so the collector can inherit network.verify_ssl.
+        # Only coerce to bool when the key is explicitly present.
+        verify_ssl = bool(raw_verify) if raw_verify is not None else None
         peers.append(
             PeerConfig(
                 name=p.get("name", ""),
                 url=p.get("url", ""),
                 tier=p.get("tier", ""),
+                verify_ssl=verify_ssl,
             )
         )
     return peers
@@ -245,9 +307,17 @@ def _parse_plugins(
     """
     entries = {}
     for plugin_id, cfg in raw_plugins.items():
-        enabled = cfg.pop("enabled", default_enabled) if isinstance(cfg, dict) else default_enabled
-        settings = cfg if isinstance(cfg, dict) else {}
-        entries[plugin_id] = PluginEntry(enabled=enabled, settings=settings)
+        enabled = cfg.get("enabled", default_enabled) if isinstance(cfg, dict) else default_enabled
+        raw_interval = cfg.get("refresh_interval", None) if isinstance(cfg, dict) else None
+        refresh_interval = int(raw_interval) if raw_interval is not None else None
+        settings = (
+            {k: v for k, v in cfg.items() if k not in ("enabled", "refresh_interval")}
+            if isinstance(cfg, dict)
+            else {}
+        )
+        entries[plugin_id] = PluginEntry(
+            enabled=enabled, refresh_interval=refresh_interval, settings=settings
+        )
     return entries
 
 
@@ -262,6 +332,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     refresh_raw = raw.get("refresh", {})
     plugins_raw = raw.get("plugins", {})
     alerts_raw = raw.get("alerts", {})
+    logging_raw = raw.get("logging", {})
 
     node = NodeConfig(
         name=node_raw.get("name", "buoy"),
@@ -273,8 +344,11 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     network = NetworkConfig(
         tailnet_domain=network_raw.get("tailnet_domain", ""),
         listen_port=int(network_raw.get("listen_port", 8090)),
+        base_path=normalize_base_path(network_raw.get("base_path", "")),
         peers=peers,
         allowed_origins=list(network_raw.get("allowed_origins", [])),
+        trusted_proxies=list(network_raw.get("trusted_proxies", [])),
+        verify_ssl=bool(network_raw.get("verify_ssl", True)),
     )
 
     services = ServicesConfig(
@@ -323,6 +397,10 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         webhook_url=alerts_raw.get("webhook_url", "") if isinstance(alerts_raw, dict) else "",
     )
 
+    logging_cfg = LoggingConfig(
+        level=logging_raw.get("level", "INFO") if isinstance(logging_raw, dict) else "INFO",
+    )
+
     return BuoyConfig(
         node=node,
         network=network,
@@ -333,6 +411,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         refresh=refresh,
         plugins=plugins,
         alerts=alerts,
+        logging=logging_cfg,
     )
 
 
@@ -349,11 +428,11 @@ def load_config(path: str | None = None, demo: bool = False) -> BuoyConfig:
     config_path = _find_config_path(path)
 
     if config_path:
-        print(f"[buoy] Loading config from {config_path}")
+        logger.info("Loading config from %s", config_path)
         with open(config_path) as f:
             raw = yaml.safe_load(f) or {}
     else:
-        print("[buoy] No config file found, using defaults")
+        logger.info("No config file found, using defaults")
         raw = {}
 
     # Apply environment variable overrides

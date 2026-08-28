@@ -10,6 +10,7 @@ from buoy.plugins import cli as plugin_cli
 @dataclass
 class PluginEntry:
     enabled: bool = False
+    refresh_interval: int | None = None
     settings: dict = field(default_factory=dict)
 
 
@@ -62,6 +63,24 @@ class TestCmdInfo:
         assert "id:               github" in out
         assert "refresh_interval: 300" in out
         assert "token" in out
+
+    def test_prints_refresh_interval_override_when_set(self, capsys):
+        config = _make_config(
+            builtin={"github": PluginEntry(enabled=True, refresh_interval=600, settings={})}
+        )
+        rc = plugin_cli.cmd_info(config, "github")
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "refresh_interval: 300" in out
+        assert "refresh_interval_override: 600" in out
+
+    def test_omits_refresh_interval_override_when_unset(self, capsys):
+        config = _make_config(builtin={"github": PluginEntry(enabled=True, settings={})})
+        plugin_cli.cmd_info(config, "github")
+        out = capsys.readouterr().out
+
+        assert "refresh_interval_override" not in out
 
     def test_unknown_plugin_id_returns_error(self, capsys):
         config = _make_config(builtin={})

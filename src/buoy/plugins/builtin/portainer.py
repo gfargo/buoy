@@ -91,3 +91,21 @@ class PortainerPlugin(Plugin):
             )
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
+
+    def demo_data(self) -> PanelData:
+        containers = [
+            {
+                "name": "grafana",
+                "image": "grafana/grafana:latest",
+                "state": "running",
+                "health": "healthy",
+            },
+            {"name": "postgres", "image": "postgres:16", "state": "running", "health": "none"},
+            {"name": "redis", "image": "redis:7", "state": "exited", "health": "none"},
+        ]
+        running = sum(1 for c in containers if c["state"] == "running")
+        return PanelData(
+            status="warn",
+            summary=f"{running}/{len(containers)} running",
+            detail={"containers": containers, "running": running, "total": len(containers)},
+        )

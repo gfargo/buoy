@@ -4,6 +4,8 @@
  */
 
 import { escapeHtml } from './escape.js';
+import { renderPanelSpec } from './panel.js';
+import { apiUrl } from './paths.js';
 
 let pluginRenderers = {};
 let jsLoaded = false;
@@ -30,7 +32,7 @@ function formatAgo(epochSeconds) {
 async function loadPluginJS() {
   if (jsLoaded) return;
   try {
-    const r = await fetch('/api/plugins/js');
+    const r = await fetch(apiUrl('plugins/js'));
     if (!r.ok) return;
     const js = await r.text();
     if (js.trim()) {
@@ -79,17 +81,23 @@ function renderPluginCard(plugin) {
     pending: 'var(--text-dim)',
   }[plugin.status] || 'var(--text-dim)';
 
-  // Check for custom renderer
-  const renderFn = pluginRenderers[`render_${plugin.id}`];
+  // Prefer the declarative panel spec (trusted, escaping renderer). Fall back
+  // to legacy custom JS (new Function, deprecated) only when a plugin still
+  // ships frontend_js() instead, then to the generic key-value renderer.
   let innerHtml;
-  if (renderFn) {
-    try {
-      innerHtml = renderFn(plugin);
-    } catch (e) {
+  if (Array.isArray(plugin.panel) && plugin.panel.length) {
+    innerHtml = renderPanelSpec(plugin.panel);
+  } else {
+    const renderFn = pluginRenderers[`render_${plugin.id}`];
+    if (renderFn) {
+      try {
+        innerHtml = renderFn(plugin);
+      } catch (e) {
+        innerHtml = renderDefaultPlugin(plugin);
+      }
+    } else {
       innerHtml = renderDefaultPlugin(plugin);
     }
-  } else {
-    innerHtml = renderDefaultPlugin(plugin);
   }
 
   const ago = formatAgo(plugin.last_collect_at);
@@ -125,7 +133,7 @@ export async function refreshPlugins() {
   await loadPluginJS();
 
   try {
-    const r = await fetch('/api/plugins');
+    const r = await fetch(apiUrl('plugins'));
     if (!r.ok) return;
     const data = await r.json();
     const plugins = data.plugins || [];

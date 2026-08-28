@@ -1,0 +1,16 @@
+Buoy is deploying as a {{ .Values.workloadKind }}.
+
+{{- if or .Values.privileged .Values.hostPID (eq .Values.workloadKind "daemonset") }}
+This release runs with elevated host access (privileged and/or hostPID).
+See docs/deployment/privilege-matrix.md in the buoy repo for what each
+setting buys you.
+{{- else }}
+This release is unprivileged (no hostPID, no privileged securityContext).
+Some metrics (temperature, full host mount list, NVMe SMART, host
+top-processes, host-introspection plugins) will be unavailable — see
+docs/deployment/privilege-matrix.md in the buoy repo.
+{{- end }}
+
+Get the application URL by running:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "buoy.fullname" . }} 8090:{{ .Values.service.port }}
+  echo "http://localhost:8090"

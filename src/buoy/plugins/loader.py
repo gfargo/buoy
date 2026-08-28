@@ -16,6 +16,7 @@ import importlib
 import importlib.metadata
 import importlib.util
 import inspect
+import logging
 import os
 import pkgutil
 import sys
@@ -23,10 +24,14 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from buoy.config import PluginEntry
+from buoy.demo import DEMO_PLUGIN_IDS
 from buoy.plugins.protocol import PanelData, Plugin
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
+
+logger = logging.getLogger("buoy.plugins")
 
 ENTRY_POINT_GROUP = "buoy.plugins"
 
@@ -59,14 +64,91 @@ def resolve_plugin_env(
     return result
 
 
+def _coerce(value: Any, declared_type: str | None) -> Any:
+    """Coerce *value* to *declared_type*.
+
+    Supports the 5 type names used across builtin manifests. Idempotent on
+    already-correct YAML-native values (e.g. a real ``bool``/``int`` passes
+    through unchanged rather than being re-stringified). Unknown/missing
+    types are left untouched. Raises ValueError/TypeError on failure, which
+    callers collect as a validation error rather than letting propagate.
+    """
+    if declared_type in ("boolean", "bool"):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ("true", "1", "yes")
+        return bool(value)
+    if declared_type == "integer":
+        return int(value)
+    if declared_type == "number":
+        return float(value)
+    if declared_type == "array":
+        if isinstance(value, list):
+            return list(value)
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        raise TypeError(f"cannot coerce {value!r} to array")
+    if declared_type == "string":
+        return value if isinstance(value, str) else str(value)
+    return value
+
+
+def validate_plugin_config(
+    plugin_id: str, schema: dict[str, Any], settings: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Apply defaults, coerce types, and check required fields against *schema*.
+
+    Runs once at registration, after env overlay (resolve_plugin_env) and
+    before instance.configure(). Fixes BUG-35 (env/YAML strings like "true"
+    or "30" not becoming bool/int) and turns a missing required field into an
+    actionable disabled-card message instead of a runtime error deep in
+    collect(). Plugins with an empty schema pass through untouched.
+
+    *plugin_id* prefixes each error message so the disabled card stays
+    unambiguous when a config includes multiple plugins that share a key name.
+
+    Returns (coerced_settings, errors). A non-empty errors list means the
+    plugin should be registered but not started (see _register_config_gated_plugin).
+    """
+    result = dict(settings)
+    errors: list[str] = []
+
+    for key, meta in schema.items():
+        if not isinstance(meta, dict):
+            continue
+
+        if key not in result and "default" in meta:
+            default = meta["default"]
+            result[key] = list(default) if isinstance(default, list) else default
+
+        if key in result and result[key] is not None:
+            declared_type = meta.get("type")
+            try:
+                result[key] = _coerce(result[key], declared_type)
+            except (ValueError, TypeError):
+                errors.append(f"{plugin_id}: invalid value for '{key}': expected {declared_type}")
+                continue
+
+        if meta.get("required"):
+            value = result.get(key)
+            is_empty_collection = isinstance(value, (list, dict, tuple)) and not value
+            if value is None or value == "" or is_empty_collection:
+                errors.append(f"{plugin_id}: missing required field '{key}'")
+
+    return result, errors
+
+
 class PluginManager:
     """Manages the full plugin lifecycle: discover → configure → run → teardown."""
 
     def __init__(self, config: BuoyConfig):
         self.config = config
+        self._demo = config.features.demo_mode
         self._plugins: dict[str, Plugin] = {}
         self._latest_data: dict[str, PanelData] = {}
         self._tasks: list[asyncio.Task] = []
+        self._disabled_ids: set[str] = set()
         # Per-plugin health: last_collect_at (epoch seconds of last *successful*
         # collect), last_error (cleared on success), consecutive_failures (reset
         # on success).
@@ -86,9 +168,17 @@ class PluginManager:
         return self._latest_data
 
     async def start(self):
-        """Discover, configure, setup, and start all plugins."""
+        """Discover, configure, setup, and start all plugins.
+
+        In demo mode, no plugin ever runs setup()/collect() — every plugin is
+        seeded from demo_data() instead, so `--demo` never makes a real
+        outbound call. See _seed_demo_data.
+        """
         if not self.config.plugins.enabled:
             return
+
+        if self._demo:
+            self._inject_demo_defaults()
 
         # 1. Discover built-in plugins
         await self._load_builtins()
@@ -99,34 +189,87 @@ class PluginManager:
         # 3. Discover user plugins from directory
         await self._load_user_plugins()
 
-        # 4. Setup all configured plugins
+        if self._demo:
+            self._seed_demo_data()
+            logger.info(
+                "%d plugin(s) active (demo mode): %s",
+                len(self._plugins),
+                ", ".join(self._plugins.keys()),
+            )
+            return
+
+        # 4. Setup all configured plugins (skip those disabled by config validation)
         for plugin_id, plugin in list(self._plugins.items()):
+            if plugin_id in self._disabled_ids:
+                continue
             try:
                 await plugin.setup()
             except Exception as e:
-                print(f"[buoy:plugins] {plugin_id} setup failed: {e}")
+                logger.warning("%s setup failed: %s", plugin_id, e, exc_info=True)
+                # setup() may acquire resources before failing. Give the plugin a
+                # chance to roll them back before removing the only reference that
+                # stop() would otherwise use for teardown.
+                try:
+                    await plugin.teardown()
+                except Exception:
+                    logger.debug("%s rollback teardown failed", plugin_id, exc_info=True)
                 del self._plugins[plugin_id]
 
-        # 5. Start collection loops
+        # 5. Start collection loops (skip those disabled by config validation)
         for plugin_id, plugin in self._plugins.items():
+            if plugin_id in self._disabled_ids:
+                continue
             task = asyncio.create_task(self._collect_loop(plugin_id, plugin))
             self._tasks.append(task)
 
-        print(
-            f"[buoy:plugins] {len(self._plugins)} plugin(s) active: {', '.join(self._plugins.keys())}"
-        )
+        logger.info("%d plugin(s) active: %s", len(self._plugins), ", ".join(self._plugins.keys()))
+
+    def _inject_demo_defaults(self) -> None:
+        """Enable a curated set of builtins when demo mode has none configured.
+
+        Only kicks in when the operator hasn't enabled any builtin themselves
+        (e.g. a bare `docker run ... --demo`) — a demo run over a real config
+        that does enable plugins shows exactly those, stubbed, and respects
+        the operator's selection.
+        """
+        if any(entry.enabled for entry in self.config.plugins.builtin.values()):
+            return
+        for plugin_id in DEMO_PLUGIN_IDS:
+            self.config.plugins.builtin.setdefault(plugin_id, PluginEntry(enabled=True))
+
+    def _seed_demo_data(self) -> None:
+        """Populate latest_data from each registered plugin's demo_data(), no I/O."""
+        for plugin_id, plugin in self._plugins.items():
+            if plugin_id in self._disabled_ids:
+                continue
+            try:
+                data = plugin.demo_data()
+            except Exception as e:
+                logger.warning("%s demo_data() failed: %s", plugin_id, e, exc_info=True)
+                data = Plugin.demo_data(plugin)
+            self._latest_data[plugin_id] = data
+            self._record_success(plugin_id)
 
     async def stop(self):
-        """Teardown all plugins and cancel tasks."""
-        for task in self._tasks:
+        """Stop collection tasks before tearing down their plugin resources."""
+        tasks = self._tasks[:]
+        for task in tasks:
             task.cancel()
+        awaitables = [task for task in tasks if inspect.isawaitable(task)]
+        if awaitables:
+            await asyncio.gather(*awaitables, return_exceptions=True)
         self._tasks.clear()
+
+        if self._demo:
+            # Nothing was set up (setup() is skipped in demo mode), so there's
+            # nothing to tear down.
+            return
 
         for plugin_id, plugin in self._plugins.items():
             try:
                 await plugin.teardown()
             except Exception:
-                pass
+                logger.debug("%s teardown failed", plugin_id, exc_info=True)
 
     async def collect_all_now(self) -> dict[str, dict]:
         """Return current panel data for every registered plugin.
@@ -145,6 +288,11 @@ class PluginManager:
             data = self._latest_data.get(plugin_id)
             if data is None:
                 data = PanelData(status="pending", summary="Collecting…")
+            try:
+                panel = plugin.render(data)
+            except Exception as e:
+                logger.warning("%s render() failed: %s", plugin_id, e, exc_info=True)
+                panel = None
             health = self._health.get(plugin_id, {})
             result[plugin_id] = {
                 "id": plugin_id,
@@ -153,6 +301,7 @@ class PluginManager:
                 "status": data.status,
                 "summary": data.summary,
                 "detail": data.detail,
+                "panel": panel,
                 "loaded": True,
                 "last_collect_at": health.get("last_collect_at"),
                 "last_error": health.get("last_error"),
@@ -167,6 +316,7 @@ class PluginManager:
                 "status": "error",
                 "summary": "Failed to load",
                 "detail": {},
+                "panel": None,
                 "loaded": False,
                 "last_collect_at": None,
                 "last_error": None,
@@ -196,10 +346,14 @@ class PluginManager:
         ]
 
     def get_plugin_frontend_js(self) -> dict[str, str]:
-        """Return custom frontend JS for plugins that provide it."""
+        """Return custom frontend JS, isolating failures to one plugin."""
         result = {}
         for plugin_id, plugin in self._plugins.items():
-            js = plugin.frontend_js()
+            try:
+                js = plugin.frontend_js()
+            except Exception as e:
+                logger.warning("%s frontend_js() failed: %s", plugin_id, e, exc_info=True)
+                continue
             if js:
                 result[plugin_id] = js
         return result
@@ -217,8 +371,11 @@ class PluginManager:
                 self._builtin_names[plugin_class.manifest.id] = plugin_class.manifest.name
                 self._register_config_gated_plugin(plugin_class, source="builtin")
             except Exception as e:
-                print(
-                    f"[buoy:plugins] Failed to register builtin '{plugin_class.manifest.id}': {e}"
+                logger.warning(
+                    "Failed to register builtin '%s': %s",
+                    plugin_class.manifest.id,
+                    e,
+                    exc_info=True,
                 )
 
     async def _load_entrypoint_plugins(self):
@@ -233,9 +390,11 @@ class PluginManager:
             try:
                 self._register_config_gated_plugin(plugin_class, source="entry point")
             except Exception as e:
-                print(
-                    f"[buoy:plugins] Failed to register entry point plugin "
-                    f"'{plugin_class.manifest.id}': {e}"
+                logger.warning(
+                    "Failed to register entry point plugin '%s': %s",
+                    plugin_class.manifest.id,
+                    e,
+                    exc_info=True,
                 )
 
     async def _load_user_plugins(self):
@@ -253,13 +412,39 @@ class PluginManager:
                     plugin_class.manifest.config_schema,
                     entry.settings if entry else {},
                 )
+                settings, errors = validate_plugin_config(
+                    plugin_id, plugin_class.manifest.config_schema, settings
+                )
+                # Do not mutate collision/disabled state until the replacement
+                # plugin has accepted its configuration. A failed override must
+                # leave the previously registered plugin intact and active.
                 instance.configure(settings)
                 self._warn_on_collision(plugin_id, source="user directory")
+                if errors and self._demo:
+                    logger.debug(
+                        "%s: ignoring config errors in demo mode: %s",
+                        plugin_id,
+                        "; ".join(errors),
+                    )
+                    self._disabled_ids.discard(plugin_id)
+                    self._latest_data.pop(plugin_id, None)
+                elif errors:
+                    self._disabled_ids.add(plugin_id)
+                    self._latest_data[plugin_id] = PanelData(
+                        status="disabled",
+                        summary=f"Config error: {'; '.join(errors)}",
+                        detail={"errors": errors},
+                    )
+                else:
+                    self._disabled_ids.discard(plugin_id)
+                    self._latest_data.pop(plugin_id, None)
                 self._plugins[plugin_id] = instance
             except Exception as e:
-                print(
-                    f"[buoy:plugins] Failed to register user plugin "
-                    f"'{plugin_class.manifest.id}': {e}"
+                logger.warning(
+                    "Failed to register user plugin '%s': %s",
+                    plugin_class.manifest.id,
+                    e,
+                    exc_info=True,
                 )
 
     def _warn_on_collision(self, plugin_id: str, source: str) -> None:
@@ -270,8 +455,10 @@ class PluginManager:
         override visible instead of silently swapping plugins.
         """
         if plugin_id in self._plugins:
-            print(
-                f"[buoy:plugins] '{plugin_id}' from {source} overrides a previously loaded plugin with the same id"
+            logger.info(
+                "'%s' from %s overrides a previously loaded plugin with the same id",
+                plugin_id,
+                source,
             )
 
     def _register_config_gated_plugin(self, plugin_class: type[Plugin], source: str) -> bool:
@@ -291,8 +478,33 @@ class PluginManager:
             plugin_class.manifest.config_schema,
             entry.settings,
         )
-        instance.configure(settings)
+        settings, errors = validate_plugin_config(
+            plugin_id, plugin_class.manifest.config_schema, settings
+        )
         self._warn_on_collision(plugin_id, source=source)
+        if errors and self._demo:
+            # Required fields (API tokens, URLs, ...) are irrelevant in demo
+            # mode since collect() never runs — log and register anyway so
+            # the card renders demo_data() instead of a config-error card.
+            logger.debug(
+                "%s: ignoring config errors in demo mode: %s", plugin_id, "; ".join(errors)
+            )
+            self._disabled_ids.discard(plugin_id)
+            self._latest_data.pop(plugin_id, None)
+        elif errors:
+            self._disabled_ids.add(plugin_id)
+            self._latest_data[plugin_id] = PanelData(
+                status="disabled",
+                summary=f"Config error: {'; '.join(errors)}",
+                detail={"errors": errors},
+            )
+        else:
+            # A later source (e.g. entry point) can override an earlier one
+            # (e.g. builtin) that was disabled — clear any stale disabled
+            # state so the overriding plugin isn't silently skipped.
+            self._disabled_ids.discard(plugin_id)
+            self._latest_data.pop(plugin_id, None)
+        instance.configure(settings)
         self._plugins[plugin_id] = instance
         return True
 
@@ -314,7 +526,7 @@ class PluginManager:
                 if plugin_class is not None:
                     yield plugin_class
             except Exception as e:
-                print(f"[buoy:plugins] Failed to load builtin '{module_path}': {e}")
+                logger.warning("Failed to load builtin '%s': %s", module_path, e, exc_info=True)
 
     @staticmethod
     def _iter_entrypoint_classes():
@@ -322,7 +534,9 @@ class PluginManager:
         try:
             eps = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
         except Exception as e:
-            print(f"[buoy:plugins] Failed to enumerate '{ENTRY_POINT_GROUP}' entry points: {e}")
+            logger.warning(
+                "Failed to enumerate '%s' entry points: %s", ENTRY_POINT_GROUP, e, exc_info=True
+            )
             return
 
         for ep in eps:
@@ -333,13 +547,11 @@ class PluginManager:
                 else:
                     plugin_class = PluginManager._find_plugin_class(obj)
                 if plugin_class is None:
-                    print(
-                        f"[buoy:plugins] Entry point '{ep.name}' did not resolve to a Plugin subclass"
-                    )
+                    logger.warning("Entry point '%s' did not resolve to a Plugin subclass", ep.name)
                     continue
                 yield plugin_class
             except Exception as e:
-                print(f"[buoy:plugins] Failed to load entry point '{ep.name}': {e}")
+                logger.warning("Failed to load entry point '%s': %s", ep.name, e, exc_info=True)
 
     @staticmethod
     def _iter_dir_classes(plugin_dir: Path):
@@ -364,7 +576,9 @@ class PluginManager:
                 if plugin_class is not None:
                     yield plugin_class
             except Exception as e:
-                print(f"[buoy:plugins] Failed to load user plugin '{py_file.name}': {e}")
+                logger.warning(
+                    "Failed to load user plugin '%s': %s", py_file.name, e, exc_info=True
+                )
 
     @classmethod
     def discover_all(cls, config: BuoyConfig) -> list[dict[str, Any]]:
@@ -379,7 +593,8 @@ class PluginManager:
         Returns a list of dicts (one per unique plugin id, later sources win
         on collision, mirroring ``start()``'s builtin < entrypoint < dir
         precedence): id, name, icon, description, version, config_schema,
-        refresh_interval, source ("builtin" | "entrypoint" | "dir"), enabled.
+        refresh_interval, refresh_interval_override, source ("builtin" |
+        "entrypoint" | "dir"), enabled.
         """
         seen: dict[str, dict[str, Any]] = {}
 
@@ -391,10 +606,12 @@ class PluginManager:
             else:
                 entry = config.plugins.builtin.get(plugin_id)
                 enabled = bool(entry and entry.enabled)
+            override = entry.refresh_interval if entry else None
             if plugin_id in seen:
-                print(
-                    f"[buoy:plugins] '{plugin_id}' from {source} overrides a "
-                    "previously discovered plugin with the same id"
+                logger.info(
+                    "'%s' from %s overrides a previously discovered plugin with the same id",
+                    plugin_id,
+                    source,
                 )
             manifest = plugin_class.manifest
             seen[plugin_id] = {
@@ -405,6 +622,7 @@ class PluginManager:
                 "version": manifest.version,
                 "config_schema": manifest.config_schema,
                 "refresh_interval": manifest.refresh_interval,
+                "refresh_interval_override": override,
                 "source": source,
                 "enabled": enabled,
             }
@@ -454,13 +672,24 @@ class PluginManager:
     def _resolve_interval(self, plugin: Plugin) -> int:
         """Resolve the effective collection interval for a plugin.
 
-        Uses the greater of the plugin's manifest interval and the global
-        ``refresh.plugins_interval`` config value.  This lets the global value
-        act as a floor that slows down collection (its documented purpose)
-        without ever shortening intentionally long intervals such as the
-        github plugin (300 s) or the prometheus_exporter sentinel (9999 s).
+        The base interval is the plugin's manifest interval, unless an
+        operator has set a per-plugin ``refresh_interval`` override under
+        ``plugins.builtin.<id>`` or ``plugins.user.<id>`` in config, in which
+        case that override wins. The greater of that base and the global
+        ``refresh.plugins_interval`` config value is then used. This lets the
+        global value act as a floor that slows down collection (its documented
+        purpose) without ever shortening intentionally long intervals such as
+        the github plugin (300 s) or the prometheus_exporter sentinel (9999 s).
         """
-        return max(plugin.manifest.refresh_interval, self.config.refresh.plugins_interval)
+        entry = self.config.plugins.user.get(plugin.manifest.id)
+        if entry is None:
+            entry = self.config.plugins.builtin.get(plugin.manifest.id)
+        base = (
+            entry.refresh_interval
+            if entry and entry.refresh_interval is not None
+            else plugin.manifest.refresh_interval
+        )
+        return max(base, self.config.refresh.plugins_interval)
 
     async def _collect_loop(self, plugin_id: str, plugin: Plugin):
         """Run a plugin's collect() on its configured interval, with error isolation."""
@@ -477,20 +706,25 @@ class PluginManager:
 
     async def _safe_collect(self, plugin_id: str, plugin: Plugin):
         """Collect from a plugin, catching all exceptions."""
+        collect_task = asyncio.create_task(plugin.collect())
         try:
-            data = await asyncio.wait_for(plugin.collect(), timeout=30)
+            data = await asyncio.wait_for(collect_task, timeout=30)
             self._latest_data[plugin_id] = data
             self._record_success(plugin_id)
         except TimeoutError:
+            collect_task.cancel()
+            await asyncio.gather(collect_task, return_exceptions=True)
             self._latest_data[plugin_id] = PanelData(
                 status="error", summary="Timeout", detail={"error": "collect timed out"}
             )
             self._record_failure(plugin_id, "collect timed out")
+            logger.debug("%s collect() timed out", plugin_id)
         except Exception as e:
             self._latest_data[plugin_id] = PanelData(
                 status="error", summary="Error", detail={"error": str(e)}
             )
             self._record_failure(plugin_id, str(e))
+            logger.debug("%s collect() failed: %s", plugin_id, e, exc_info=True)
 
     def _record_success(self, plugin_id: str) -> None:
         self._health[plugin_id] = {

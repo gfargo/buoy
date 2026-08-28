@@ -83,3 +83,17 @@ class BackupStatusPlugin(Plugin):
                 "issues": issues,
             },
         )
+
+    def demo_data(self) -> PanelData:
+        return PanelData(
+            status="ok",
+            summary="6h ago, 428.3 MB",
+            detail={
+                "latest_file": "demo-node-2026-08-23.sql.gz",
+                "size": "428.3 MB",
+                "age_hours": 6.0,
+                "total_count": 14,
+                "healthy": True,
+                "issues": [],
+            },
+        )

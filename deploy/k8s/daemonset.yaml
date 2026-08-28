@@ -1,0 +1,71 @@
+# Full-metrics, one-per-node deployment (matches the "one container per
+# host" model from the README and the docker-compose.yml `privileged` +
+# `pid: host` example). See docs/deployment/privilege-matrix.md — this is
+# "Tier 1". Prefer deployment.yaml unless you need temperature, full host
+# mount list, NVMe SMART, or host-introspection plugins (tailscale,
+# wireguard, smart_disk, cron_health, journal_errors, systemd_health).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: buoy
+  labels:
+    app.kubernetes.io/name: buoy
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: buoy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: buoy
+    spec:
+      hostPID: true
+      containers:
+        - name: buoy
+          image: ghcr.io/gfargo/buoy:latest
+          args: ["--config", "/config/buoy.yaml"]
+          securityContext:
+            privileged: true
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            - name: BUOY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: BUOY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: buoy-auth
+                  key: token
+                  optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+              readOnly: true
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+      volumes:
+        - name: config
+          configMap:
+            name: buoy-config
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+        - name: data
+          emptyDir: {}

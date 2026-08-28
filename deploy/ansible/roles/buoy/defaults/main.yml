@@ -1,0 +1,72 @@
+---
+# Where buoy gets installed and run from.
+buoy_venv_dir: /opt/buoy/venv
+buoy_config_dir: /etc/buoy
+buoy_data_dir: /var/lib/buoy
+
+# Source install spec, passed straight to pip. Buoy isn't published to
+# PyPI yet, so this defaults to a git install — see docs/deployment/native.md.
+buoy_pip_spec: "git+https://github.com/gfargo/buoy.git"
+
+# "present" leaves an already-installed buoy alone (idempotent — re-running
+# the playbook won't reinstall on every run). Set to "latest" (e.g. via
+# `-e buoy_pip_state=latest`) to pull the newest commit/release on demand.
+buoy_pip_state: present
+
+# System user/group the service runs as. Created if it doesn't exist.
+buoy_user: buoy
+buoy_group: buoy
+
+# Add the service user to the docker group so it can reach
+# /var/run/docker.sock without running as root. Set false if this host
+# has no Docker daemon / buoy shouldn't do service discovery. The role
+# doesn't install Docker itself — if this is true but no "docker" group
+# exists yet (Docker Engine not installed), the task is skipped with a
+# warning rather than aborting the play.
+buoy_docker_group: true
+
+# Host packages buoy's collectors shell out to (all optional — collectors
+# degrade gracefully when a binary is missing). See docs/deployment/native.md.
+buoy_install_host_packages: true
+buoy_host_packages:
+  - procps
+  - smartmontools
+  - iproute2
+
+# node.* section of buoy.yaml — node.name is the only field with no
+# sensible default (buoy falls back to "buoy" if unset).
+buoy_node_name: "{{ inventory_hostname }}"
+buoy_node_tier: ""
+buoy_node_role: ""
+
+# network.* section
+buoy_listen_port: 8090
+buoy_tailnet_domain: ""
+buoy_peers: []
+# Example:
+# buoy_peers:
+#   - name: harbor
+#     url: https://harbor.example.ts.net
+#     tier: "Tier 1A"
+
+# auth.* section. Prefer buoy_auth_token via Ansible Vault over plaintext
+# in buoy.yaml — it's templated into /etc/buoy/buoy.env instead (see
+# templates/buoy.service.j2's EnvironmentFile) so it never lands in
+# version-controlled buoy.yaml content.
+buoy_auth_enabled: false
+buoy_auth_type: token
+buoy_auth_token: ""
+
+# features.* section
+buoy_features:
+  websocket: true
+  history: false
+  demo_mode: false
+  night_mode: auto
+  keyboard_shortcuts: true
+  image_updates: false
+
+# Extra raw YAML appended to buoy.yaml (services.overrides, plugins.*,
+# theme.*, etc.) — anything not covered by the typed vars above. Indent
+# must match buoy.yaml's top-level structure.
+buoy_extra_config: ""

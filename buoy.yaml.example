@@ -19,6 +19,24 @@ node:
 network:
   listen_port: 8090          # Port buoy listens on
 
+  # Set this when buoy is served behind a reverse proxy at a sub-path
+  # (e.g. https://host/buoy/) instead of at the domain root. Also settable
+  # via BUOY_NETWORK_BASE_PATH. Leading/trailing slashes are normalized, so
+  # "buoy", "/buoy", and "/buoy/" are all equivalent.
+  #
+  # buoy serves both the prefixed AND unprefixed paths, which covers both
+  # proxy styles:
+  #   - Proxy forwards the prefix unchanged (nginx `proxy_pass` without a
+  #     trailing slash; Caddy `handle /buoy/*`): the browser requests
+  #     "/buoy/api/..." — set base_path so buoy's own routes and the URLs
+  #     it emits (assets, API calls, WebSocket) carry the same prefix.
+  #   - Proxy strips the prefix before forwarding (Caddy `handle_path`,
+  #     Traefik `StripPrefix`): buoy receives "/api/..." — set base_path
+  #     anyway so the HTML/JS *emitted to the browser* still link back
+  #     through "/buoy/...", since the browser itself is not behind the
+  #     strip.
+  base_path: ""               # e.g., "/buoy"
+
   # If set, enables Tailscale-aware URL generation (HTTPS links via tailnet)
   tailnet_domain: ""         # e.g., "tailb82ead.ts.net"
 
@@ -33,6 +51,17 @@ network:
   #   - name: watch
   #     url: https://watch.example.ts.net
   #     tier: "Tier 2"
+  #   - name: lab
+  #     url: https://lab.internal
+  #     tier: "Tier 3"
+  #     verify_ssl: false  # per-peer opt-out for self-signed certs
+
+  # TLS certificate verification for fleet peer polling.
+  # Default true — peers must present a valid certificate. Set to false only
+  # if all your peers use self-signed certs and you accept the risk.
+  # Can also be set per-peer via peers[*].verify_ssl (peer wins over this).
+  # Also settable via BUOY_NETWORK_VERIFY_SSL=false.
+  verify_ssl: true
 
   # Browser CORS is same-origin only by default (no cross-origin reads at
   # all). Only set this if another origin's browser needs to call this
@@ -43,6 +72,32 @@ network:
   # Example:
   # allowed_origins:
   #   - https://harbor.example.ts.net
+
+  # Trusted reverse-proxy IPs / CIDRs. When a request arrives from one of
+  # these addresses, buoy reads X-Forwarded-For (for per-client rate-limiting)
+  # and X-Forwarded-Host (for tailnet URL rewriting) instead of the raw TCP
+  # peer. With the default empty list every X-Forwarded-* header from clients
+  # is ignored, so no spoofing is possible.
+  #
+  # List every proxy hop that may appear between the client and buoy. For a
+  # finite list, buoy scans X-Forwarded-For from right to left, skips configured
+  # proxy hops, and selects the nearest untrusted address. Malformed values at
+  # that trust boundary fail closed to the TCP peer. If all hops are trusted,
+  # the left-most address is used for compatibility.
+  #
+  # Accepts: individual IPs, CIDR ranges, or "*". Wildcard trust intentionally
+  # uses the legacy left-most X-Forwarded-For behavior and is only appropriate
+  # on fully isolated networks; it permits any reachable peer to claim an IP.
+  # Also settable via BUOY_NETWORK_TRUSTED_PROXIES (comma-separated).
+  #
+  # IMPORTANT: deployments that previously relied on uvicorn's implicit
+  # loopback-proxy trust (X-Forwarded-For from 127.0.0.1) must now list
+  # the proxy explicitly here (e.g. "127.0.0.1").
+  trusted_proxies: []
+  # Example (nginx on the same host + Docker bridge):
+  # trusted_proxies:
+  #   - "127.0.0.1"
+  #   - "172.16.0.0/12"
 
 # ── Services ───────────────────────────────────────────────
 # Buoy auto-discovers local Docker containers and shows them as services.
@@ -139,6 +194,8 @@ alerts:
 #   3. the `directory` below — plain .py files dropped in by hand
 # Entry-point plugins use the same `builtin.<id>.enabled` gate as built-ins.
 # Run `buoy plugin list` / `buoy plugin info <id>` to see everything currently discoverable.
+# Under features.demo_mode / --demo, every plugin is stubbed: setup()/collect() are
+# never called (no outbound calls), panels render each plugin's demo_data() instead.
 plugins:
   enabled: true
   directory: /plugins        # Mount point for user plugins
@@ -195,6 +252,25 @@ plugins:
       enabled: false
       url: ""                # e.g., http://localhost:8096
       api_key: ""            # Jellyfin API key (Dashboard → API Keys)
+
+    # Home Assistant entity/automation counts, unavailable entities, updates
+    home_assistant:
+      enabled: false
+      url: ""                # e.g., http://localhost:8123
+      token: ""               # Long-lived access token (Profile → Security)
+      verify_ssl: true
+
+    # Zigbee2MQTT coordinator status + per-device link quality. Reads the
+    # network layer directly via MQTT — independent of home_assistant above,
+    # doesn't need it (or anything) subscribed to the same broker. Requires
+    # the `zigbee2mqtt` extra: pip install "buoy[zigbee2mqtt]".
+    zigbee2mqtt:
+      enabled: false
+      host: ""                # e.g., 127.0.0.1 or the tailnet hostname
+      port: 1883
+      username: ""
+      password: ""            # Or BUOY_PLUGIN_ZIGBEE2MQTT_PASSWORD
+      base_topic: zigbee2mqtt
 
     # Proxmox VE node + guest status
     # Note: verify_ssl defaults to false — PVE uses self-signed certs by default

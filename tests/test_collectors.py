@@ -224,6 +224,78 @@ class TestDockerListContainersCache:
         coll._fetch_containers.assert_called_once()
 
 
+class TestDiskCollectorLocalMounts:
+    """Tests for the real DiskCollector's nsenter-less /proc/mounts fallback."""
+
+    def test_filters_virtual_fs_and_dedupes_bind_mounts(self, tmp_path):
+        """Virtual filesystems are skipped, and bind mounts of a real mount
+        point (e.g. Docker's per-container /etc/hosts) collapse to the
+        shortest (real) path on that device instead of listing both."""
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        bind_dir = real_dir / "bind"
+        bind_dir.mkdir()
+
+        proc_mounts = (
+            "overlay / overlay rw 0 0\n"
+            "tmpfs /dev tmpfs rw 0 0\n"
+            f"/dev/sda1 {real_dir} ext4 rw 0 0\n"
+            f"/dev/sda1 {bind_dir} ext4 rw 0 0\n"
+        )
+
+        coll = DiskCollector(_make_config())
+        with patch("builtins.open", mock_open(read_data=proc_mounts)):
+            mounts = coll._local_mounts()
+
+        assert len(mounts) == 1
+        assert mounts[0]["mount"] == str(real_dir)
+
+    @pytest.mark.parametrize(
+        "device",
+        ["nas.local:/export", "//nas.local/share"],
+        ids=["nfs", "cifs"],
+    )
+    def test_keeps_network_filesystem_mounts(self, tmp_path, device):
+        """NFS/CIFS device fields (e.g. "host:/export", "//host/share")
+        don't start with "/", but they're real mounts and must not be
+        dropped from the reported list."""
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        net_dir = tmp_path / "net"
+        net_dir.mkdir()
+
+        proc_mounts = f"{device} {net_dir} nfs4 rw 0 0\n"
+
+        coll = DiskCollector(_make_config())
+        with patch("builtins.open", mock_open(read_data=proc_mounts)):
+            mounts = coll._local_mounts()
+
+        assert [m["mount"] for m in mounts] == [str(net_dir)]
+        assert mounts[0]["fs"] == device
+
+    def test_falls_back_to_root_when_nothing_real_found(self):
+        """If every /proc/mounts line is virtual (e.g. an overlay-rooted
+        container with no other real mount), fall back to root usage."""
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        proc_mounts = "overlay / overlay rw 0 0\ntmpfs /dev tmpfs rw 0 0\n"
+
+        coll = DiskCollector(_make_config())
+        with patch("builtins.open", mock_open(read_data=proc_mounts)):
+            mounts = coll._local_mounts()
+
+        assert len(mounts) == 1
+        assert mounts[0]["mount"] == "/"
+
+
 class TestDiskCollectorNvme:
     """Tests for real DiskCollector NVMe SMART path."""
 
@@ -344,6 +416,139 @@ class TestNetworkLatency:
         results = await coll.measure_latency()
 
         assert results == [{"name": "compass", "latency_ms": 0, "online": True}]
+
+    # --- verify_ssl propagation tests ---
+
+    def _make_mock_client(self, status_code=200):
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_response.json = MagicMock(return_value={})
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.get = AsyncMock(return_value=mock_response)
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_collect_uses_verify_true_by_default(self):
+        """collect() passes verify=True to AsyncClient when network.verify_ssl defaults."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config([("harbor", "https://harbor.local")])
+        # Default: network.verify_ssl=True, peer.verify_ssl=None
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+            await coll.collect()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is True
+
+    @pytest.mark.asyncio
+    async def test_collect_uses_network_verify_false(self):
+        """collect() passes verify=False when network.verify_ssl=False."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config([("harbor", "https://harbor.local")])
+        config.network.verify_ssl = False
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+            await coll.collect()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is False
+
+    @pytest.mark.asyncio
+    async def test_collect_per_peer_override_wins(self):
+        """Per-peer verify_ssl=False wins over network.verify_ssl=True."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+        from buoy.config import PeerConfig
+
+        config = self._make_net_config()
+        config.network.verify_ssl = True
+        config.network.peers = [
+            PeerConfig(name="harbor", url="https://harbor.local", verify_ssl=False)
+        ]
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+            await coll.collect()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is False
+
+    @pytest.mark.asyncio
+    async def test_measure_latency_http_fallback_verify_true(self):
+        """HTTP fallback in measure_latency() uses verify=True by default."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config([("harbor", "https://harbor.local")])
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
+            with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+                await coll.measure_latency()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is True
+
+    @pytest.mark.asyncio
+    async def test_measure_latency_http_fallback_verify_false(self):
+        """HTTP fallback in measure_latency() uses verify=False when network.verify_ssl=False."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        config = self._make_net_config([("harbor", "https://harbor.local")])
+        config.network.verify_ssl = False
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
+            with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+                await coll.measure_latency()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is False
+
+    @pytest.mark.asyncio
+    async def test_measure_latency_per_peer_override_wins(self):
+        """Per-peer verify_ssl=False wins in measure_latency() HTTP fallback."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+        from buoy.config import PeerConfig
+
+        config = self._make_net_config()
+        config.network.verify_ssl = True
+        config.network.peers = [
+            PeerConfig(name="harbor", url="https://harbor.local", verify_ssl=False)
+        ]
+        coll = NetworkCollector(config)
+
+        mock_client = self._make_mock_client()
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
+            with patch("httpx.AsyncClient", return_value=mock_client) as mock_cls:
+                await coll.measure_latency()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["verify"] is False
 
 
 class TestDockerListContainerStates:

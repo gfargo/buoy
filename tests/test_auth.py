@@ -39,6 +39,7 @@ class TestProtectedPathDetection:
         # AuthMiddleware needs an app, but we're testing methods directly
         mw = AuthMiddleware.__new__(AuthMiddleware)
         mw.auth_config = config
+        mw.base_path = ""
         return mw
 
     def test_container_path_is_protected(self):

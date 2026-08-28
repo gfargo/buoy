@@ -113,8 +113,35 @@ class TestDnsFilterPlugin:
         assert result.status == "error"
         assert "Unreachable" in result.summary
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_keyvalue_and_top_blocked_list(self):
+        plugin = self._make_plugin({"type": "adguard", "url": "http://adguard:3000"})
+        data = {
+            "num_dns_queries": 5000,
+            "num_blocked_filtering": 500,
+            "top_blocked_domains": {"ads.example.com": 120},
+        }
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(data)):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "keyvalue"
+        assert blocks[1]["type"] == "list"
+        assert blocks[1]["items"][0]["primary"] == "ads.example.com"
+        assert blocks[1]["items"][0]["secondary"] == "120"
+
+    @pytest.mark.asyncio
+    async def test_render_omits_list_block_when_no_top_domains(self):
         plugin = self._make_plugin({"type": "pihole", "url": "http://pi.hole"})
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_dns_filter" in js
+        data = {
+            "dns_queries_today": 10000,
+            "ads_blocked_today": 1200,
+            "ads_percentage_today": 12.0,
+            "status": "enabled",
+        }
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(data)):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "keyvalue"

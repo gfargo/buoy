@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import re
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
 
 
 class CronHealthPlugin(Plugin):
@@ -48,7 +50,7 @@ class CronHealthPlugin(Plugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            stdout, _ = await communicate(proc, timeout=5)
             if not stdout:
                 return []
 
@@ -70,17 +72,25 @@ class CronHealthPlugin(Plugin):
         except (TimeoutError, FileNotFoundError):
             return []
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_cron_health(data) {
-  const entries = data.detail.entries || [];
-  if (!entries.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No cron activity in 24h</div>';
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:0.5rem">';
-  html += '<tr><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Time</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">User</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Command</th></tr>';
-  entries.slice(0, 10).forEach(e => {
-    html += '<tr><td style="padding:0.2rem 0.4rem;color:var(--text);white-space:nowrap">' + e.time.slice(4) + '</td><td style="padding:0.2rem 0.4rem;color:var(--text)">' + e.user + '</td><td style="padding:0.2rem 0.4rem;color:var(--text-dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + e.cmd + '</td></tr>';
-  });
-  html += '</table>';
-  return html;
-}
-"""
+    def demo_data(self) -> PanelData:
+        entries = [
+            {"time": "Aug 23 03:00:01", "user": "root", "cmd": "/usr/local/bin/backup.sh"},
+            {"time": "Aug 23 04:00:01", "user": "root", "cmd": "certbot renew --quiet"},
+            {"time": "Aug 23 06:00:01", "user": "buoy", "cmd": "docker image prune -f"},
+        ]
+        return PanelData(status="ok", summary="3 jobs (24h)", detail={"entries": entries})
+
+    def render(self, data: PanelData) -> list[dict] | None:
+        entries = data.detail.get("entries") or []
+        if not entries:
+            return [panel.text("No cron activity in 24h", status="dim")]
+
+        rows = [
+            [
+                panel.cell(e.get("time", "")[4:]),
+                panel.cell(e.get("user", "")),
+                panel.cell(e.get("cmd", ""), status="dim", truncate=True),
+            ]
+            for e in entries[:10]
+        ]
+        return [panel.table(["Time", "User", "Command"], rows)]

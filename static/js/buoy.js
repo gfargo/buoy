@@ -3,18 +3,20 @@
  * Fetches config, initializes sub-modules, manages refresh loops.
  */
 
+import { initAuth } from './auth.js';
 import { initGauges, updateGauges } from './gauges.js';
 import { initDetail } from './detail.js';
 import { refreshServices } from './services.js';
 import { refreshFleet } from './fleet.js';
 import { refreshPlugins } from './plugins.js';
 import { connectWebSocket, isWebSocketOpen } from './ws.js';
+import { apiUrl, staticUrl } from './paths.js';
 
 let config = null;
 
 async function fetchConfig() {
   try {
-    const r = await fetch('/api/config');
+    const r = await fetch(apiUrl('config'));
     if (r.ok) return await r.json();
   } catch (e) { console.warn('[buoy] config fetch failed:', e); }
   // Fallback defaults
@@ -22,6 +24,7 @@ async function fetchConfig() {
     node: { name: 'buoy', tier: '', role: '' },
     network: { tailnet_domain: '', peers: [] },
     theme: { preset: 'terminal' },
+    auth: { enabled: false, type: null },
     features: { websocket: true, night_mode: 'auto', keyboard_shortcuts: true },
     refresh: { stats_interval: 5, services_interval: 30, fleet_interval: 15 },
   };
@@ -29,7 +32,7 @@ async function fetchConfig() {
 
 async function refreshStats() {
   try {
-    const r = await fetch('/api/stats');
+    const r = await fetch(apiUrl('stats'));
     if (!r.ok) return;
     const data = await r.json();
     updateGauges(data);
@@ -38,7 +41,7 @@ async function refreshStats() {
 
 async function fetchDeployInfo() {
   try {
-    const r = await fetch('/api/deploy-info');
+    const r = await fetch(apiUrl('deploy-info'));
     if (!r.ok) return;
     const d = await r.json();
 
@@ -160,11 +163,11 @@ function initKeyboardShortcuts() {
  * automatically via presetHref().
  */
 const PRESET_FILES = {
-  terminal:      '/static/css/themes/terminal.css',
-  light:         '/static/css/themes/light.css',
-  solarized:     '/static/css/themes/solarized.css',
-  nord:          '/static/css/themes/nord.css',
-  'high-contrast': '/static/css/themes/high-contrast.css',
+  terminal:      staticUrl('css/themes/terminal.css'),
+  light:         staticUrl('css/themes/light.css'),
+  solarized:     staticUrl('css/themes/solarized.css'),
+  nord:          staticUrl('css/themes/nord.css'),
+  'high-contrast': staticUrl('css/themes/high-contrast.css'),
 };
 
 /**
@@ -247,6 +250,7 @@ function applyCustomTheme(custom) {
 
 async function init() {
   config = await fetchConfig();
+  initAuth(config.auth);
 
   // Apply theme: resolve preset via persisted choice / config / OS preference,
   // then swap the stylesheet if it differs from the default terminal.css that

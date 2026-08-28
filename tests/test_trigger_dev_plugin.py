@@ -130,8 +130,36 @@ class TestTriggerDevPlugin:
         assert result.status == "error"
         assert "Unreachable" in result.summary
 
-    def test_has_frontend_js(self):
+    @pytest.mark.asyncio
+    async def test_render_produces_keyvalue_and_run_badges(self):
         plugin = self._make_plugin()
-        js = plugin.frontend_js()
-        assert js is not None
-        assert "render_trigger_dev" in js
+        payload = {
+            "data": [
+                _make_run("task-ok", "COMPLETED", _ago_iso(1)),
+                _make_run("task-bad", "FAILED", _ago_iso(2)),
+            ]
+        }
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(payload)):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "keyvalue"
+        assert blocks[0]["rows"][0] == {
+            "label": "Last failed",
+            "value": "task-bad",
+            "status": "warn",
+        }
+        assert blocks[1]["type"] == "badges"
+        labels = {b["label"]: b["status"] for b in blocks[1]["items"]}
+        assert labels["task-ok"] == "ok"
+        assert labels["task-bad"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_render_no_runs_shows_text(self):
+        plugin = self._make_plugin()
+        payload = {"data": []}
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(payload)):
+            result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks == [{"type": "text", "value": "No data", "status": "dim"}]

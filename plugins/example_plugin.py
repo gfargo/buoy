@@ -27,3 +27,16 @@ class ExamplePlugin(Plugin):
             summary="Plugin is working",
             detail={"message": "Hello from the example plugin!"},
         )
+
+    def demo_data(self) -> PanelData:
+        """Sample data used when Buoy runs with --demo. Must not perform any I/O.
+
+        Called instead of setup()/collect() in demo mode. Optional — the base
+        Plugin class already provides a generic fallback — but overriding it
+        lets your panel show something realistic in a demo/screenshot.
+        """
+        return PanelData(
+            status="ok",
+            summary="Plugin is working (demo)",
+            detail={"message": "Hello from the example plugin!"},
+        )

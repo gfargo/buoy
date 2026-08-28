@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+from buoy.subprocess_utils import communicate
 
 
 class SystemdHealthPlugin(Plugin):
@@ -66,23 +68,30 @@ class SystemdHealthPlugin(Plugin):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            stdout, _ = await communicate(proc, timeout=5)
             return stdout.decode().strip() if stdout else "unknown"
         except (FileNotFoundError, TimeoutError):
             return "unknown"
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_systemd_health(data) {
-  const units = data.detail.units || [];
-  if (!units.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No units configured</div>';
-  const stateColor = s => s === 'active' ? 'var(--green)' : s === 'failed' ? 'var(--red)' : 'var(--amber)';
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:0.5rem">';
-  html += '<tr><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">Unit</th><th style="text-align:left;padding:0.2rem 0.4rem;color:var(--text-dim);border-bottom:1px solid var(--border)">State</th></tr>';
-  units.forEach(u => {
-    html += '<tr><td style="padding:0.2rem 0.4rem;color:var(--text);white-space:nowrap">' + u.unit + '</td><td style="padding:0.2rem 0.4rem;color:' + stateColor(u.state) + '">' + u.state + '</td></tr>';
-  });
-  html += '</table>';
-  return html;
-}
-"""
+    def demo_data(self) -> PanelData:
+        units = [
+            {"unit": "docker.service", "state": "active"},
+            {"unit": "tailscaled.service", "state": "active"},
+            {"unit": "cron.service", "state": "active"},
+        ]
+        return PanelData(status="ok", summary="3/3 active", detail={"units": units})
+
+    def render(self, data: PanelData) -> list[dict] | None:
+        units = data.detail.get("units") or []
+        if not units:
+            return [panel.text("No units configured", status="dim")]
+
+        state_status = {"active": "ok", "failed": "error"}
+        rows = [
+            [
+                panel.cell(u.get("unit", "")),
+                panel.cell(u.get("state", ""), status=state_status.get(u.get("state"), "warn")),
+            ]
+            for u in units
+        ]
+        return [panel.table(["Unit", "State"], rows)]

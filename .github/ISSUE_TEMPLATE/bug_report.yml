@@ -7,7 +7,7 @@ body:
     attributes:
       label: buoy version
       description: Output of `buoy --version` or the image tag you're running
-      placeholder: "2.1.0"
+      placeholder: "buoy X.Y.Z"
     validations:
       required: true
 

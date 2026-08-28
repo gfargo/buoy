@@ -1,0 +1,35 @@
+name: Links
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+      - "buoy.yaml.example"
+      - ".lychee.toml"
+      - ".github/workflows/links.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/*.md"
+      - "buoy.yaml.example"
+      - ".lychee.toml"
+      - ".github/workflows/links.yml"
+  schedule:
+    # Catch links that rot after merge (target sites going down, redirects, etc.)
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  lychee:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --config ./.lychee.toml
+            *.md
+            buoy.yaml.example
+          fail: true

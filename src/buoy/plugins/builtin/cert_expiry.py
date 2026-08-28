@@ -6,6 +6,7 @@ import ssl
 import time
 from pathlib import Path
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
 
 
@@ -91,23 +92,21 @@ class CertExpiryPlugin(Plugin):
 
         return PanelData(status=overall, summary=summary, detail={"certs": certs})
 
-    def frontend_js(self) -> str | None:
-        return """
-function render_cert_expiry(data) {
-  const certs = (data.detail && data.detail.certs) || [];
-  if (!certs.length) return '<div style="font-size:0.6rem;color:var(--text-dim)">No certs found</div>';
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:0.55rem">';
-  certs.forEach(c => {
-    const color = c.status === 'ok' ? 'var(--green)' : c.status === 'warn' ? 'var(--amber)' : 'var(--red)';
-    const dot = '<span style="color:' + color + '">●</span>';
-    const label = c.days < 0 ? 'expired' : c.days + 'd remaining';
-    html += '<tr>';
-    html += '<td style="padding:0.15rem 0.3rem;color:var(--text)">' + c.name + '</td>';
-    html += '<td style="padding:0.15rem 0.3rem;color:' + color + '">' + label + '</td>';
-    html += '<td style="padding:0.15rem 0.3rem">' + dot + '</td>';
-    html += '</tr>';
-  });
-  html += '</table>';
-  return html;
-}
-"""
+    def demo_data(self) -> PanelData:
+        certs = [
+            {"name": "demo.ts.net", "days": 62, "status": "ok"},
+            {"name": "grafana.demo.ts.net", "days": 18, "status": "warn"},
+        ]
+        return PanelData(status="warn", summary="2 certs · soonest 18d", detail={"certs": certs})
+
+    def render(self, data: PanelData) -> list[dict] | None:
+        certs = data.detail.get("certs") or []
+        if not certs:
+            return [panel.text("No certs found", status="dim")]
+
+        rows = []
+        for c in certs:
+            days = c.get("days", 0)
+            label = "expired" if days < 0 else f"{days}d remaining"
+            rows.append([panel.cell(c.get("name", "")), panel.cell(label, status=c.get("status"))])
+        return [panel.table(["Cert", "Expiry"], rows)]

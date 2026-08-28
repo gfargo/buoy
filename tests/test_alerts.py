@@ -1,5 +1,7 @@
 """Tests for Buoy alert engine."""
 
+import asyncio
+
 import pytest
 
 from buoy.alerts import Alert, AlertEngine
@@ -102,6 +104,174 @@ class TestAlertEngineEvaluation:
         )
         assert len(engine.active_alerts) == 1
         assert engine.active_alerts[0].level == "warn"
+
+    @pytest.mark.asyncio
+    async def test_active_warning_escalates_in_place_and_notifies_again(self, monkeypatch):
+        config = _make_config()
+        broadcasts = []
+        webhooks = []
+
+        async def fake_broadcast(message):
+            broadcasts.append(message)
+
+        async def fake_webhook(alert):
+            webhooks.append(alert.to_dict())
+
+        engine = AlertEngine(config, broadcast_fn=fake_broadcast)
+        monkeypatch.setattr(engine, "_send_webhooks", fake_webhook)
+
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 0, "mem_total": 1, "temp": 40, "disk_pct": 82}
+        )
+        await asyncio.sleep(0)
+        incident = engine.active_alerts[0]
+        fired_at = incident.fired_at
+
+        await engine.evaluate(
+            {"cpu": 10, "mem_used": 0, "mem_total": 1, "temp": 40, "disk_pct": 92}
+        )
+        await asyncio.sleep(0)
+
+        assert engine.active_alerts == [incident]
+        assert engine._history == [incident]
+        assert incident.level == "crit"
+        assert incident.value == 92
+        assert incident.threshold == 90
+        assert incident.message == "DISK crit: 92 (threshold: 90)"
+        assert incident.fired_at == fired_at
+        assert [message["level"] for message in broadcasts] == ["warn", "crit"]
+        assert [message["type"] for message in broadcasts] == ["alert", "alert"]
+        assert [payload["level"] for payload in webhooks] == ["warn", "crit"]
+        assert [payload["value"] for payload in webhooks] == [82, 92]
+
+    @pytest.mark.asyncio
+    async def test_concurrent_escalation_preserves_each_webhook_snapshot(self, monkeypatch):
+        config = _make_config()
+        broadcasts = []
+        webhooks = []
+        warning_broadcast_started = asyncio.Event()
+        release_warning_broadcast = asyncio.Event()
+
+        async def gated_broadcast(message):
+            broadcasts.append(message)
+            if message["level"] == "warn":
+                warning_broadcast_started.set()
+                await release_warning_broadcast.wait()
+
+        async def fake_webhook(alert):
+            webhooks.append(alert.to_dict())
+
+        engine = AlertEngine(config, broadcast_fn=gated_broadcast)
+        monkeypatch.setattr(engine, "_send_webhooks", fake_webhook)
+        base = {"cpu": 10, "mem_used": 0, "mem_total": 1, "temp": 40}
+
+        warning_evaluation = asyncio.create_task(engine.evaluate({**base, "disk_pct": 82}))
+        await warning_broadcast_started.wait()
+        critical_evaluation = asyncio.create_task(engine.evaluate({**base, "disk_pct": 92}))
+        await critical_evaluation
+        release_warning_broadcast.set()
+        await warning_evaluation
+        await asyncio.sleep(0)
+
+        assert [(message["level"], message["value"]) for message in broadcasts] == [
+            ("warn", 82),
+            ("crit", 92),
+        ]
+        assert sorted((payload["level"], payload["value"]) for payload in webhooks) == [
+            ("crit", 92),
+            ("warn", 82),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_critical_incident_deduplicates_and_does_not_downgrade(self, monkeypatch):
+        config = _make_config()
+        broadcasts = []
+        webhooks = []
+
+        async def fake_broadcast(message):
+            broadcasts.append(message)
+
+        async def fake_webhook(alert):
+            webhooks.append(alert.to_dict())
+
+        engine = AlertEngine(config, broadcast_fn=fake_broadcast)
+        monkeypatch.setattr(engine, "_send_webhooks", fake_webhook)
+
+        for disk_pct in (82, 85, 92, 99, 84):
+            await engine.evaluate(
+                {
+                    "cpu": 10,
+                    "mem_used": 0,
+                    "mem_total": 1,
+                    "temp": 40,
+                    "disk_pct": disk_pct,
+                }
+            )
+            await asyncio.sleep(0)
+
+        assert len(engine.active_alerts) == 1
+        assert len(engine.alert_history) == 1
+        assert engine.active_alerts[0].level == "crit"
+        assert engine.active_alerts[0].value == 92
+        assert [message["level"] for message in broadcasts] == ["warn", "crit"]
+        assert [payload["level"] for payload in webhooks] == ["warn", "crit"]
+
+    @pytest.mark.asyncio
+    async def test_duration_qualified_warning_escalates_immediately(self):
+        config = _make_config()
+        broadcasts = []
+
+        async def fake_broadcast(message):
+            broadcasts.append(message)
+
+        engine = AlertEngine(config, broadcast_fn=fake_broadcast)
+        warning_stats = {
+            "cpu": 85,
+            "mem_used": 0,
+            "mem_total": 1,
+            "temp": 40,
+            "disk_pct": 50,
+        }
+        await engine.evaluate(warning_stats)
+        engine._breach_start["cpu"] -= 61
+        await engine.evaluate(warning_stats)
+
+        await engine.evaluate({**warning_stats, "cpu": 96})
+
+        assert len(engine.active_alerts) == 1
+        assert engine.active_alerts[0].metric == "cpu"
+        assert engine.active_alerts[0].level == "crit"
+        assert [message["level"] for message in broadcasts] == ["warn", "crit"]
+
+    @pytest.mark.asyncio
+    async def test_escalated_incident_resolves_and_can_alert_again(self):
+        config = _make_config()
+        broadcasts = []
+
+        async def fake_broadcast(message):
+            broadcasts.append(message)
+
+        engine = AlertEngine(config, broadcast_fn=fake_broadcast)
+        base = {"cpu": 10, "mem_used": 0, "mem_total": 1, "temp": 40}
+
+        await engine.evaluate({**base, "disk_pct": 82})
+        first_incident = engine.active_alerts[0]
+        await engine.evaluate({**base, "disk_pct": 92})
+        await engine.evaluate({**base, "disk_pct": 50})
+        await engine.evaluate({**base, "disk_pct": 83})
+
+        assert first_incident.level == "crit"
+        assert first_incident.is_active is False
+        assert len(engine.alert_history) == 2
+        assert len(engine.active_alerts) == 1
+        assert engine.active_alerts[0] is not first_incident
+        assert engine.active_alerts[0].level == "warn"
+        assert [message["type"] for message in broadcasts] == [
+            "alert",
+            "alert",
+            "alert_resolved",
+            "alert",
+        ]
 
     @pytest.mark.asyncio
     async def test_alert_resolves_when_value_drops(self):
@@ -260,41 +430,36 @@ class TestAlertEngineWebhooks:
     """Test webhook dispatch from _send_webhooks."""
 
     @pytest.mark.asyncio
-    async def test_no_webhook_when_unconfigured(self, monkeypatch):
+    async def test_no_webhook_when_unconfigured(self):
         """No HTTP request is made when webhook_url is empty (the default)."""
+        from unittest.mock import AsyncMock, patch
+
         config = _make_config()
         # Default AlertsConfig has empty webhook_url — no override needed
 
-        calls = []
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            calls.append(fn)
-
-        monkeypatch.setattr("buoy.alerts.asyncio.to_thread", fake_to_thread)
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
 
         engine = AlertEngine(config)
         alert = Alert(metric="disk", level="crit", value=92, threshold=90, message="DISK crit: 92")
-        await engine._send_webhooks(alert)
 
-        assert calls == [], "asyncio.to_thread should not be called when webhook_url is empty"
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await engine._send_webhooks(alert)
+
+        mock_client.post.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_webhook_posts_when_configured(self, monkeypatch):
+    async def test_webhook_posts_when_configured(self):
         """A POST is attempted with the correct URL and JSON payload."""
-        import json
-        import urllib.request
+        from unittest.mock import AsyncMock, patch
 
         config = _make_config()
         config.alerts = AlertsConfig(webhook_url="https://hooks.example/x")
 
-        captured = {}
-
-        def fake_urlopen(req, timeout=None):
-            captured["url"] = req.full_url
-            captured["method"] = req.method
-            captured["data"] = json.loads(req.data.decode())
-
-        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
 
         engine = AlertEngine(config)
         alert = Alert(
@@ -305,30 +470,42 @@ class TestAlertEngineWebhooks:
             message="DISK crit: 92",
             fired_at=1000.0,
         )
-        await engine._send_webhooks(alert)
 
-        assert captured["url"] == "https://hooks.example/x"
-        assert captured["method"] == "POST"
-        assert captured["data"]["metric"] == "disk"
-        assert captured["data"]["level"] == "crit"
-        assert captured["data"]["hostname"] == "test"
-        assert captured["data"]["value"] == 92
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await engine._send_webhooks(alert)
+
+        mock_client.post.assert_called_once()
+        args, kwargs = mock_client.post.call_args
+        assert args[0] == "https://hooks.example/x"
+        assert kwargs["json"]["metric"] == "disk"
+        assert kwargs["json"]["level"] == "crit"
+        assert kwargs["json"]["hostname"] == "test"
+        assert kwargs["json"]["value"] == 92
 
     @pytest.mark.asyncio
-    async def test_webhook_failure_is_swallowed(self, monkeypatch):
-        """A network error during webhook dispatch does not crash _send_webhooks."""
-        import urllib.request
+    async def test_webhook_failure_is_swallowed(self, caplog):
+        """A network error during webhook dispatch does not crash _send_webhooks,
+        but is logged instead of vanishing silently."""
+        import logging
+        from unittest.mock import AsyncMock, patch
 
         config = _make_config()
         config.alerts = AlertsConfig(webhook_url="https://hooks.example/x")
 
-        def exploding_urlopen(req, timeout=None):
-            raise OSError("connection refused")
-
-        monkeypatch.setattr(urllib.request, "urlopen", exploding_urlopen)
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.post = AsyncMock(side_effect=OSError("connection refused"))
 
         engine = AlertEngine(config)
         alert = Alert(metric="disk", level="crit", value=92, threshold=90, message="DISK crit: 92")
+
         # Await directly so the failure-swallow path is deterministically exercised
         # (no dangling create_task), and confirm no exception escapes.
-        await engine._send_webhooks(alert)
+        with (
+            caplog.at_level(logging.WARNING, logger="buoy.alerts"),
+            patch("httpx.AsyncClient", return_value=mock_client),
+        ):
+            await engine._send_webhooks(alert)
+
+        assert any("webhook delivery failed" in r.message for r in caplog.records)

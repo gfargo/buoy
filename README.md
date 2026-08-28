@@ -45,6 +45,13 @@ Try it without any infrastructure — no Docker socket, no host access needed:
 docker run --rm -p 8090:8090 ghcr.io/gfargo/buoy:latest --demo
 ```
 
+Plugins are stubbed too: in demo mode a plugin's `setup()`/`collect()` are
+never called (so `--demo` never makes a real outbound call), and its panel
+renders sample data from `demo_data()` instead. With no `buoy.yaml`, a
+curated set of built-in plugins is auto-enabled so the dashboard isn't empty;
+running `--demo` against a real config that enables plugins shows exactly
+those, stubbed.
+
 ## Configuration
 
 Buoy is configured via a single `buoy.yaml` file. See [`buoy.yaml.example`](./buoy.yaml.example) for the full reference.
@@ -96,6 +103,56 @@ BUOY_AUTH_TOKEN=my-secret
 BUOY_FEATURES_DEMO_MODE=true
 ```
 
+## Reverse Proxy / Sub-Path Hosting
+
+By default buoy assumes it's served at the domain root. To serve it at a
+sub-path (e.g. `https://host/buoy/`) behind a reverse proxy, set
+`network.base_path` (or `BUOY_NETWORK_BASE_PATH`):
+
+```yaml
+network:
+  base_path: /buoy
+```
+
+buoy then serves both the prefixed *and* unprefixed paths, so it works
+whether your proxy forwards the prefix unchanged or strips it before
+forwarding — `base_path` just needs to match what your browser actually
+requests.
+
+**Caddy, forwarding the prefix:**
+```
+handle /buoy/* {
+    reverse_proxy buoy:8090
+}
+```
+
+**Caddy, stripping the prefix:**
+```
+handle_path /buoy/* {
+    reverse_proxy buoy:8090
+}
+```
+
+**Traefik, stripping the prefix:**
+```yaml
+middlewares:
+  - stripprefix:
+      prefixes: ["/buoy"]
+```
+
+**nginx, forwarding the prefix** (note: no trailing slash on `proxy_pass`):
+```nginx
+location /buoy/ {
+    proxy_pass http://buoy:8090;
+}
+```
+
+In every case above, set `base_path: /buoy` — even when the proxy strips
+the prefix before it reaches buoy, the *browser* still sees `/buoy/...`
+URLs, so the HTML/JS/CSS buoy emits must carry that prefix too. Configure
+`network.trusted_proxies` with every known proxy hop when forwarding client
+identity; see `buoy.yaml.example` for the trust-chain and wildcard guidance.
+
 ## Architecture
 
 ```
@@ -131,7 +188,16 @@ volumes:
   buoy-data:
 ```
 
-> **Note:** `privileged` + `pid: host` enables full system metrics (temperature, all disk mounts, NVMe SMART). If you only need container stats, you can drop `privileged` and keep just `pid: host`.
+> **Note:** `privileged` + `pid: host` enables full system metrics (temperature, all disk mounts, NVMe SMART). If you only need container stats, you can drop `privileged` and keep just `pid: host`. See the [privilege matrix](docs/deployment/privilege-matrix.md) for the full breakdown, or the [native install](docs/deployment/native.md) to get full metrics without any container privilege flags at all.
+
+## Other Deployment Paths
+
+Docker Compose isn't the only option:
+
+- [Native install (pip + systemd)](docs/deployment/native.md) — run buoy directly on the host, no container required
+- [Kubernetes](docs/deployment/kubernetes.md) — plain manifests or a Helm chart, unprivileged `Deployment` or full-metrics `DaemonSet`
+- [Ansible](docs/deployment/ansible.md) — a role that automates the native install
+- [Privilege / metrics matrix](docs/deployment/privilege-matrix.md) — what each privilege level gains or costs you, across every deployment path
 
 ## Plugins
 
@@ -146,6 +212,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Prometheus | `prometheus_exporter` | `/metrics` endpoint | (none) |
 | SnapRAID | `snapraid` | Parity sync age & disk health | `status_file` |
 | Jellyfin | `jellyfin` | Active streams, libraries, transcoding | `url`, `api_key` |
+| Home Assistant | `home_assistant` | Entity/automation counts, unavailable entities, updates | `url`, `token` |
 | Portainer | `portainer` | Remote container stats | `url`, `api_key`, `endpoint_id` |
 | Smart Disk | `smart_disk` | SMART health for SATA + NVMe drives | (none) |
 | Cert Expiry | `cert_expiry` | TLS certificate days remaining | (none) |
@@ -161,6 +228,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Tailscale | `tailscale` | Tailnet peer status | (none) |
 | Trigger.dev | `trigger_dev` | Task run status | `url`, `api_key`, `project_ref` |
 | WireGuard | `wireguard` | WireGuard tunnel peer status | (none) |
+| Zigbee2MQTT | `zigbee2mqtt` | Coordinator status + per-device link quality | `host` (needs `pip install "buoy[zigbee2mqtt]"`) |
 
 **Custom plugins** are Python files dropped into the `/plugins` volume:
 
@@ -173,6 +241,27 @@ class WeatherPlugin(Plugin):
     async def collect(self) -> PanelData:
         # Your logic here
         return PanelData(status="ok", summary="72°F, Sunny")
+
+    def demo_data(self) -> PanelData:
+        # Sample data for --demo — must not perform any I/O. Called instead
+        # of setup()/collect() when demo mode is on; the base Plugin class
+        # already provides a generic fallback, so this is optional.
+        return PanelData(status="ok", summary="72°F, Sunny")
+```
+
+For a richer panel than the default key-value grid, implement `render()` and return blocks from
+`buoy.plugins.panel` (`text`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`) — trusted,
+escaping frontend code turns them into HTML, so untrusted data (names, log lines, URLs) can never
+inject markup. `frontend_js()` (raw JS executed via `new Function()`) is still supported but is a
+deprecated escape hatch — it can't run under a strict CSP and requires escaping every value by hand.
+
+```python
+from buoy.plugins import panel
+
+class WeatherPlugin(Plugin):
+    ...
+    def render(self, data: PanelData) -> list[dict] | None:
+        return [panel.keyvalue([("Temp", "72°F"), ("Condition", "Sunny")])]
 ```
 
 **Distributable plugins** can also be shipped as a pip-installable package. Register your `Plugin`
@@ -187,6 +276,23 @@ weather = "buoy_plugin_weather:WeatherPlugin"
 Once installed alongside Buoy, it's discovered automatically at startup — same enable gate as
 built-ins (`plugins.builtin.weather.enabled: true` in `buoy.yaml`). Use the `buoy plugin` CLI to
 inspect what's available:
+
+Each plugin's author-set `refresh_interval` can be overridden per instance — useful for slow
+endpoints or APIs with tight rate limits — by setting `refresh_interval` (seconds) alongside
+`enabled` under `plugins.builtin.<id>` in `buoy.yaml`:
+
+```yaml
+plugins:
+  builtin:
+    github:
+      enabled: true
+      refresh_interval: 600 # override the plugin's default interval
+```
+
+The global `refresh.plugins_interval` still applies as a floor on top of the override — the
+effective interval is `max(refresh_interval, refresh.plugins_interval)`. This only applies to
+built-in and entry-point plugins (both gate on `plugins.builtin.<id>`); plugins loaded from the
+`/plugins` directory have no config entry and can't be overridden.
 
 ```bash
 buoy plugin list                 # every discoverable plugin: source, id, name, version, enabled
@@ -216,7 +322,10 @@ ruff check src/ tests/
 
 - [Configuration Reference](https://github.com/gfargo/buoy/wiki/Configuration) — full YAML config guide
 - [Plugin Development](https://github.com/gfargo/buoy/wiki/Plugins) — create custom plugins
-- [Deployment Guide](https://github.com/gfargo/buoy/wiki/Deployment) — single node, fleet, reverse proxy patterns
+- [Native Install](docs/deployment/native.md) — pip + systemd, no Docker required
+- [Kubernetes](docs/deployment/kubernetes.md) — plain manifests and a Helm chart
+- [Ansible](docs/deployment/ansible.md) — automated native install
+- [Privilege / Metrics Matrix](docs/deployment/privilege-matrix.md) — what each privilege level gains or costs
 - [Changelog](CHANGELOG.md) — release history
 - [Contributing](CONTRIBUTING.md) — dev setup, PR process
 

@@ -1,0 +1,32 @@
+# Config for the markdown link checker (.github/workflows/links.yml).
+# https://lychee.cli.rs/usage/config/
+no_progress = true
+exclude_loopback = true
+exclude_private = true
+
+# Retry a bit harder than the defaults (3 retries / 1s) — github.com has been
+# observed to intermittently drop connections with an HTTP/2 protocol error.
+max_retries = 5
+retry_wait_time = 5
+
+exclude = [
+  # RFC 2606-style example subdomains used as placeholders in the docs
+  # (e.g. Tailscale tailnet examples like harbor.example.ts.net).
+  '^https?://[a-z0-9.-]*\.example\.ts\.net',
+  # Unresolvable example hostname used in a buoy.yaml.example config comment.
+  '^https?://adguard(:[0-9]+)?',
+  # Truncated example webhook URL in buoy.yaml.example ("...api/webhooks/...
+  # "), not a real endpoint.
+  '^https?://discord\.com/api/webhooks',
+  # Example internal hostname used in buoy.yaml.example to illustrate
+  # per-peer verify_ssl: false for self-signed certs; not a real host.
+  '^https?://lab\.internal',
+  # Placeholder hostname illustrating a reverse-proxy sub-path in
+  # buoy.yaml.example, not a real endpoint.
+  '^https?://host(:[0-9]+)?/',
+  # release-please-generated compare link in CHANGELOG.md: the `buoy-v2.1.0`
+  # tag predates the current tagging scheme and was never pushed, so the
+  # range 404s. Unrelated to any single PR; exclude until the changelog
+  # history is backfilled or regenerated.
+  '^https?://github\.com/gfargo/buoy/compare/buoy-v2\.1\.0\.\.\.buoy-v2\.2\.0$',
+]

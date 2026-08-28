@@ -3,7 +3,6 @@
 import pytest
 from starlette.testclient import TestClient
 
-import buoy.server as srv
 from buoy.config import BuoyConfig, FeaturesConfig, NodeConfig
 from buoy.server import create_app
 
@@ -18,10 +17,6 @@ def _make_config(history=True):
 @pytest.fixture(autouse=True)
 def isolate_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    yield
-    if srv._metric_store:
-        srv._metric_store.close()
-        srv._metric_store = None
 
 
 class TestContainerHistoryEndpoint:
@@ -50,10 +45,10 @@ class TestContainerHistoryEndpoint:
     def test_valid_name_with_data_returns_correct_shape(self):
         app = create_app(_make_config())
         with TestClient(app, raise_server_exceptions=False) as client:
-            srv._metric_store.record_container_states(
+            app.state.buoy.metric_store.record_container_states(
                 [{"name": "myapp", "status": "running", "restart_count": 0}]
             )
-            srv._metric_store.record_container_states(
+            app.state.buoy.metric_store.record_container_states(
                 [{"name": "myapp", "status": "running", "restart_count": 1}]
             )
             r = client.get("/api/container/myapp/history?hours=24")

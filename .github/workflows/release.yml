@@ -2,7 +2,11 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    # release-please's manifest/component mode tags releases as "buoy-vX.Y.Z",
+    # not the bare "vX.Y.Z" this used to match — confirmed 2026-08-23 that
+    # every release since whenever that changed silently never triggered an
+    # image publish (the plain "v*" pattern doesn't match a "buoy-v..." ref).
+    tags: ["buoy-v*"]
   workflow_dispatch:
 
 permissions:
@@ -13,17 +17,32 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # docker/metadata-action's `type=semver` needs a bare (optionally
+      # "v"-prefixed) semver string. Release Please prefixes component tags
+      # with "buoy-", so resolve that prefix and verify the result against
+      # pyproject.toml before creating any image metadata. Manual dispatches
+      # keep the branch ref; semver tags are omitted while latest/sha remain.
+      - name: Resolve and verify release version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            value=$(python .github/scripts/release_version.py "$GITHUB_REF_NAME" pyproject.toml)
+          else
+            value="$GITHUB_REF_NAME"
+          fi
+          echo "value=$value" >> "$GITHUB_OUTPUT"
 
       - id: meta
         uses: docker/metadata-action@v5
@@ -31,11 +50,11 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.value }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.value }}
             type=sha,format=short
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64

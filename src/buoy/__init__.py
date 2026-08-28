@@ -1,3 +1,7 @@
 """Buoy — a lightweight, per-node system dashboard for homelabs."""
 
-__version__ = "2.1.0"
+from . import _version
+
+__version__ = _version.VERSION
+
+__all__ = ["__version__"]
