@@ -2,8 +2,8 @@ apiVersion: v2
 name: buoy
 description: A lightweight, per-node system dashboard for homelabs
 type: application
-version: 2.2.0 # x-release-please-version
-appVersion: "2.2.0" # x-release-please-version
+version: 2.2.1 # x-release-please-version
+appVersion: "2.2.1" # x-release-please-version
 home: https://github.com/gfargo/buoy
 sources:
   - https://github.com/gfargo/buoy
