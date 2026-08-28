@@ -125,8 +125,7 @@ class DnsFilterPlugin(Plugin):
                 with urllib.request.urlopen(top_req, timeout=8, context=ctx) as resp:
                     top_data = json.loads(resp.read())
                 top_blocked = [
-                    {"domain": d, "count": c}
-                    for d, c in (top_data.get("top_ads") or {}).items()
+                    {"domain": d, "count": c} for d, c in (top_data.get("top_ads") or {}).items()
                 ]
             except Exception:
                 pass  # top domains are best-effort
@@ -255,8 +254,7 @@ class DnsFilterPlugin(Plugin):
         blocked = int(data.get("num_blocked_filtering", 0))
         pct = (blocked / queries * 100) if queries > 0 else 0.0
         top_blocked = [
-            {"domain": d, "count": c}
-            for d, c in (data.get("top_blocked_domains") or {}).items()
+            {"domain": d, "count": c} for d, c in (data.get("top_blocked_domains") or {}).items()
         ]
 
         return self._make_panel(queries, blocked, pct, top_blocked)

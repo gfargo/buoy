@@ -140,9 +140,7 @@ class TestDnsFilterPlugin:
             {"type": "pihole", "url": "http://pi.hole", "version": "6", "password": "secret"}
         )
         auth_resp = {"session": {"valid": True, "sid": "abc123", "csrf": "x", "validity": 300}}
-        summary_resp = {
-            "queries": {"total": 20000, "blocked": 4000, "percent_blocked": 20.0}
-        }
+        summary_resp = {"queries": {"total": 20000, "blocked": 4000, "percent_blocked": 20.0}}
         top_resp = {
             "blocked": [
                 {"domain": "ads.example.com", "count": 500},
@@ -166,13 +164,9 @@ class TestDnsFilterPlugin:
     @pytest.mark.asyncio
     async def test_pihole_v6_no_password(self):
         """Empty password is valid for open Pi-hole v6 instances."""
-        plugin = self._make_plugin(
-            {"type": "pihole", "url": "http://pi.hole", "version": "6"}
-        )
+        plugin = self._make_plugin({"type": "pihole", "url": "http://pi.hole", "version": "6"})
         auth_resp = {"session": {"valid": True, "sid": "sid_open", "csrf": "x", "validity": 300}}
-        summary_resp = {
-            "queries": {"total": 5000, "blocked": 500, "percent_blocked": 10.0}
-        }
+        summary_resp = {"queries": {"total": 5000, "blocked": 500, "percent_blocked": 10.0}}
         logout_resp = {}
         side_effects = _mock_urlopen_sequence([auth_resp, summary_resp, logout_resp])
         with patch("urllib.request.urlopen", side_effect=side_effects):
@@ -218,9 +212,7 @@ class TestDnsFilterPlugin:
             {"type": "pihole", "url": "http://pi.hole", "version": "6", "password": "pw"}
         )
         auth_resp = {"session": {"valid": True, "sid": "s1", "csrf": "x", "validity": 300}}
-        summary_resp = {
-            "queries": {"total": 1000, "blocked": 300, "percent_blocked": 30.0}
-        }
+        summary_resp = {"queries": {"total": 1000, "blocked": 300, "percent_blocked": 30.0}}
         logout_resp = {}
         side_effects = _mock_urlopen_sequence([auth_resp, summary_resp, logout_resp])
         with patch("urllib.request.urlopen", side_effect=side_effects):
@@ -236,9 +228,7 @@ class TestDnsFilterPlugin:
             {"type": "pihole", "url": "http://pi.hole", "version": "6", "password": "pw"}
         )
         auth_resp = {"session": {"valid": True, "sid": "s2", "csrf": "x", "validity": 300}}
-        summary_resp = {
-            "queries": {"total": 8000, "blocked": 800, "percent_blocked": 10.0}
-        }
+        summary_resp = {"queries": {"total": 8000, "blocked": 800, "percent_blocked": 10.0}}
         logout_resp = {}
 
         def _side_effect(req, *args, **kwargs):
@@ -269,10 +259,10 @@ class TestDnsFilterPlugin:
         """Version probe returns 200 → v6 path used."""
         plugin = self._make_plugin({"type": "pihole", "url": "http://pi.hole"})
         probe_resp = {"version": "6.0"}
-        auth_resp = {"session": {"valid": True, "sid": "sid_detected", "csrf": "x", "validity": 300}}
-        summary_resp = {
-            "queries": {"total": 12000, "blocked": 2400, "percent_blocked": 20.0}
+        auth_resp = {
+            "session": {"valid": True, "sid": "sid_detected", "csrf": "x", "validity": 300}
         }
+        summary_resp = {"queries": {"total": 12000, "blocked": 2400, "percent_blocked": 20.0}}
         logout_resp = {}
         side_effects = _mock_urlopen_sequence([probe_resp, auth_resp, summary_resp, logout_resp])
         with patch("urllib.request.urlopen", side_effect=side_effects):
@@ -307,16 +297,12 @@ class TestDnsFilterPlugin:
         """Version probe returning 401 (auth required) is treated as v6."""
         import urllib.error
 
-        plugin = self._make_plugin(
-            {"type": "pihole", "url": "http://pi.hole", "password": "pw"}
-        )
+        plugin = self._make_plugin({"type": "pihole", "url": "http://pi.hole", "password": "pw"})
         probe_401 = urllib.error.HTTPError(
             url="http://pi.hole/api/info/version", code=401, msg="Unauthorized", hdrs=None, fp=None
         )
         auth_resp = {"session": {"valid": True, "sid": "sid_pw", "csrf": "x", "validity": 300}}
-        summary_resp = {
-            "queries": {"total": 7000, "blocked": 700, "percent_blocked": 10.0}
-        }
+        summary_resp = {"queries": {"total": 7000, "blocked": 700, "percent_blocked": 10.0}}
         logout_resp = {}
         side_effects = [probe_401] + _mock_urlopen_sequence([auth_resp, summary_resp, logout_resp])
         with patch("urllib.request.urlopen", side_effect=side_effects):
