@@ -24,9 +24,9 @@ exclude = [
   # Placeholder hostname illustrating a reverse-proxy sub-path in
   # buoy.yaml.example, not a real endpoint.
   '^https?://host(:[0-9]+)?/',
-  # release-please-generated compare link in CHANGELOG.md: the `buoy-v2.1.0`
-  # tag predates the current tagging scheme and was never pushed, so the
-  # range 404s. Unrelated to any single PR; exclude until the changelog
-  # history is backfilled or regenerated.
-  '^https?://github\.com/gfargo/buoy/compare/buoy-v2\.1\.0\.\.\.buoy-v2\.2\.0$',
+  # release-please-generated semver compare links necessarily point at the
+  # not-yet-created target tag while a release PR is open, so they return 404
+  # until that PR merges. The tags and release workflow verify the range after
+  # merge; exclude only Buoy's generated compare URLs from pre-release checks.
+  '^https?://github\.com/gfargo/buoy/compare/buoy-v[0-9]+\.[0-9]+\.[0-9]+\.\.\.buoy-v[0-9]+\.[0-9]+\.[0-9]+$',
 ]
