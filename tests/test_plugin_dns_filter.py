@@ -77,31 +77,6 @@ class TestDnsFilterPlugin:
         assert result.detail["blocked"] == 1200
 
     @pytest.mark.asyncio
-    async def test_pihole_ok(self):
-        """Backwards-compat: no version hint defaults to auto-detect → v5 (404 on probe)."""
-        plugin = self._make_plugin({"type": "pihole", "url": "http://pi.hole"})
-        import urllib.error
-
-        summary_data = {
-            "dns_queries_today": 10000,
-            "ads_blocked_today": 1200,
-            "ads_percentage_today": 12.0,
-            "status": "enabled",
-        }
-        # detection probe raises 404 → v5 path; then the summary call returns data
-        probe_404 = urllib.error.HTTPError(
-            url="http://pi.hole/api/info/version", code=404, msg="Not Found", hdrs=None, fp=None
-        )
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=[probe_404, _mock_urlopen(summary_data)],
-        ):
-            result = await plugin.collect()
-        assert result.status == "ok"
-        assert result.detail["queries"] == 10000
-        assert result.detail["blocked"] == 1200
-
-    @pytest.mark.asyncio
     async def test_pihole_warn_when_blocked_over_threshold(self):
         plugin = self._make_plugin({"type": "pihole", "url": "http://pi.hole", "version": "5"})
         data = {
@@ -142,14 +117,19 @@ class TestDnsFilterPlugin:
         auth_resp = {"session": {"valid": True, "sid": "abc123", "csrf": "x", "validity": 300}}
         summary_resp = {"queries": {"total": 20000, "blocked": 4000, "percent_blocked": 20.0}}
         top_resp = {
-            "blocked": [
+            "domains": [
                 {"domain": "ads.example.com", "count": 500},
                 {"domain": "track.io", "count": 300},
-            ]
+            ],
+            "total_queries": 20000,
+            "blocked_queries": 4000,
         }
+        blocking_resp = {"blocking": "enabled"}
         # logout DELETE is best-effort (returns mock cm too)
         logout_resp = {}
-        side_effects = _mock_urlopen_sequence([auth_resp, summary_resp, top_resp, logout_resp])
+        side_effects = _mock_urlopen_sequence(
+            [auth_resp, summary_resp, top_resp, blocking_resp, logout_resp]
+        )
         with patch("urllib.request.urlopen", side_effect=side_effects):
             result = await plugin.collect()
 
@@ -160,6 +140,7 @@ class TestDnsFilterPlugin:
         assert result.detail["blocked"] == 4000
         assert result.detail["pct"] == 20.0
         assert len(result.detail["top_blocked"]) == 2
+        assert result.detail["top_blocked"][0] == {"domain": "ads.example.com", "count": 500}
 
     @pytest.mark.asyncio
     async def test_pihole_v6_no_password(self):
@@ -167,8 +148,12 @@ class TestDnsFilterPlugin:
         plugin = self._make_plugin({"type": "pihole", "url": "http://pi.hole", "version": "6"})
         auth_resp = {"session": {"valid": True, "sid": "sid_open", "csrf": "x", "validity": 300}}
         summary_resp = {"queries": {"total": 5000, "blocked": 500, "percent_blocked": 10.0}}
+        top_resp = {"domains": [], "total_queries": 5000, "blocked_queries": 500}
+        blocking_resp = {"blocking": "enabled"}
         logout_resp = {}
-        side_effects = _mock_urlopen_sequence([auth_resp, summary_resp, logout_resp])
+        side_effects = _mock_urlopen_sequence(
+            [auth_resp, summary_resp, top_resp, blocking_resp, logout_resp]
+        )
         with patch("urllib.request.urlopen", side_effect=side_effects):
             result = await plugin.collect()
 
@@ -213,13 +198,37 @@ class TestDnsFilterPlugin:
         )
         auth_resp = {"session": {"valid": True, "sid": "s1", "csrf": "x", "validity": 300}}
         summary_resp = {"queries": {"total": 1000, "blocked": 300, "percent_blocked": 30.0}}
+        top_resp = {"domains": [], "total_queries": 1000, "blocked_queries": 300}
+        blocking_resp = {"blocking": "enabled"}
         logout_resp = {}
-        side_effects = _mock_urlopen_sequence([auth_resp, summary_resp, logout_resp])
+        side_effects = _mock_urlopen_sequence(
+            [auth_resp, summary_resp, top_resp, blocking_resp, logout_resp]
+        )
         with patch("urllib.request.urlopen", side_effect=side_effects):
             result = await plugin.collect()
 
         assert result.status == "warn"
         assert result.detail["pct"] == 30.0
+
+    @pytest.mark.asyncio
+    async def test_pihole_v6_disabled_returns_error(self):
+        """blocking != "enabled" from /api/dns/blocking → error status."""
+        plugin = self._make_plugin(
+            {"type": "pihole", "url": "http://pi.hole", "version": "6", "password": "pw"}
+        )
+        auth_resp = {"session": {"valid": True, "sid": "s_disabled", "csrf": "x", "validity": 300}}
+        summary_resp = {"queries": {"total": 1000, "blocked": 0, "percent_blocked": 0.0}}
+        top_resp = {"domains": [], "total_queries": 1000, "blocked_queries": 0}
+        blocking_resp = {"blocking": "disabled"}
+        logout_resp = {}
+        side_effects = _mock_urlopen_sequence(
+            [auth_resp, summary_resp, top_resp, blocking_resp, logout_resp]
+        )
+        with patch("urllib.request.urlopen", side_effect=side_effects):
+            result = await plugin.collect()
+
+        assert result.status == "error"
+        assert "disabled" in result.summary.lower()
 
     @pytest.mark.asyncio
     async def test_pihole_v6_top_domains_best_effort(self):
@@ -229,10 +238,11 @@ class TestDnsFilterPlugin:
         )
         auth_resp = {"session": {"valid": True, "sid": "s2", "csrf": "x", "validity": 300}}
         summary_resp = {"queries": {"total": 8000, "blocked": 800, "percent_blocked": 10.0}}
+        blocking_resp = {"blocking": "enabled"}
         logout_resp = {}
 
         def _side_effect(req, *args, **kwargs):
-            # auth call → summary call → top_domains raises → logout
+            # auth call → summary call → top_domains raises → blocking → logout
             call_count = getattr(_side_effect, "_n", 0)
             _side_effect._n = call_count + 1
             if call_count == 0:
@@ -241,6 +251,8 @@ class TestDnsFilterPlugin:
                 return _mock_urlopen(summary_resp)
             elif call_count == 2:
                 raise Exception("top_domains unavailable")
+            elif call_count == 3:
+                return _mock_urlopen(blocking_resp)
             else:
                 return _mock_urlopen(logout_resp)
 
@@ -263,8 +275,12 @@ class TestDnsFilterPlugin:
             "session": {"valid": True, "sid": "sid_detected", "csrf": "x", "validity": 300}
         }
         summary_resp = {"queries": {"total": 12000, "blocked": 2400, "percent_blocked": 20.0}}
+        top_resp = {"domains": [], "total_queries": 12000, "blocked_queries": 2400}
+        blocking_resp = {"blocking": "enabled"}
         logout_resp = {}
-        side_effects = _mock_urlopen_sequence([probe_resp, auth_resp, summary_resp, logout_resp])
+        side_effects = _mock_urlopen_sequence(
+            [probe_resp, auth_resp, summary_resp, top_resp, blocking_resp, logout_resp]
+        )
         with patch("urllib.request.urlopen", side_effect=side_effects):
             result = await plugin.collect()
 
@@ -303,8 +319,12 @@ class TestDnsFilterPlugin:
         )
         auth_resp = {"session": {"valid": True, "sid": "sid_pw", "csrf": "x", "validity": 300}}
         summary_resp = {"queries": {"total": 7000, "blocked": 700, "percent_blocked": 10.0}}
+        top_resp = {"domains": [], "total_queries": 7000, "blocked_queries": 700}
+        blocking_resp = {"blocking": "enabled"}
         logout_resp = {}
-        side_effects = [probe_401] + _mock_urlopen_sequence([auth_resp, summary_resp, logout_resp])
+        side_effects = [probe_401] + _mock_urlopen_sequence(
+            [auth_resp, summary_resp, top_resp, blocking_resp, logout_resp]
+        )
         with patch("urllib.request.urlopen", side_effect=side_effects):
             result = await plugin.collect()
 

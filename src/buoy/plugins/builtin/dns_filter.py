@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import ssl
@@ -64,17 +65,18 @@ class DnsFilterPlugin(Plugin):
 
     async def _collect_pihole(self, url: str, ctx) -> PanelData:
         version_hint = str(self.config.get("version", "auto")).lower()
+        loop = asyncio.get_running_loop()
 
         if version_hint == "5":
-            return self._collect_pihole_v5(url, ctx)
+            return await loop.run_in_executor(None, self._collect_pihole_v5, url, ctx)
         elif version_hint == "6":
-            return self._collect_pihole_v6(url, ctx)
+            return await loop.run_in_executor(None, self._collect_pihole_v6, url, ctx)
 
         # Auto-detect: probe the v6-only /api/info/version endpoint
-        pihole_version = self._detect_pihole_version(url, ctx)
+        pihole_version = await loop.run_in_executor(None, self._detect_pihole_version, url, ctx)
         if pihole_version == 6:
-            return self._collect_pihole_v6(url, ctx)
-        return self._collect_pihole_v5(url, ctx)
+            return await loop.run_in_executor(None, self._collect_pihole_v6, url, ctx)
+        return await loop.run_in_executor(None, self._collect_pihole_v5, url, ctx)
 
     def _detect_pihole_version(self, url: str, ctx) -> int:
         """Return 6 if /api/info/version responds, 5 otherwise."""
@@ -174,6 +176,23 @@ class DnsFilterPlugin(Plugin):
         except Exception:
             pass
 
+    def _pihole_v6_blocking_enabled(self, url: str, ctx, sid: str) -> bool:
+        """Return whether Pi-hole v6 blocking is enabled (best-effort).
+
+        Assumes enabled if the check itself fails, so a transient error on
+        this best-effort call doesn't mask otherwise-healthy stats.
+        """
+        try:
+            req = urllib.request.Request(
+                f"{url}/api/dns/blocking",
+                headers={"Accept": "application/json", "X-FTL-SID": sid},
+            )
+            with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
+                data = json.loads(resp.read())
+            return data.get("blocking") == "enabled"
+        except Exception:
+            return True
+
     def _collect_pihole_v6(self, url: str, ctx) -> PanelData:
         # Authenticate (empty password is valid for open instances)
         try:
@@ -208,21 +227,19 @@ class DnsFilterPlugin(Plugin):
                 )
                 with urllib.request.urlopen(top_req, timeout=8, context=ctx) as resp:
                     top_data = json.loads(resp.read())
-                # v6 returns {"blocked": [{"domain": "...", "count": N}, ...]}
-                for entry in top_data.get("blocked", []):
+                # v6 returns {"domains": [{"domain": "...", "count": N}, ...], ...}
+                for entry in top_data.get("domains", []):
                     top_blocked.append(
                         {"domain": entry.get("domain", ""), "count": entry.get("count", 0)}
                     )
             except Exception:
                 pass  # top domains are best-effort
 
+            blocking_enabled = self._pihole_v6_blocking_enabled(url, ctx, sid)
         finally:
             self._pihole_v6_logout(url, ctx, sid)
 
-        # If filtering is disabled the API still returns 0s without an explicit flag;
-        # treat all-zero with no query history as a disabled/error state only if the
-        # summary explicitly carries a status field saying "disabled".
-        if summary.get("status") == "disabled":
+        if not blocking_enabled:
             return PanelData(status="error", summary="Filtering disabled")
 
         return self._make_panel(queries, blocked, pct, top_blocked)
