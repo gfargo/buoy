@@ -51,6 +51,18 @@ All notable changes to Buoy are documented here.
 - Frontend: correct `formatUptime` boundary and extract shared util (#218)
 - Alerts: webhook dispatch reads URL from `config.alerts` not `plugins.builtin` (#217)
 
+## [2.3.0](https://github.com/gfargo/buoy/compare/buoy-v2.2.1...buoy-v2.3.0) (2026-08-30)
+
+
+### Features
+
+* **fleet:** show peer latency badge in fleet grid without history ([#290](https://github.com/gfargo/buoy/issues/290)) ([58556b6](https://github.com/gfargo/buoy/commit/58556b668ebb862a60218b0685f85b3a82348311))
+
+
+### Bug Fixes
+
+* **dns_filter:** add Pi-hole v6 session auth with v5/v6 auto-detection ([#291](https://github.com/gfargo/buoy/issues/291)) ([71c340b](https://github.com/gfargo/buoy/commit/71c340b822505b2cbf3a6aac079ab9c6a07f53f1))
+
 ## [2.2.1](https://github.com/gfargo/buoy/compare/buoy-v2.2.0...buoy-v2.2.1) (2026-08-28)
 
 
