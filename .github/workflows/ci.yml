@@ -18,7 +18,7 @@ jobs:
       - run: pytest --cov=buoy --cov-report=term-missing --cov-fail-under=75
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
       - run: node --test tests/js/*.test.mjs
