@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -433,6 +433,55 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     )
 
 
+# Section name -> the dataclass whose field names are the recognized keys
+# for that section. One level deep only: a section's own keys are checked,
+# but a freeform nested structure that's itself the *value* of a recognized
+# field (services.overrides.<name>, plugins.builtin.<id>, a network.peers
+# entry) is a user-defined map/list, not something to validate here.
+_CONFIG_SECTIONS: dict[str, type] = {
+    "node": NodeConfig,
+    "network": NetworkConfig,
+    "services": ServicesConfig,
+    "theme": ThemeConfig,
+    "auth": AuthConfig,
+    "features": FeaturesConfig,
+    "refresh": RefreshConfig,
+    "plugins": PluginsConfig,
+    "alerts": AlertsConfig,
+    "logging": LoggingConfig,
+}
+
+
+def _warn_unknown_keys(raw: dict[str, Any]) -> None:
+    """Warn (never fail) on a config key that doesn't match anything Buoy
+    reads — most often a typo, e.g. ``noed: {nmae: x}`` in buoy.yaml, which
+    _build_config's plain ``.get()`` calls otherwise ignore in complete
+    silence: the node still starts, just not configured the way the typo'd
+    keys intended, with no diagnostic anywhere (BUG-24 / SPEC §3.3).
+    """
+    if not isinstance(raw, dict):
+        return
+
+    for section_key, section_value in raw.items():
+        section_cls = _CONFIG_SECTIONS.get(section_key)
+        if section_cls is None:
+            logger.warning(
+                "buoy.yaml: unrecognized top-level key '%s' — check for a typo; ignored",
+                section_key,
+            )
+            continue
+        if not isinstance(section_value, dict):
+            continue
+        known = {f.name for f in fields(section_cls)}
+        for field_key in section_value:
+            if field_key not in known:
+                logger.warning(
+                    "buoy.yaml: unrecognized key '%s.%s' — check for a typo; ignored",
+                    section_key,
+                    field_key,
+                )
+
+
 def load_config(path: str | None = None, demo: bool = False) -> BuoyConfig:
     """Load and return the Buoy configuration.
 
@@ -452,6 +501,12 @@ def load_config(path: str | None = None, demo: bool = False) -> BuoyConfig:
     else:
         logger.info("No config file found, using defaults")
         raw = {}
+
+    # Unknown keys warn but don't fail (SPEC §3.3) — checked against the raw
+    # YAML before the env-var overlay, since those are always already-known
+    # keys from a fixed allowlist (_apply_env_overrides) and would only add
+    # noise here.
+    _warn_unknown_keys(raw)
 
     # Apply environment variable overrides
     raw = _apply_env_overrides(raw)
