@@ -304,6 +304,26 @@ class TestAlertEngineEvaluation:
         assert engine.alert_history[0]["metric"] == "disk"
 
     @pytest.mark.asyncio
+    async def test_alert_history_capped_at_max(self):
+        """BUG-21 regression: the history list must not grow without bound —
+        only the newest _MAX_ALERT_HISTORY entries are kept, on write, not
+        just sliced off on read."""
+        from buoy.alerts import _MAX_ALERT_HISTORY
+
+        config = _make_config()
+        engine = AlertEngine(config)
+
+        total_fired = _MAX_ALERT_HISTORY + 10
+        for i in range(total_fired):
+            await engine._fire_alert("disk", "warn", value=80 + i, threshold=80)
+
+        assert len(engine._history) == _MAX_ALERT_HISTORY
+        assert len(engine.alert_history) == _MAX_ALERT_HISTORY
+        # Oldest 10 dropped; newest-first-fired-first ordering preserved.
+        assert engine.alert_history[0]["value"] == 80 + 10
+        assert engine.alert_history[-1]["value"] == 80 + total_fired - 1
+
+    @pytest.mark.asyncio
     async def test_multiple_metrics_can_alert(self):
         """Multiple metrics can have active alerts simultaneously."""
         config = _make_config()

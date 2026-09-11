@@ -21,6 +21,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("buoy.alerts")
 
+# Alert history is capped at write time (BUG-21) — previously only the
+# `alert_history` property sliced to the last 50 on read, so the backing
+# list grew without bound for the lifetime of the process.
+_MAX_ALERT_HISTORY = 50
+
 # Default thresholds (can be overridden in config in the future)
 DEFAULT_THRESHOLDS = {
     "cpu": {"warn": 80, "crit": 95, "duration": 60},  # % for 60s
@@ -67,7 +72,7 @@ class AlertEngine:
         self._broadcast_fn = broadcast_fn
         self._active_alerts: dict[str, Alert] = {}
         self._breach_start: dict[str, float] = {}  # metric → first breach timestamp
-        self._history: list[Alert] = []  # last 50 alerts
+        self._history: list[Alert] = []  # newest _MAX_ALERT_HISTORY alerts
 
     @property
     def active_alerts(self) -> list[Alert]:
@@ -75,7 +80,7 @@ class AlertEngine:
 
     @property
     def alert_history(self) -> list[dict]:
-        return [a.to_dict() for a in self._history[-50:]]
+        return [a.to_dict() for a in self._history]
 
     async def evaluate(self, stats: dict):
         """Evaluate a stats snapshot against all thresholds."""
@@ -152,6 +157,8 @@ class AlertEngine:
         )
         self._active_alerts[metric] = alert
         self._history.append(alert)
+        if len(self._history) > _MAX_ALERT_HISTORY:
+            del self._history[: len(self._history) - _MAX_ALERT_HISTORY]
         await self._notify_alert(alert)
 
     async def _notify_alert(self, alert: Alert):
