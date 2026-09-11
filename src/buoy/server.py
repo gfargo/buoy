@@ -901,11 +901,12 @@ async def index(request: Request) -> Response:
 # static/js/plugins.js) and 'unsafe-inline' in style-src by the pervasive
 # inline style="..." attributes across the dashboard templates. Both are
 # tracked for removal under PP-5 (sandboxed plugin renderer), at which point
-# this policy should tighten to drop them. fonts.googleapis.com/gstatic.com
-# are allowlisted because index.html loads the JetBrains Mono / Outfit
-# webfonts from Google Fonts. connect-src includes configured fleet peer
-# origins since the fleet grid fetches each peer's /api/stats directly from
-# the browser (static/js/fleet.js).
+# this policy should tighten to drop them. The JetBrains Mono / Outfit
+# webfonts are self-hosted (static/fonts/, BUG-48) rather than loaded from
+# Google Fonts, so font-src/style-src don't need an external allowlist for
+# them. connect-src includes configured fleet peer origins since the fleet
+# grid fetches each peer's /api/stats directly from the browser
+# (static/js/fleet.js).
 _CSP_NETLOC_RE = re.compile(r"^[A-Za-z0-9.\-\[\]:]+$")
 
 
@@ -935,8 +936,8 @@ def _build_csp_policy(peer_urls: list[str]) -> str:
     return (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-eval'; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        "font-src 'self'; "
         "img-src 'self' data:; "
         f"connect-src {connect_src}; "
         "object-src 'none'; "
