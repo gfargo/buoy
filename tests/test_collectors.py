@@ -296,6 +296,161 @@ class TestDiskCollectorLocalMounts:
         assert mounts[0]["mount"] == "/"
 
 
+class TestDiskCollectorRootPercentConsistency:
+    """Tests for _root_disk_percent() agreeing with _all_mounts() (BUG-25).
+
+    The headline gauge (collect_summary()'s disk_pct) used to read this
+    process's own container rootfs via shutil.disk_usage("/"), while the
+    detail panel's mount table (collect_detail()'s mounts) read the host's
+    view via nsenter. The two could legitimately disagree.
+    """
+
+    @pytest.mark.asyncio
+    async def test_root_percent_matches_all_mounts_root_entry(self):
+        """The gauge must read its value from the same mount list the
+        detail panel uses, not take an independent (and possibly
+        container-scoped) measurement."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        coll = DiskCollector(_make_config())
+        host_mounts = [
+            {
+                "fs": "/dev/sda1",
+                "size": "500G",
+                "used": "450G",
+                "avail": "50G",
+                "pct": 90,
+                "mount": "/",
+            },
+            {
+                "fs": "/dev/sdb1",
+                "size": "4T",
+                "used": "1T",
+                "avail": "3T",
+                "pct": 25,
+                "mount": "/mnt/storage",
+            },
+        ]
+
+        with patch.object(coll, "_all_mounts", new=AsyncMock(return_value=host_mounts)):
+            pct = await coll._root_disk_percent()
+
+        # The host's root usage (90%), not whatever this test process's own
+        # shutil.disk_usage("/") happens to report.
+        assert pct == 90
+
+    @pytest.mark.asyncio
+    async def test_root_percent_falls_back_when_no_root_mount_present(self):
+        """If the resolved mount list has no "/" entry at all (unexpected,
+        but possible), fall back to this process's own root usage rather
+        than crashing or silently reporting 0."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        coll = DiskCollector(_make_config())
+        mounts_without_root = [
+            {
+                "fs": "/dev/sdb1",
+                "size": "4T",
+                "used": "1T",
+                "avail": "3T",
+                "pct": 25,
+                "mount": "/data",
+            }
+        ]
+
+        with patch.object(coll, "_all_mounts", new=AsyncMock(return_value=mounts_without_root)):
+            pct = await coll._root_disk_percent()
+
+        assert 0 <= pct <= 100
+
+    @pytest.mark.asyncio
+    async def test_collect_summary_and_collect_detail_agree(self):
+        """End-to-end: collect_summary()'s disk_pct and collect_detail()'s
+        "/" mount entry must come from the same underlying data."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        coll = DiskCollector(_make_config())
+        host_mounts = [
+            {
+                "fs": "/dev/sda1",
+                "size": "500G",
+                "used": "450G",
+                "avail": "50G",
+                "pct": 90,
+                "mount": "/",
+            }
+        ]
+
+        with (
+            patch.object(coll, "_nsenter_mounts", new=AsyncMock(return_value=host_mounts)),
+            patch.object(coll, "_nvme_smart", new=AsyncMock(return_value=None)),
+            patch.object(
+                coll, "_disk_io", new=AsyncMock(return_value={"read_gb": 0, "write_gb": 0})
+            ),
+        ):
+            summary = await coll.collect_summary()
+            detail = await coll.collect_detail()
+
+        root_entry = next(m for m in detail["mounts"] if m["mount"] == "/")
+        assert summary["disk_pct"] == root_entry["pct"] == 90
+
+
+class TestDiskCollectorMountsCache:
+    """Tests for _all_mounts()' 5s TTL cache (mirrors DockerCollector's
+    list_containers cache — nsenter+df is a real subprocess spawn, and
+    _all_mounts() is now on the hot path via _root_disk_percent())."""
+
+    @pytest.mark.asyncio
+    async def test_second_call_within_ttl_uses_cache(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.disk import DiskCollector
+
+        coll = DiskCollector(_make_config())
+        coll._nsenter_mounts = AsyncMock(return_value=[{"mount": "/", "pct": 42}])
+
+        first = await coll._all_mounts()
+        second = await coll._all_mounts()
+
+        assert first == second
+        coll._nsenter_mounts.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cache_expires_after_ttl(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.disk import DiskCollector
+
+        coll = DiskCollector(_make_config())
+        coll._nsenter_mounts = AsyncMock(return_value=[{"mount": "/", "pct": 42}])
+
+        await coll._all_mounts()
+        coll._mounts_cache_ts -= 6  # simulate TTL expiry (_MOUNTS_CACHE_TTL = 5.0)
+        await coll._all_mounts()
+
+        assert coll._nsenter_mounts.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_only_fetch_once(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.disk import DiskCollector
+
+        coll = DiskCollector(_make_config())
+        coll._nsenter_mounts = AsyncMock(return_value=[{"mount": "/", "pct": 42}])
+
+        results = await asyncio.gather(coll._all_mounts(), coll._all_mounts(), coll._all_mounts())
+
+        assert all(r == results[0] for r in results)
+        coll._nsenter_mounts.assert_called_once()
+
+
 class TestDiskCollectorNvme:
     """Tests for real DiskCollector NVMe SMART path."""
 
