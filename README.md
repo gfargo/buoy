@@ -189,6 +189,8 @@ volumes:
 ```
 
 > **Note:** `privileged` + `pid: host` enables full system metrics (temperature, all disk mounts, NVMe SMART). If you only need container stats, you can drop `privileged` and keep just `pid: host`. See the [privilege matrix](docs/deployment/privilege-matrix.md) for the full breakdown, or the [native install](docs/deployment/native.md) to get full metrics without any container privilege flags at all.
+>
+> Want the same metrics without `privileged`, or to run as a non-root user? Two ready-to-use, verified alternatives: [`docker-compose.hardened.yml`](docker-compose.hardened.yml) (full functionality, specific capabilities instead of `privileged`) and [`docker-compose.minimal.yml`](docker-compose.minimal.yml) (non-root, container-only metrics, no Docker socket).
 
 ## Other Deployment Paths
 

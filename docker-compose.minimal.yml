@@ -1,0 +1,31 @@
+# Strictest profile: non-root, no privileged, no pid: host, no Docker socket.
+# Verified against a real container: a non-root user gets a plain
+# `PermissionError` just *connecting* to a typical host's docker.sock (owned
+# root:root mode 0660), so this tier trades away Docker service discovery,
+# container stats/logs/restart, and every host-level metric — it only
+# reports this container's own CPU/memory/uptime/disk usage.
+#
+# Want Docker-socket access back on a non-root UID? Add
+# `group_add: ["<your host's docker group GID>"]` — find the GID with
+# `stat -c '%g' /var/run/docker.sock` on the host. That's inherently
+# host-specific, so it's not baked in here; see
+# docs/deployment/privilege-matrix.md#tier-3b--non-root-no-docker-socket-verified.
+#
+# Usage: docker compose -f docker-compose.minimal.yml up -d
+services:
+  buoy:
+    image: ghcr.io/gfargo/buoy:latest
+    container_name: buoy
+    restart: unless-stopped
+    user: "1000:1000" # matches the image's pre-chowned /plugins and /data
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./buoy.yaml:/config/buoy.yaml:ro
+      - buoy-data:/data
+    environment:
+      - BUOY_AUTH_TOKEN=${BUOY_AUTH_TOKEN:-}
+    # no privileged, no pid: host, no docker.sock mount
+
+volumes:
+  buoy-data:

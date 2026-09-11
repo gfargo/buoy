@@ -61,6 +61,34 @@ mount), NVMe SMART health. Temperature also requires `privileged` in
 practice, since `/sys/class/thermal` isn't reliably exposed by `pid: host`
 alone — verify on your kernel/container runtime.
 
+#### Tier 2b — Full metrics, no `privileged` (verified)
+
+`privileged: true` grants *every* capability plus full device access and
+disables seccomp/AppArmor confinement — but `nsenter -t 1 -m` (what
+`_nsenter_mounts()`/`_nvme_smart()` actually need) only requires two of
+those capabilities. Confirmed against a real container (not just read from
+docs): `cap_add: [SYS_ADMIN, SYS_PTRACE]` with `cap_drop: [ALL]` restores
+the **exact same** host mount list and Docker service discovery as Tier 1,
+while dropping every other capability and the blanket device/confinement
+bypass `privileged` implies.
+
+```yaml
+pid: host
+cap_add: [SYS_ADMIN, SYS_PTRACE]
+cap_drop: [ALL]
+# privileged: true   ← omitted
+```
+
+The container still runs as root — `nsenter`'s namespace-entry check
+(`ptrace_may_access`) requires it regardless of which capabilities are
+granted, confirmed by testing as a non-root UID with the same capabilities
+added (`Permission denied` opening `/proc/1/ns/mnt`). So this tier reduces
+attack surface (no blanket device access, no confinement bypass, no
+capabilities beyond the two actually used) without sacrificing any
+functionality Tier 1 provides — it just can't also drop root.
+
+Ready to use as-is: [`docker-compose.hardened.yml`](../../docker-compose.hardened.yml).
+
 ### Tier 3 — Minimal / unprivileged
 
 No `privileged`, no `pid: host` — just the Docker socket mount for service
@@ -79,6 +107,38 @@ root, not the host's real mounts). You lose: temperature, the host's real
 mount list, NVMe SMART, host top-processes, and every host-introspection
 plugin (`tailscale`, `wireguard`, `smart_disk`, `cron_health`,
 `journal_errors`, `systemd_health`).
+
+#### Tier 3b — Non-root, no Docker socket (verified)
+
+Every tier above still runs the container's process as root — the image
+has no `USER` set, and dropping to a non-root UID has a real cost
+verified against a live container: the Docker socket on a typical host is
+owned `root:root` mode `0660`, so a non-root process gets
+`PermissionError: [Errno 13] Permission denied` just *connecting* to it,
+before Docker even gets involved. There's no fixed UID/GID this image
+could bake in that works across arbitrary hosts, since the host's actual
+docker group GID varies per install.
+
+Trade Docker-socket features away entirely and this becomes safe to do:
+nothing else in this tier needs `nsenter` or socket access either, so a
+non-root UID costs nothing further. The shipped image's `/plugins` and
+`/data` directories are pre-owned by uid/gid `1000` for exactly this —
+add `user: "1000:1000"` and there's no extra `chown` step to do yourself.
+
+```yaml
+user: "1000:1000"
+# no privileged, no pid: host, no docker.sock mount
+```
+
+You get: this container's own CPU/memory/uptime, plus disk usage for its
+own filesystem. You lose everything Tier 3 has (service discovery,
+container stats/logs/restart) on top of what Tier 3 already loses. If you
+want Docker-socket access back on a non-root UID, add
+`group_add: ["<your host's docker group GID>"]` (find it with
+`stat -c '%g' /var/run/docker.sock` on the host) — this is inherently
+host-specific, so it isn't baked into a ready-made compose file here.
+
+Ready to use as-is: [`docker-compose.minimal.yml`](../../docker-compose.minimal.yml).
 
 ### Tier 0 — Native / systemd
 
