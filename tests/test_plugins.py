@@ -857,6 +857,28 @@ class TestPrometheusExporterPlugin:
         # Uptime: 120h * 3600 + 30 * 60 = 433800
         assert 'buoy_uptime_seconds{host="compass"} 433800' in output
 
+    def test_format_metrics_omits_temperature_when_unavailable(self):
+        """BUG-28: temp is None when no CPU sensor could be identified.
+        Omit the metric line entirely (same convention as the optional NVMe
+        block below) rather than emit a misleading 'None' or fake 0."""
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "compass",
+            "cpu": 42.5,
+            "mem_used": 4.0,
+            "mem_total": 8.0,
+            "temp": None,
+            "disk_pct": 67,
+            "containers": 21,
+            "uptime_h": 120,
+            "uptime_m": 30,
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert "buoy_temperature_celsius" not in output
+        assert "None" not in output
+
     def test_format_metrics_with_nvme(self):
         from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
 

@@ -91,6 +91,11 @@ class AlertEngine:
         }
 
         for metric, value in metrics_to_check.items():
+            if value is None:
+                # No reading this cycle (e.g. temp: no CPU sensor could be
+                # identified, BUG-28) — nothing to compare against a
+                # threshold, so skip rather than crash on None >= int.
+                continue
             thresholds = DEFAULT_THRESHOLDS.get(metric, {})
             await self._check_metric(metric, value, thresholds)
 

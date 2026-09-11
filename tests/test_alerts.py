@@ -68,6 +68,19 @@ class TestAlertEngineEvaluation:
         assert len(engine.active_alerts) == 0
 
     @pytest.mark.asyncio
+    async def test_none_temp_is_skipped_not_crashed_on(self):
+        """BUG-28: temp is None when no CPU sensor could be identified.
+        None >= int raises TypeError — evaluate() must skip that metric
+        instead of crashing the whole stats cycle."""
+        config = _make_config()
+        engine = AlertEngine(config)
+
+        await engine.evaluate(
+            {"cpu": 30, "mem_used": 2048, "mem_total": 8192, "temp": None, "disk_pct": 50}
+        )
+        assert len(engine.active_alerts) == 0
+
+    @pytest.mark.asyncio
     async def test_cpu_crit_immediate_fire(self):
         """CPU at critical level fires immediately (duration=60 but tested with sustained breach)."""
         config = _make_config()

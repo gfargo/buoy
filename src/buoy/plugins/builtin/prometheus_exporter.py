@@ -74,9 +74,11 @@ class PrometheusExporterPlugin(Plugin):
         mem_total_bytes = int(float(stats.get("mem_total", 0)) * 1073741824)
         lines.append(f'buoy_memory_total_bytes{{host="{host}"}} {mem_total_bytes}')
 
-        lines.append("# HELP buoy_temperature_celsius CPU temperature")
-        lines.append("# TYPE buoy_temperature_celsius gauge")
-        lines.append(f'buoy_temperature_celsius{{host="{host}"}} {stats.get("temp", 0)}')
+        temp = stats.get("temp")
+        if temp is not None:
+            lines.append("# HELP buoy_temperature_celsius CPU temperature")
+            lines.append("# TYPE buoy_temperature_celsius gauge")
+            lines.append(f'buoy_temperature_celsius{{host="{host}"}} {temp}')
 
         lines.append("# HELP buoy_disk_used_percent Root disk usage percentage")
         lines.append("# TYPE buoy_disk_used_percent gauge")
