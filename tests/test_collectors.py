@@ -1119,3 +1119,141 @@ class TestSystemCollectorCpu:
             result = await coll._read_cpu()
 
         assert result == 0
+
+
+class TestSystemCollectorTemperature:
+    """Tests for the real SystemCollector's CPU temperature detection (BUG-28).
+
+    thermal_zone0 is the CPU on a Raspberry Pi but is frequently `acpitz`,
+    a wifi radio, or a battery sensor on x86 — _read_temperature() used to
+    always read zone0 by a fixed index regardless of what it actually was,
+    reporting the wrong sensor (or 0°C, indistinguishable from a real cold
+    reading) on non-Pi hardware.
+    """
+
+    @staticmethod
+    def _patch_sysfs(hwmon: dict | None = None, thermal: dict | None = None):
+        """Fake /sys/class/hwmon and /sys/class/thermal trees.
+
+        hwmon: {"hwmon0": {"name": "coretemp", "temp1_input": "45000"}, ...}
+        thermal: {"thermal_zone0": {"type": "cpu-thermal", "temp": "42000"}, ...}
+        """
+        import io
+        from unittest.mock import patch
+
+        hwmon = hwmon or {}
+        thermal = thermal or {}
+
+        files: dict[str, str] = {}
+        for entry, attrs in hwmon.items():
+            for fname, content in attrs.items():
+                files[f"/sys/class/hwmon/{entry}/{fname}"] = content
+        for entry, attrs in thermal.items():
+            for fname, content in attrs.items():
+                files[f"/sys/class/thermal/{entry}/{fname}"] = content
+
+        def fake_listdir(path):
+            if path == "/sys/class/hwmon":
+                return sorted(hwmon.keys())
+            if path == "/sys/class/thermal":
+                return sorted(thermal.keys())
+            raise FileNotFoundError(path)
+
+        def fake_open(path, *args, **kwargs):
+            if path in files:
+                return io.StringIO(files[path])
+            raise FileNotFoundError(path)
+
+        return (
+            patch("os.listdir", side_effect=fake_listdir),
+            patch("builtins.open", side_effect=fake_open),
+        )
+
+    def test_prefers_coretemp_hwmon_over_thermal_zone(self):
+        """A coretemp hwmon driver wins even if thermal_zone0 exists with an
+        unrelated type — hwmon is checked before any thermal zone scan."""
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        p_listdir, p_open = self._patch_sysfs(
+            hwmon={"hwmon0": {"name": "coretemp", "temp1_input": "45000"}},
+            thermal={"thermal_zone0": {"type": "iwlwifi_1", "temp": "30000"}},
+        )
+        with p_listdir, p_open:
+            temp = coll._read_temperature()
+
+        assert temp == 45
+
+    def test_falls_back_to_cpu_thermal_zone_type_when_no_hwmon(self):
+        """Pi-style: no relevant hwmon driver, but a zone typed cpu-thermal
+        exists — found by type, regardless of its index."""
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        p_listdir, p_open = self._patch_sysfs(
+            thermal={
+                "thermal_zone0": {"type": "iwlwifi_1", "temp": "30000"},
+                "thermal_zone1": {"type": "cpu-thermal", "temp": "52000"},
+            },
+        )
+        with p_listdir, p_open:
+            temp = coll._read_temperature()
+
+        assert temp == 52
+
+    def test_falls_back_to_acpitz_as_last_resort(self):
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        p_listdir, p_open = self._patch_sysfs(
+            thermal={"thermal_zone0": {"type": "acpitz", "temp": "48000"}},
+        )
+        with p_listdir, p_open:
+            temp = coll._read_temperature()
+
+        assert temp == 48
+
+    def test_prefers_specific_zone_type_over_acpitz(self):
+        """acpitz is a best-effort last resort — a more specific CPU zone
+        type wins if both are present on the same host."""
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        p_listdir, p_open = self._patch_sysfs(
+            thermal={
+                "thermal_zone0": {"type": "acpitz", "temp": "40000"},
+                "thermal_zone1": {"type": "x86_pkg_temp", "temp": "55000"},
+            },
+        )
+        with p_listdir, p_open:
+            temp = coll._read_temperature()
+
+        assert temp == 55
+
+    def test_returns_none_when_no_matching_sensor_anywhere(self):
+        """A wifi/battery-only thermal zone with no matching hwmon must not
+        be silently reported as 0°C — that's indistinguishable from a real
+        (very cold) reading."""
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        p_listdir, p_open = self._patch_sysfs(
+            thermal={"thermal_zone0": {"type": "iwlwifi_1", "temp": "30000"}},
+        )
+        with p_listdir, p_open:
+            temp = coll._read_temperature()
+
+        assert temp is None
+
+    def test_returns_none_when_hwmon_path_does_not_exist(self):
+        """A restrictive container without /sys/class/hwmon mounted must not
+        raise — falls through to the thermal zone scan."""
+        from unittest.mock import patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with patch("os.listdir", side_effect=FileNotFoundError):
+            temp = coll._read_hwmon_cpu_temp()
+
+        assert temp is None

@@ -200,14 +200,88 @@ class SystemCollector:
 
     # ── Temperature ────────────────────────────────────────────────────────────
 
-    def _read_temperature(self) -> int:
-        """Read CPU temperature from thermal zone."""
+    def _read_temperature(self) -> int | None:
+        """Read CPU temperature, or None if no CPU sensor could be identified.
+
+        thermal_zone0 is the CPU on a Raspberry Pi but is frequently
+        `acpitz`, a wifi radio, or a battery sensor on x86 (BUG-28) — always
+        reading zone0 by index silently reported the wrong sensor, or 0°C
+        when it happened not to exist. Prefer hwmon drivers known to be CPU
+        package sensors (coretemp/k10temp/zenpower), then fall back to
+        scanning thermal zones by *type* rather than by a fixed index.
+        """
+        temp = self._read_hwmon_cpu_temp()
+        if temp is not None:
+            return temp
+        return self._read_thermal_zone_cpu_temp()
+
+    _CPU_HWMON_NAMES = frozenset({"coretemp", "k10temp", "zenpower", "cpu_thermal"})
+
+    def _read_hwmon_cpu_temp(self) -> int | None:
+        """Scan /sys/class/hwmon for a driver known to expose the CPU package temp."""
         try:
-            with open("/sys/class/thermal/thermal_zone0/temp") as f:
-                return int(f.read().strip()) // 1000
-        except Exception:
-            logger.debug("failed to read temperature from thermal_zone0", exc_info=True)
-            return 0
+            entries = sorted(os.listdir("/sys/class/hwmon"))
+        except OSError:
+            return None
+
+        for entry in entries:
+            base = f"/sys/class/hwmon/{entry}"
+            try:
+                with open(f"{base}/name") as f:
+                    name = f.read().strip()
+            except OSError:
+                continue
+            if name not in self._CPU_HWMON_NAMES:
+                continue
+            try:
+                with open(f"{base}/temp1_input") as f:
+                    return int(f.read().strip()) // 1000
+            except (OSError, ValueError):
+                logger.debug("hwmon '%s' matched but temp1_input unreadable", name, exc_info=True)
+        return None
+
+    # Zone `type` values known to be the CPU/SoC package temperature, most
+    # specific first. "acpitz" is a best-effort fallback: on ACPI-based x86
+    # hosts without coretemp/k10temp loaded it's often the only sensor at
+    # all, but it isn't always specifically the CPU, so it's tried last.
+    _CPU_THERMAL_ZONE_TYPES = (
+        "x86_pkg_temp",
+        "cpu-thermal",
+        "cpu_thermal",
+        "soc-thermal",
+        "soc_thermal",
+        "acpitz",
+    )
+
+    def _read_thermal_zone_cpu_temp(self) -> int | None:
+        """Scan /sys/class/thermal for a zone whose *type* looks CPU-related."""
+        try:
+            entries = sorted(
+                e for e in os.listdir("/sys/class/thermal") if e.startswith("thermal_zone")
+            )
+        except OSError:
+            return None
+
+        zones: dict[str, str] = {}  # type -> temp file path, first match wins per type
+        for entry in entries:
+            base = f"/sys/class/thermal/{entry}"
+            try:
+                with open(f"{base}/type") as f:
+                    zone_type = f.read().strip()
+            except OSError:
+                continue
+            zones.setdefault(zone_type, f"{base}/temp")
+
+        for preferred_type in self._CPU_THERMAL_ZONE_TYPES:
+            temp_path = zones.get(preferred_type)
+            if temp_path is None:
+                continue
+            try:
+                with open(temp_path) as f:
+                    return int(f.read().strip()) // 1000
+            except (OSError, ValueError):
+                logger.debug("thermal zone type '%s' matched but unreadable", preferred_type)
+        return None
 
     # ── Uptime ─────────────────────────────────────────────────────────────────
 
