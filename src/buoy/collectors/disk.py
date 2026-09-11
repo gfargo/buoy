@@ -14,6 +14,7 @@ import shutil
 import time
 from typing import TYPE_CHECKING
 
+from buoy.smartctl import run_smartctl, scan_nvme_devices
 from buoy.subprocess_utils import communicate
 
 if TYPE_CHECKING:
@@ -265,30 +266,24 @@ class DiskCollector:
     # ── NVMe SMART ─────────────────────────────────────────────────────────────
 
     async def _nvme_smart(self) -> dict | None:
-        """Read NVMe SMART data via smartctl.
+        """Read NVMe SMART data via smartctl for the first NVMe drive found.
 
-        Tries nsenter first (container with pid:host) to access the host's
-        /dev/nvme0n1, then falls back to direct access.
+        Discovers the actual NVMe device present via `smartctl --scan`
+        (shared with the smart_disk plugin's drive discovery, BUG-27)
+        instead of assuming the drive is always named `nvme0n1` — a wrong
+        assumption on hosts where it's numbered differently, or where
+        `nvme0n1` simply isn't the device that exists. Falls back to the
+        historical `/dev/nvme0n1` guess if the scan itself finds nothing, in
+        case `--scan` misses a device that a direct probe would still reach.
+
+        Surfacing every drive on a multi-NVMe host is a larger UI change
+        (today's headline gauge has one NVMe slot) tracked separately as
+        #199 (FEAT-16); this only fixes probing the wrong device path.
         """
-        # Build command: prefer nsenter to reach host device from container
-        nsenter_cmd = ["nsenter", "-t", "1", "-m", "--", "smartctl", "-a", "/dev/nvme0n1"]
-        direct_cmd = ["smartctl", "-a", "/dev/nvme0n1"]
+        nvme_devices = await scan_nvme_devices()
+        device = nvme_devices[0] if nvme_devices else "/dev/nvme0n1"
 
-        output: str | None = None
-        for cmd in (nsenter_cmd, direct_cmd):
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await communicate(proc, timeout=5)
-                if proc.returncode is not None and stdout:
-                    output = stdout.decode()
-                    break
-            except (TimeoutError, FileNotFoundError):
-                continue
-
+        output = await run_smartctl("-a", device)
         if not output:
             return None
 
