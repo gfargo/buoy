@@ -528,6 +528,39 @@ class TestNetworkLatency:
         assert mock_cls.call_args.kwargs["verify"] is False
 
     @pytest.mark.asyncio
+    async def test_measure_latency_runs_peers_concurrently(self):
+        """BUG-34 regression: measuring N peers must take ~one peer's latency,
+        not N times that — each peer used to be awaited serially inside a
+        plain `for` loop, so slow/offline peers could make the whole poll
+        overrun its own refresh interval."""
+        import time
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        per_peer_delay = 0.2
+        num_peers = 4
+        config = self._make_net_config(
+            [(f"peer{i}", f"http://peer{i}.local") for i in range(num_peers)]
+        )
+        coll = NetworkCollector(config)
+
+        async def slow_ping(_peer_name):
+            await asyncio.sleep(per_peer_delay)
+            return 1.0
+
+        with patch.object(coll, "_tailscale_ping", new=AsyncMock(side_effect=slow_ping)):
+            start = time.monotonic()
+            results = await coll.measure_latency()
+            elapsed = time.monotonic() - start
+
+        assert len(results) == num_peers
+        # Serial execution would take num_peers * per_peer_delay (~0.8s); a
+        # generous ceiling well under that catches a regression to the old
+        # sequential loop without being flaky under CI scheduling jitter.
+        assert elapsed < per_peer_delay * (num_peers / 2)
+
+    @pytest.mark.asyncio
     async def test_measure_latency_per_peer_override_wins(self):
         """Per-peer verify_ssl=False wins in measure_latency() HTTP fallback."""
         from unittest.mock import patch

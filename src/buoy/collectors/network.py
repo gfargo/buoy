@@ -109,37 +109,36 @@ class NetworkCollector:
             return None
 
     async def measure_latency(self) -> list[dict]:
-        """Measure latency to each peer using tailscale ping with HTTP fallback."""
+        """Measure latency to each peer using tailscale ping with HTTP fallback.
+
+        Peers are measured concurrently (like ``collect()`` above) rather than
+        one at a time — a tailscale ping can take up to 3s and the HTTP
+        fallback up to 4s, so measuring serially could overrun this method's
+        own polling interval (``refresh.fleet_interval``, default 15s) with
+        just a handful of offline peers.
+        """
         peers = self.config.network.peers
-        results = []
+        return list(await asyncio.gather(*[self._measure_peer_latency(p) for p in peers]))
 
-        for peer in peers:
-            if peer.name == self.config.node.name:
-                results.append({"name": peer.name, "latency_ms": 0, "online": True})
-                continue
+    async def _measure_peer_latency(self, peer) -> dict:
+        """Measure latency to a single peer (tailscale ping, then HTTP fallback)."""
+        if peer.name == self.config.node.name:
+            return {"name": peer.name, "latency_ms": 0, "online": True}
 
-            ms = await self._tailscale_ping(peer.name)
-            if ms is not None:
-                results.append({"name": peer.name, "latency_ms": ms, "online": True})
-                continue
+        ms = await self._tailscale_ping(peer.name)
+        if ms is not None:
+            return {"name": peer.name, "latency_ms": ms, "online": True}
 
-            # Fallback: HTTP timing to /api/health
-            try:
-                async with httpx.AsyncClient(timeout=4.0, verify=self._peer_verify(peer)) as client:
-                    start = time.monotonic()
-                    r = await client.get(f"{peer.url}/api/health")
-                    elapsed = (time.monotonic() - start) * 1000
+        # Fallback: HTTP timing to /api/health
+        try:
+            async with httpx.AsyncClient(timeout=4.0, verify=self._peer_verify(peer)) as client:
+                start = time.monotonic()
+                r = await client.get(f"{peer.url}/api/health")
+                elapsed = (time.monotonic() - start) * 1000
 
-                    if r.status_code == 200:
-                        results.append(
-                            {"name": peer.name, "latency_ms": round(elapsed, 1), "online": True}
-                        )
-                    else:
-                        results.append({"name": peer.name, "latency_ms": -1, "online": False})
-            except Exception:
-                logger.debug(
-                    "failed to measure HTTP latency to peer '%s'", peer.name, exc_info=True
-                )
-                results.append({"name": peer.name, "latency_ms": -1, "online": False})
-
-        return results
+                if r.status_code == 200:
+                    return {"name": peer.name, "latency_ms": round(elapsed, 1), "online": True}
+                return {"name": peer.name, "latency_ms": -1, "online": False}
+        except Exception:
+            logger.debug("failed to measure HTTP latency to peer '%s'", peer.name, exc_info=True)
+            return {"name": peer.name, "latency_ms": -1, "online": False}
