@@ -224,6 +224,107 @@ class TestDockerListContainersCache:
         coll._fetch_containers.assert_called_once()
 
 
+class TestDockerGetLogs:
+    """Tests for DockerCollector.get_logs() stdout/stderr interleaving (BUG-49).
+
+    Concatenating stdout then stderr wholesale destroys chronological
+    interleaving, and a chatty stderr can push all of stdout out of the
+    requested tail. --timestamps was already being requested but never
+    parsed for sorting.
+    """
+
+    @staticmethod
+    def _ts(second, msg):
+        """A --timestamps-style log line; `second` (0-59) controls ordering."""
+        return f"2024-01-15T10:20:{second:02d}.000000000Z {msg}"
+
+    @pytest.mark.asyncio
+    async def test_interleaves_stdout_and_stderr_chronologically(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        stdout = "\n".join([self._ts(0, "stdout: starting"), self._ts(2, "stdout: ready")])
+        stderr = self._ts(1, "stderr: warning")
+        coll._run = AsyncMock(return_value=(0, stdout, stderr))
+
+        result = await coll.get_logs("grafana")
+
+        assert result["lines"] == [
+            self._ts(0, "stdout: starting"),
+            self._ts(1, "stderr: warning"),
+            self._ts(2, "stdout: ready"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_chatty_stderr_does_not_push_out_older_stdout(self):
+        """Regression for the literal bug report: a chatty stderr must not
+        crowd stdout entirely out of the tail once properly interleaved."""
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        stdout = self._ts(0, "stdout: the one thing that matters")
+        stderr = "\n".join(self._ts(i, f"stderr: noise {i}") for i in range(1, 6))
+        coll._run = AsyncMock(return_value=(0, stdout, stderr))
+
+        result = await coll.get_logs("grafana", tail=3)
+
+        # The oldest (stdout) line sorts first and gets trimmed by tail=3,
+        # same as it would from any other over-the-limit source — the fix
+        # is that it's the *chronologically* oldest line trimmed, not
+        # "everything from one stream" trimmed regardless of age.
+        assert result["lines"] == [
+            self._ts(3, "stderr: noise 3"),
+            self._ts(4, "stderr: noise 4"),
+            self._ts(5, "stderr: noise 5"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_only_stdout(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        stdout = "\n".join([self._ts(0, "line1"), self._ts(1, "line2")])
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        result = await coll.get_logs("grafana")
+
+        assert result["lines"] == [self._ts(0, "line1"), self._ts(1, "line2")]
+
+    @pytest.mark.asyncio
+    async def test_no_output_returns_empty_list(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll._run = AsyncMock(return_value=(0, "", ""))
+
+        result = await coll.get_logs("grafana")
+
+        assert result == {"container": "grafana", "lines": []}
+
+    @pytest.mark.asyncio
+    async def test_invalid_container_name_returns_error(self):
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+
+        result = await coll.get_logs("../../etc/passwd")
+
+        assert result == {"error": "invalid container name"}
+
+
 class TestDiskCollectorLocalMounts:
     """Tests for the real DiskCollector's nsenter-less /proc/mounts fallback."""
 

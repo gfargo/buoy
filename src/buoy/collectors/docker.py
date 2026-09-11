@@ -23,9 +23,23 @@ logger = logging.getLogger("buoy.collectors.docker")
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 _LIST_CACHE_TTL = 5.0
 
+# `docker logs --timestamps` prefixes each line with an RFC3339Nano
+# timestamp (e.g. "2024-01-15T10:23:45.123456789Z message"), which sorts
+# correctly as a plain string — trailing zeros are trimmed by Go's
+# formatting, but that only ever shortens a shared numeric prefix, so
+# lexicographic order still matches chronological order.
+_LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
+
 
 def _valid_name(name: str) -> bool:
     return bool(_CONTAINER_NAME_RE.match(name)) and len(name) <= 128
+
+
+def _log_line_sort_key(line: str) -> str:
+    """Sort key for a --timestamps log line: the leading timestamp, or ""
+    for a line that doesn't start with one (sorts first, best-effort)."""
+    match = _LOG_TIMESTAMP_RE.match(line)
+    return match.group(0) if match else ""
 
 
 class DockerCollector:
@@ -164,7 +178,7 @@ class DockerCollector:
         return info
 
     async def get_logs(self, name: str, tail: int = 30) -> dict:
-        """Get last N lines of container logs."""
+        """Get last N lines of container logs, stdout and stderr interleaved by timestamp."""
         if not _valid_name(name):
             return {"error": "invalid container name"}
 
@@ -177,7 +191,16 @@ class DockerCollector:
             timeout=5,
         )
 
-        lines = (stdout + "\n" + stderr).strip().split("\n") if (stdout or stderr) else []
+        # docker returns the last `tail` log records total already correctly
+        # ordered *within* each stream — but stdout and stderr arrive on
+        # separate pipes, so simply concatenating them (stdout, then all of
+        # stderr) destroys the real chronological interleaving, and a chatty
+        # stderr can push all of stdout out of the requested tail (BUG-49).
+        # --timestamps was already being requested but never used for this;
+        # sort the merged lines by their leading timestamp to restore it.
+        stdout_lines = stdout.strip().split("\n") if stdout.strip() else []
+        stderr_lines = stderr.strip().split("\n") if stderr.strip() else []
+        lines = sorted(stdout_lines + stderr_lines, key=_log_line_sort_key)
         return {"container": name, "lines": lines[-tail:]}
 
     async def restart_container(self, name: str) -> dict:
