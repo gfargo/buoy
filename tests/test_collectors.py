@@ -1454,3 +1454,133 @@ class TestSystemCollectorFallback:
         assert data["mem_used"] is None
         assert data["mem_total"] is None
         assert data["temp"] is None
+
+
+class TestSystemCollectorCgroupCpuQuota:
+    """Tests for cgroup-aware core count (BUG-32).
+
+    os.cpu_count() reflects the host's total core count and ignores any
+    cgroup CPU quota (e.g. Docker's --cpus=N) — a container with a 2-CPU
+    quota on a 16-core host reported "16 cores", which also skews
+    detail.js's `load_1 > cores` overload warning threshold.
+    """
+
+    @staticmethod
+    def _patch_files(files: dict[str, str]):
+        """files: path -> content. Any path not in the dict raises
+        FileNotFoundError, matching a real missing-file/no-cgroup host."""
+        import io
+        from unittest.mock import patch
+
+        def fake_open(path, *args, **kwargs):
+            if path in files:
+                return io.StringIO(files[path])
+            raise FileNotFoundError(path)
+
+        return patch("builtins.open", side_effect=fake_open)
+
+    def test_v2_whole_number_quota(self):
+        """cgroup v2: --cpus=2 on a 100ms period -> 2 cores exactly."""
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with self._patch_files({"/sys/fs/cgroup/cpu.max": "200000 100000\n"}):
+            cores = coll._cgroup_cpu_quota_cores()
+
+        assert cores == 2
+
+    def test_v2_fractional_quota(self):
+        """cgroup v2: --cpus=1.5 must not round away the fraction."""
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with self._patch_files({"/sys/fs/cgroup/cpu.max": "150000 100000\n"}):
+            cores = coll._cgroup_cpu_quota_cores()
+
+        assert cores == 1.5
+
+    def test_v2_unlimited_returns_none(self):
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with self._patch_files({"/sys/fs/cgroup/cpu.max": "max 100000\n"}):
+            cores = coll._cgroup_cpu_quota_cores()
+
+        assert cores is None
+
+    def test_v1_fallback_when_v2_absent(self):
+        """cgroup v1 hosts don't have cpu.max at all — fall back to the
+        separate cfs_quota_us/cfs_period_us files."""
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with self._patch_files(
+            {
+                "/sys/fs/cgroup/cpu/cpu.cfs_quota_us": "300000\n",
+                "/sys/fs/cgroup/cpu/cpu.cfs_period_us": "100000\n",
+            }
+        ):
+            cores = coll._cgroup_cpu_quota_cores()
+
+        assert cores == 3
+
+    def test_v1_unlimited_quota_returns_none(self):
+        """cgroup v1 represents "no limit" as -1, not a missing file."""
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with self._patch_files({"/sys/fs/cgroup/cpu/cpu.cfs_quota_us": "-1\n"}):
+            cores = coll._cgroup_cpu_quota_cores()
+
+        assert cores is None
+
+    def test_no_cgroup_files_returns_none(self):
+        """Non-Linux or a host without cgroups mounted — must not raise."""
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with self._patch_files({}):
+            cores = coll._cgroup_cpu_quota_cores()
+
+        assert cores is None
+
+    def test_effective_cores_uses_quota_when_set(self):
+        from unittest.mock import patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with (
+            self._patch_files({"/sys/fs/cgroup/cpu.max": "200000 100000\n"}),
+            patch("os.cpu_count", return_value=16),
+        ):
+            cores = coll._effective_cpu_cores()
+
+        assert cores == 2
+
+    def test_effective_cores_falls_back_to_host_when_no_quota(self):
+        from unittest.mock import patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with self._patch_files({}), patch("os.cpu_count", return_value=8):
+            cores = coll._effective_cpu_cores()
+
+        assert cores == 8
+
+    def test_effective_cores_clamps_quota_to_host_count(self):
+        """A quota that (implausibly) exceeds the host's real core count
+        must not be reported as-is — cap at what's actually there."""
+        from unittest.mock import patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with (
+            self._patch_files({"/sys/fs/cgroup/cpu.max": "800000 100000\n"}),  # quota=8
+            patch("os.cpu_count", return_value=2),
+        ):
+            cores = coll._effective_cpu_cores()
+
+        assert cores == 2
