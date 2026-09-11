@@ -161,7 +161,9 @@ async def api_config_debug(request: Request) -> JSONResponse:
         )
 
     provided = auth_header[7:]
-    if not hmac.compare_digest(provided, token):
+    # Compare as bytes — compare_digest raises TypeError on non-ASCII str, which
+    # would otherwise turn an auth failure into a 500 instead of a 401.
+    if not hmac.compare_digest(provided.encode(), token.encode()):
         return JSONResponse(
             {"error": "authentication required"},
             status_code=401,

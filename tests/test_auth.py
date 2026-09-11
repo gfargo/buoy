@@ -102,6 +102,18 @@ class TestTokenAuth:
         request = FakeRequest(headers={})
         assert mw._authenticate(request) is False
 
+    def test_non_ascii_provided_token_denies_without_raising(self):
+        """hmac.compare_digest raises TypeError on non-ASCII str; a bad
+        (non-ASCII) provided token must fail auth cleanly, not crash (SEC-7)."""
+        mw = self._make_middleware(token="my-secret")
+        request = FakeRequest(headers={"Authorization": "Bearer pässwörd"})
+        assert mw._authenticate(request) is False
+
+    def test_non_ascii_configured_token_still_authenticates(self):
+        mw = self._make_middleware(token="pässwörd")
+        request = FakeRequest(headers={"Authorization": "Bearer pässwörd"})
+        assert mw._authenticate(request) is True
+
 
 class TestBasicAuth:
     """Test HTTP Basic authentication."""
@@ -146,6 +158,19 @@ class TestBasicAuth:
         creds = base64.b64encode(b"nocolon").decode()
         mw = self._make_middleware()
         request = FakeRequest(headers={"Authorization": f"Basic {creds}"})
+        assert mw._authenticate(request) is False
+
+    def test_non_ascii_credentials_authenticate(self):
+        """hmac.compare_digest raises TypeError on non-ASCII str; both sides
+        must compare correctly (and without crashing) when either the
+        provided or configured credentials contain non-ASCII text (SEC-7)."""
+        mw = self._make_middleware(username="admïn", password="pässwörd")
+        request = FakeRequest(headers={"Authorization": self._encode_basic("admïn", "pässwörd")})
+        assert mw._authenticate(request) is True
+
+    def test_non_ascii_wrong_password_denies_without_raising(self):
+        mw = self._make_middleware(username="admïn", password="pässwörd")
+        request = FakeRequest(headers={"Authorization": self._encode_basic("admïn", "wrong")})
         assert mw._authenticate(request) is False
 
 

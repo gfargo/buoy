@@ -185,6 +185,22 @@ class TestConfigDebugHandlerAuth:
         resp = client.get("/api/config/debug", headers={"Authorization": "Bearer wrong"})
         assert resp.status_code == 401
 
+    def test_non_ascii_provided_token_returns_401_not_500(self):
+        """hmac.compare_digest raises TypeError on non-ASCII str; a bad
+        (non-ASCII) provided token must be a clean 401, not a 500 (SEC-7).
+
+        httpx's Python API refuses a non-ASCII `str` header value client-side,
+        so the header is sent as raw bytes instead — closer to what an actual
+        non-compliant client puts on the wire anyway. (Round-tripping the
+        *matching*-token case through this same client mangles the bytes
+        before they reach the app, independent of our fix; that path is
+        covered at the unit level in test_auth.py instead.)"""
+        client = _make_test_client(token="my-secret")
+        resp = client.get(
+            "/api/config/debug", headers={"Authorization": "Bearer pässwörd".encode("latin-1")}
+        )
+        assert resp.status_code == 401
+
     def test_token_configured_correct_token_returns_200(self):
         """Token set and correct token provided → 200."""
         client = _make_test_client(token="my-secret")
