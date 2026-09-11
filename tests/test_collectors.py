@@ -333,6 +333,93 @@ class TestDiskCollectorNvme:
         assert "written" in nvme
 
 
+class TestDiskCollectorIo:
+    """Tests for the real DiskCollector's /proc/diskstats-based I/O totals.
+
+    Regression coverage for BUG-26: _disk_io() used to match only an exact
+    device-name allowlist ("nvme0n1", "sda", "mmcblk0"), so a VM
+    (vda/xvda), a second SATA disk (sdb), or an additional NVMe drive
+    reported 0 GB read/write regardless of actual activity.
+    """
+
+    ONE_GB_SECTORS = 2097152  # 1 GiB / 512-byte sectors
+
+    @staticmethod
+    def _diskstat_line(major, minor, name, read_sectors, write_sectors):
+        return f"{major} {minor} {name} 100 0 {read_sectors} 100 200 0 {write_sectors} 200 0 0 0\n"
+
+    async def _run(self, lines: list[str]) -> dict:
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        coll = DiskCollector(_make_config())
+        with patch("builtins.open", mock_open(read_data="".join(lines))):
+            return await coll._disk_io()
+
+    @pytest.mark.asyncio
+    async def test_vm_virtio_disk_is_recognized(self):
+        """A VM's virtio disk (vda) used to report 0 GB — it's not in the
+        old exact-match allowlist at all."""
+        lines = [self._diskstat_line(252, 0, "vda", self.ONE_GB_SECTORS, self.ONE_GB_SECTORS)]
+        result = await self._run(lines)
+        assert result == {"read_gb": 1.0, "write_gb": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_xen_virtio_disk_is_recognized(self):
+        lines = [self._diskstat_line(202, 0, "xvda", self.ONE_GB_SECTORS, 0)]
+        result = await self._run(lines)
+        assert result == {"read_gb": 1.0, "write_gb": 0.0}
+
+    @pytest.mark.asyncio
+    async def test_second_sata_disk_is_summed_with_first(self):
+        """A second real disk (sdb) used to be invisible — only the exact
+        name "sda" matched. Both disks' I/O must be summed, and their
+        partitions excluded (already counted via the whole device)."""
+        lines = [
+            self._diskstat_line(8, 0, "sda", self.ONE_GB_SECTORS, self.ONE_GB_SECTORS // 2),
+            self._diskstat_line(8, 1, "sda1", 1_000_000, 500_000),  # partition, excluded
+            self._diskstat_line(8, 16, "sdb", self.ONE_GB_SECTORS, self.ONE_GB_SECTORS // 2),
+            self._diskstat_line(8, 17, "sdb1", 1_000_000, 500_000),  # partition, excluded
+        ]
+        result = await self._run(lines)
+        assert result == {"read_gb": 2.0, "write_gb": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_additional_nvme_drive_is_summed(self):
+        """A second NVMe drive (nvme1n1) used to be invisible — only
+        "nvme0n1" matched exactly."""
+        lines = [
+            self._diskstat_line(259, 0, "nvme0n1", self.ONE_GB_SECTORS, self.ONE_GB_SECTORS),
+            self._diskstat_line(259, 1, "nvme0n1p1", 500_000, 500_000),  # partition, excluded
+            self._diskstat_line(259, 2, "nvme1n1", self.ONE_GB_SECTORS, self.ONE_GB_SECTORS),
+        ]
+        result = await self._run(lines)
+        assert result == {"read_gb": 2.0, "write_gb": 2.0}
+
+    @pytest.mark.asyncio
+    async def test_mmcblk_partition_excluded_from_whole_device(self):
+        lines = [
+            self._diskstat_line(179, 0, "mmcblk0", self.ONE_GB_SECTORS, self.ONE_GB_SECTORS),
+            self._diskstat_line(179, 1, "mmcblk0p1", 500_000, 500_000),  # partition, excluded
+        ]
+        result = await self._run(lines)
+        assert result == {"read_gb": 1.0, "write_gb": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_virtual_devices_excluded(self):
+        """loop/dm/md devices are excluded — their I/O is already accounted
+        for on the physical device(s) underneath, so counting them too
+        would double-count."""
+        lines = [
+            self._diskstat_line(7, 0, "loop0", 1_000_000, 0),
+            self._diskstat_line(253, 0, "dm-0", 1_000_000, 1_000_000),
+            self._diskstat_line(9, 0, "md0", 1_000_000, 1_000_000),
+        ]
+        result = await self._run(lines)
+        assert result == {"read_gb": 0, "write_gb": 0}
+
+
 class TestNetworkLatency:
     """Tests for NetworkCollector tailscale ping and HTTP fallback."""
 
