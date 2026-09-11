@@ -57,6 +57,7 @@ class SystemCollector:
 
         cpu_detail = await self._read_cpu_detail()
         mem_detail = self._read_memory_detail()
+        mem_detail["top_processes"] = await self._top_processes_by("mem")
 
         return {"cpu": cpu_detail, "memory": mem_detail}
 
@@ -128,11 +129,13 @@ class SystemCollector:
         try:
             info = self._parse_meminfo()
             total_kb = info.get("MemTotal", 0)
-            free_kb = info.get("MemFree", 0)
-            buffers_kb = info.get("Buffers", 0)
-            cached_kb = info.get("Cached", 0)
+            # MemAvailable already accounts for reclaimable caches/slab (unlike
+            # MemFree+Buffers+Cached, which ignores SReclaimable and Shmem and so
+            # overstates "used" vs free/htop). Fall back to MemFree if the kernel
+            # doesn't expose MemAvailable (very old kernels).
+            available_kb = info.get("MemAvailable", info.get("MemFree", 0))
 
-            used_kb = total_kb - free_kb - buffers_kb - cached_kb
+            used_kb = total_kb - available_kb
             return round(used_kb / 1048576, 1), round(total_kb / 1048576, 1)
         except Exception:
             logger.debug("failed to read memory from /proc/meminfo", exc_info=True)
@@ -150,7 +153,10 @@ class SystemCollector:
             swap_total = info.get("SwapTotal", 0) // 1024
             swap_free = info.get("SwapFree", 0) // 1024
 
-            used = total - free - buffers - cached
+            # See _read_memory: MemTotal - MemAvailable matches free/htop's "used",
+            # unlike MemTotal - MemFree - Buffers - Cached which ignores
+            # SReclaimable and Shmem.
+            used = total - available
             swap_used = swap_total - swap_free
 
             return {
@@ -162,7 +168,8 @@ class SystemCollector:
                 "cached_mb": cached,
                 "swap_total_mb": swap_total,
                 "swap_used_mb": swap_used,
-                "top_processes": [],  # populated by _top_processes_by("mem")
+                # top_processes is added by collect_detail(), which awaits
+                # _top_processes_by("mem") — this method stays sync.
             }
         except Exception:
             logger.debug("failed to read memory detail from /proc/meminfo", exc_info=True)
