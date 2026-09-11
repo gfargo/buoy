@@ -1416,3 +1416,41 @@ class TestSystemCollectorTemperature:
             temp = coll._read_hwmon_cpu_temp()
 
         assert temp is None
+
+
+class TestSystemCollectorFallback:
+    """Tests for the non-Linux fallback stats (BUG-33).
+
+    _fallback_stats() used to report cpu/mem/temp as 0 on macOS/Windows —
+    indistinguishable from "everything is idle and cold" — instead of
+    surfacing that these /proc- and /sys-based metrics simply aren't
+    available on this platform.
+    """
+
+    def test_fallback_stats_reports_metrics_as_unavailable_not_zero(self):
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        stats = coll._fallback_stats()
+
+        assert stats["cpu"] is None
+        assert stats["mem_used"] is None
+        assert stats["mem_total"] is None
+        assert stats["temp"] is None
+        # Identity fields are still populated normally.
+        assert stats["hostname"] == "test-node"
+        assert "model" in stats
+
+    @pytest.mark.asyncio
+    async def test_collect_uses_fallback_on_non_linux(self):
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        coll._is_linux = False
+
+        data = await coll.collect()
+
+        assert data["cpu"] is None
+        assert data["mem_used"] is None
+        assert data["mem_total"] is None
+        assert data["temp"] is None

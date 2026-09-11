@@ -8,6 +8,17 @@ const SPARK_MAX = 30;
 const tempHistory = [];
 const diskHistory = [];
 
+/**
+ * Format the memory gauge's "used/total" text. mem_used/mem_total are null
+ * when the platform's metrics are unavailable (BUG-33, e.g. running
+ * `python -m buoy` locally on macOS) — a template literal would otherwise
+ * render the literal text "null/null" instead of a placeholder.
+ */
+export function formatMemUsage(memUsed, memTotal) {
+  if (memUsed == null || memTotal == null) return '--/--';
+  return `${memUsed}/${memTotal}`;
+}
+
 export function initGauges() {
   // Gauges are rendered server-side in index.html; this module updates values.
 }
@@ -28,11 +39,11 @@ export function updateGauges(data) {
 
   // CPU
   setGauge('cpu', data.cpu, '%');
-  setBar('cpu-bar', data.cpu, 70, 90);
+  setBar('cpu-bar', data.cpu || 0, 70, 90);
 
   // Memory
   const memEl = document.getElementById('mem');
-  if (memEl) memEl.textContent = `${data.mem_used}/${data.mem_total}`;
+  if (memEl) memEl.textContent = formatMemUsage(data.mem_used, data.mem_total);
   const memPct = data.mem_total > 0 ? ((data.mem_used / data.mem_total) * 100).toFixed(0) : 0;
   setBar('mem-bar', memPct, 75, 90);
 

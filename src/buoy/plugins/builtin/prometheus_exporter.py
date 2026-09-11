@@ -60,19 +60,32 @@ class PrometheusExporterPlugin(Plugin):
         """
         lines = []
         host = PrometheusExporterPlugin._escape_label_value(stats.get("hostname", ""))
-        lines.append("# HELP buoy_cpu_percent CPU usage percentage")
-        lines.append("# TYPE buoy_cpu_percent gauge")
-        lines.append(f'buoy_cpu_percent{{host="{host}"}} {stats.get("cpu", 0)}')
 
-        lines.append("# HELP buoy_memory_used_bytes Memory used in bytes")
-        lines.append("# TYPE buoy_memory_used_bytes gauge")
-        mem_bytes = int(float(stats.get("mem_used", 0)) * 1073741824)
-        lines.append(f'buoy_memory_used_bytes{{host="{host}"}} {mem_bytes}')
+        # cpu/mem_used/mem_total/temp are None on platforms where SystemCollector
+        # can't read them at all (non-Linux fallback stats, BUG-33; no CPU temp
+        # sensor identified, BUG-28) — omit those metric lines entirely rather
+        # than crash on float(None) or emit a literal "None" (invalid Prometheus
+        # exposition format), matching the existing optional-NVMe-block pattern
+        # below.
+        cpu = stats.get("cpu")
+        if cpu is not None:
+            lines.append("# HELP buoy_cpu_percent CPU usage percentage")
+            lines.append("# TYPE buoy_cpu_percent gauge")
+            lines.append(f'buoy_cpu_percent{{host="{host}"}} {cpu}')
 
-        lines.append("# HELP buoy_memory_total_bytes Memory total in bytes")
-        lines.append("# TYPE buoy_memory_total_bytes gauge")
-        mem_total_bytes = int(float(stats.get("mem_total", 0)) * 1073741824)
-        lines.append(f'buoy_memory_total_bytes{{host="{host}"}} {mem_total_bytes}')
+        mem_used = stats.get("mem_used")
+        if mem_used is not None:
+            lines.append("# HELP buoy_memory_used_bytes Memory used in bytes")
+            lines.append("# TYPE buoy_memory_used_bytes gauge")
+            mem_bytes = int(float(mem_used) * 1073741824)
+            lines.append(f'buoy_memory_used_bytes{{host="{host}"}} {mem_bytes}')
+
+        mem_total = stats.get("mem_total")
+        if mem_total is not None:
+            lines.append("# HELP buoy_memory_total_bytes Memory total in bytes")
+            lines.append("# TYPE buoy_memory_total_bytes gauge")
+            mem_total_bytes = int(float(mem_total) * 1073741824)
+            lines.append(f'buoy_memory_total_bytes{{host="{host}"}} {mem_total_bytes}')
 
         temp = stats.get("temp")
         if temp is not None:

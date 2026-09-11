@@ -879,6 +879,34 @@ class TestPrometheusExporterPlugin:
         assert "buoy_temperature_celsius" not in output
         assert "None" not in output
 
+    def test_format_metrics_omits_unavailable_metrics_instead_of_crashing(self):
+        """BUG-33: the non-Linux fallback reports cpu/mem_used/mem_total/temp
+        as None. float(None) raises TypeError, so those metric lines must be
+        omitted entirely (like the optional NVMe block) rather than crash
+        the whole /metrics response or emit a literal 'None'."""
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "dev-macbook",
+            "cpu": None,
+            "mem_used": None,
+            "mem_total": None,
+            "temp": None,
+            "disk_pct": 67,
+            "containers": 21,
+            "uptime_h": 0,
+            "uptime_m": 0,
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert "buoy_cpu_percent" not in output
+        assert "buoy_memory_used_bytes" not in output
+        assert "buoy_memory_total_bytes" not in output
+        assert "buoy_temperature_celsius" not in output
+        assert "None" not in output
+        # Metrics that are still available render normally.
+        assert 'buoy_disk_used_percent{host="dev-macbook"} 67' in output
+
     def test_format_metrics_with_nvme(self):
         from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
 

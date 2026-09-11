@@ -84,22 +84,26 @@ class AlertEngine:
 
     async def evaluate(self, stats: dict):
         """Evaluate a stats snapshot against all thresholds."""
+        mem_used = stats.get("mem_used")
+        mem_total = stats.get("mem_total")
+        memory_pct = (
+            (mem_used / mem_total) * 100
+            if mem_used is not None and mem_total is not None and mem_total > 0
+            else None
+        )
+
         metrics_to_check = {
-            "cpu": stats.get("cpu", 0),
-            "memory": (
-                (stats.get("mem_used", 0) / stats.get("mem_total", 1)) * 100
-                if stats.get("mem_total", 0) > 0
-                else 0
-            ),
-            "disk": stats.get("disk_pct", 0),
-            "temp": stats.get("temp", 0),
+            "cpu": stats.get("cpu"),
+            "memory": memory_pct,
+            "disk": stats.get("disk_pct"),
+            "temp": stats.get("temp"),
         }
 
         for metric, value in metrics_to_check.items():
             if value is None:
-                # No reading this cycle (e.g. temp: no CPU sensor could be
-                # identified, BUG-28) — nothing to compare against a
-                # threshold, so skip rather than crash on None >= int.
+                # Missing entirely, or explicitly unavailable (e.g. no CPU
+                # temp sensor identified, BUG-28; non-Linux fallback stats,
+                # BUG-33) — nothing to compare against a threshold.
                 continue
             thresholds = DEFAULT_THRESHOLDS.get(metric, {})
             await self._check_metric(metric, value, thresholds)
