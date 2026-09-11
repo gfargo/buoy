@@ -25,6 +25,7 @@ class SystemCollector:
     def __init__(self, config: BuoyConfig):
         self.config = config
         self._is_linux = platform.system() == "Linux"
+        self._last_proc_stat: list[int] | None = None
 
     async def collect(self) -> dict:
         """Collect basic system stats (for /api/stats response)."""
@@ -64,15 +65,26 @@ class SystemCollector:
     # ── CPU ────────────────────────────────────────────────────────────────────
 
     async def _read_cpu(self) -> int:
-        """Read CPU usage percentage from /proc/stat (two-sample delta)."""
-        try:
-            s1 = self._read_proc_stat()
-            await asyncio.sleep(0.1)
-            s2 = self._read_proc_stat()
+        """Read CPU usage percentage from /proc/stat.
 
-            idle_delta = s2[3] - s1[3]
-            total_delta = sum(s2) - sum(s1)
-            if total_delta == 0:
+        Computes the delta against the sample kept from the *previous* call
+        instead of blocking on a fixed 100ms sleep between two samples taken
+        back-to-back (BUG-31) — that cost was paid on every /api/stats and
+        /metrics request, and again on every stats-loop tick. The elapsed
+        time between calls (governed by how often those are hit) already
+        gives a real window to measure over.
+        """
+        try:
+            sample = self._read_proc_stat()
+            previous = self._last_proc_stat
+            self._last_proc_stat = sample
+
+            if previous is None:
+                return 0  # no prior sample yet (first read since startup)
+
+            idle_delta = sample[3] - previous[3]
+            total_delta = sum(sample) - sum(previous)
+            if total_delta <= 0:
                 return 0
             return int(100 * (1 - idle_delta / total_delta))
         except Exception:

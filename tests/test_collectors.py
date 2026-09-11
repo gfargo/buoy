@@ -882,3 +882,85 @@ class TestSystemCollectorMemory:
 
         assert detail["memory"]["top_processes"] == fake_top
         top_processes_mock.assert_awaited_once_with("mem")
+
+
+class TestSystemCollectorCpu:
+    """Tests for the real SystemCollector's /proc/stat-based CPU sampling.
+
+    Regression coverage for BUG-31: _read_cpu() used to block for a fixed
+    100ms on every call (two samples taken 100ms apart back-to-back) instead
+    of keeping the previous sample on the instance and computing the delta
+    across calls.
+    """
+
+    @staticmethod
+    def _stat_line(user, nice, system, idle, iowait=0, irq=0, softirq=0, steal=0):
+        return f"cpu  {user} {nice} {system} {idle} {iowait} {irq} {softirq} {steal} 0 0\n"
+
+    @pytest.mark.asyncio
+    async def test_first_call_returns_zero_with_no_prior_sample(self):
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        stat = self._stat_line(100, 0, 50, 800)
+        with patch("builtins.open", mock_open(read_data=stat)):
+            result = await coll._read_cpu()
+
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_second_call_computes_delta_against_previous_sample(self):
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        first = self._stat_line(100, 0, 50, 800)
+        second = self._stat_line(150, 0, 70, 850)
+
+        with patch("builtins.open", mock_open(read_data=first)):
+            await coll._read_cpu()
+        with patch("builtins.open", mock_open(read_data=second)):
+            result = await coll._read_cpu()
+
+        # idle_delta = 850-800 = 50, total_delta = 1070-950 = 120
+        # 100 * (1 - 50/120) = 58.33 -> int() truncates to 58
+        assert result == 58
+
+    @pytest.mark.asyncio
+    async def test_does_not_sleep(self):
+        """The old implementation awaited asyncio.sleep(0.1) on every call;
+        the fix removes that fixed blocking window entirely."""
+        from unittest.mock import AsyncMock, mock_open, patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        stat = self._stat_line(100, 0, 50, 800)
+        sleep_mock = AsyncMock()
+        with (
+            patch("builtins.open", mock_open(read_data=stat)),
+            patch("asyncio.sleep", sleep_mock),
+        ):
+            await coll._read_cpu()
+
+        sleep_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_zero_total_delta_returns_zero(self):
+        """Two identical samples (e.g. calls close enough together that the
+        jiffy counters haven't moved) must not raise ZeroDivisionError."""
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        stat = self._stat_line(100, 0, 50, 800)
+
+        with patch("builtins.open", mock_open(read_data=stat)):
+            await coll._read_cpu()
+            result = await coll._read_cpu()
+
+        assert result == 0
