@@ -3,12 +3,13 @@
 ## Supported Versions
 
 Buoy is an Alpha-stage project (see `pyproject.toml` classifiers). Only the
-latest `2.1.x` release is supported with security fixes.
+latest tagged release is supported with security fixes — see
+[Releases](https://github.com/gfargo/buoy/releases) for the current version.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 2.1.x   | :white_check_mark: |
-| < 2.1   | :x:                |
+| Version           | Supported          |
+| ----------------- | ------------------ |
+| latest release    | :white_check_mark: |
+| anything older    | :x:                |
 
 ## Threat Model
 
