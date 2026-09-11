@@ -387,6 +387,40 @@ class TestLoadConfig:
             load_config(path=str(config_file))
 
 
+class TestBuildConfigIntGuards:
+    """_build_config raises a named ConfigError for malformed YAML-sourced
+    ints instead of a bare ValueError/TypeError traceback (issue: config:
+    guard unguarded int() casts on YAML-sourced values in _build_config)."""
+
+    def test_invalid_yaml_listen_port_raises_config_error(self):
+        with pytest.raises(ConfigError) as exc_info:
+            _build_config({"network": {"listen_port": "eighty-ninety"}})
+        assert "network.listen_port" in str(exc_info.value)
+        assert "eighty-ninety" in str(exc_info.value)
+
+    def test_invalid_yaml_refresh_interval_raises_config_error(self):
+        with pytest.raises(ConfigError) as exc_info:
+            _build_config({"refresh": {"stats_interval": "soon"}})
+        assert "refresh.stats_interval" in str(exc_info.value)
+
+    def test_non_scalar_yaml_int_raises_config_error(self):
+        """A list/dict where an int is expected is a TypeError from int(),
+        not a ValueError — both must surface as a clean ConfigError."""
+        with pytest.raises(ConfigError):
+            _build_config({"network": {"listen_port": [8090]}})
+
+    def test_invalid_plugin_refresh_interval_raises_config_error(self):
+        with pytest.raises(ConfigError) as exc_info:
+            _build_config({"plugins": {"builtin": {"smart_disk": {"refresh_interval": "often"}}}})
+        assert "plugins.smart_disk.refresh_interval" in str(exc_info.value)
+
+    def test_yaml_string_int_still_coerces(self):
+        """A quoted numeric string (e.g. `listen_port: "8080"`) is valid YAML
+        and must still work, not just native YAML ints."""
+        config = _build_config({"network": {"listen_port": "8080"}})
+        assert config.network.listen_port == 8080
+
+
 class TestNetworkVerifySsl:
     """Tests for network.verify_ssl and per-peer verify_ssl config."""
 
