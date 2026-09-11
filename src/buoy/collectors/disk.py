@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shutil
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,12 @@ if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
 logger = logging.getLogger("buoy.collectors.disk")
+
+# Whole-disk block devices only — no trailing partition number/suffix, so
+# "sda1", "nvme0n1p1", and "mmcblk0p1" don't match. Also excludes virtual/
+# synthetic devices (loop*, dm-*, md*, zram*) whose I/O is already accounted
+# for on the physical device(s) underneath them.
+_WHOLE_DISK_RE = re.compile(r"^(?:sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+|nvme\d+n\d+|mmcblk\d+)$")
 
 
 _VIRTUAL_FSTYPES = {
@@ -266,21 +273,37 @@ class DiskCollector:
     # ── Disk I/O ───────────────────────────────────────────────────────────────
 
     async def _disk_io(self) -> dict:
-        """Read cumulative I/O from /proc/diskstats."""
+        """Sum cumulative read/write I/O across every real (whole-disk) block device.
+
+        The previous implementation only recognized `nvme0n1`, `sda`, and
+        `mmcblk0` by exact name, so a VM (`vda`/`xvda`), a second SATA disk
+        (`sdb`), or an additional NVMe drive (`nvme1n1`) reported 0 GB
+        read/write regardless of actual activity (BUG-26). Match by
+        device-name pattern instead and sum across every whole disk found.
+        """
         try:
+            total_read_sectors = 0
+            total_write_sectors = 0
+            found_any = False
+
             with open("/proc/diskstats") as f:
                 for line in f:
                     parts = line.split()
-                    if len(parts) >= 14 and parts[2] in ("nvme0n1", "sda", "mmcblk0"):
-                        sectors_read = int(parts[5])
-                        sectors_written = int(parts[9])
-                        return {
-                            "read_gb": round(sectors_read * 512 / (1024**3), 1),
-                            "write_gb": round(sectors_written * 512 / (1024**3), 1),
-                        }
+                    if len(parts) >= 14 and _WHOLE_DISK_RE.match(parts[2]):
+                        found_any = True
+                        total_read_sectors += int(parts[5])
+                        total_write_sectors += int(parts[9])
+
+            if not found_any:
+                return {"read_gb": 0, "write_gb": 0}
+
+            return {
+                "read_gb": round(total_read_sectors * 512 / (1024**3), 1),
+                "write_gb": round(total_write_sectors * 512 / (1024**3), 1),
+            }
         except Exception:
             logger.debug("failed to read /proc/diskstats", exc_info=True)
-        return {"read_gb": 0, "write_gb": 0}
+            return {"read_gb": 0, "write_gb": 0}
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
