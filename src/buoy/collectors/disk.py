@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import shutil
+import time
 from typing import TYPE_CHECKING
 
 from buoy.subprocess_utils import communicate
@@ -25,6 +26,12 @@ logger = logging.getLogger("buoy.collectors.disk")
 # synthetic devices (loop*, dm-*, md*, zram*) whose I/O is already accounted
 # for on the physical device(s) underneath them.
 _WHOLE_DISK_RE = re.compile(r"^(?:sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+|nvme\d+n\d+|mmcblk\d+)$")
+
+# Mirrors DockerCollector's list_containers() cache (SPEC §8.2): _all_mounts()
+# is now on the hot path (collect_summary() -> every /api/stats request and
+# stats-loop tick, not just the detail panel), and nsenter+df is a real
+# subprocess spawn rather than a cheap syscall.
+_MOUNTS_CACHE_TTL = 5.0
 
 
 _VIRTUAL_FSTYPES = {
@@ -60,6 +67,9 @@ class DiskCollector:
 
     def __init__(self, config: BuoyConfig):
         self.config = config
+        self._mounts_cache: list[dict] | None = None
+        self._mounts_cache_ts: float = 0.0
+        self._mounts_lock = asyncio.Lock()
 
     async def collect_summary(self) -> dict:
         """Collect root disk percentage + NVMe info for the stats response."""
@@ -83,8 +93,23 @@ class DiskCollector:
     # ── Root Disk ──────────────────────────────────────────────────────────────
 
     async def _root_disk_percent(self) -> int:
-        """Get root filesystem usage percentage."""
+        """Get root filesystem usage percentage.
+
+        Derived from the same host-aware mount list _all_mounts() uses
+        (nsenter df when available, /proc/mounts otherwise) instead of this
+        process's own shutil.disk_usage("/") — inside a container that's the
+        container's rootfs, not the host's, so the headline gauge could
+        legitimately disagree with the detail panel's mount table, which
+        already read the host's root mount (BUG-25).
+        """
         try:
+            mounts = await self._all_mounts()
+            for mount in mounts:
+                if mount.get("mount") == "/":
+                    return mount["pct"]
+            # No "/" entry in the resolved mount list (unexpected, but
+            # possible if every fallback came up empty) — fall back to this
+            # process's own view of its root filesystem.
             usage = shutil.disk_usage("/")
             return int((usage.used / usage.total) * 100)
         except Exception:
@@ -94,14 +119,28 @@ class DiskCollector:
     # ── All Mounts ─────────────────────────────────────────────────────────────
 
     async def _all_mounts(self) -> list[dict]:
-        """Get all real filesystem mounts (excluding tmpfs, etc.)."""
-        # Try nsenter first (container with pid:host)
-        mounts = await self._nsenter_mounts()
-        if mounts:
-            return mounts
+        """Get all real filesystem mounts (excluding tmpfs, etc.), cached briefly.
 
-        # Fallback: read /proc/mounts locally
-        return self._local_mounts()
+        Shared by both collect_summary()'s headline gauge and
+        collect_detail()'s mount table so the two always agree. Cached for
+        _MOUNTS_CACHE_TTL since collect_summary() is now on the hot path.
+        """
+        now = time.monotonic()
+        if self._mounts_cache is not None and now - self._mounts_cache_ts < _MOUNTS_CACHE_TTL:
+            return self._mounts_cache
+
+        async with self._mounts_lock:
+            now = time.monotonic()
+            if self._mounts_cache is not None and now - self._mounts_cache_ts < _MOUNTS_CACHE_TTL:
+                return self._mounts_cache
+
+            # Try nsenter first (container with pid:host), then fall back to
+            # reading /proc/mounts locally.
+            mounts = await self._nsenter_mounts() or self._local_mounts()
+
+            self._mounts_cache = mounts
+            self._mounts_cache_ts = time.monotonic()
+            return mounts
 
     async def _nsenter_mounts(self) -> list[dict]:
         """Use nsenter to get host mount info."""
