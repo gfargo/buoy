@@ -3,7 +3,13 @@
 import pytest
 import yaml
 
-from buoy.config import ConfigError, _apply_env_overrides, _build_config, load_config
+from buoy.config import (
+    ConfigError,
+    _apply_env_overrides,
+    _build_config,
+    _warn_unknown_keys,
+    load_config,
+)
 
 
 class TestConfigDefaults:
@@ -419,6 +425,98 @@ class TestBuildConfigIntGuards:
         and must still work, not just native YAML ints."""
         config = _build_config({"network": {"listen_port": "8080"}})
         assert config.network.listen_port == 8080
+
+
+class TestWarnUnknownKeys:
+    """Unknown config keys warn but don't fail (BUG-24 / SPEC §3.3).
+
+    _build_config's plain .get() calls silently ignore a typo'd key like
+    `noed: {nmae: x}` — the node still starts, just not configured the way
+    the typo intended, with no diagnostic anywhere. _warn_unknown_keys logs
+    a warning instead of leaving that completely silent.
+    """
+
+    def test_unknown_top_level_section_warns(self, caplog):
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys({"noed": {"name": "x"}})
+
+        assert any("noed" in r.message for r in caplog.records)
+
+    def test_unknown_key_within_known_section_warns(self, caplog):
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys({"node": {"nmae": "x"}})
+
+        assert any("node.nmae" in r.message for r in caplog.records)
+
+    def test_valid_minimal_config_warns_about_nothing(self, caplog):
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys({"node": {"name": "compass"}})
+
+        assert caplog.records == []
+
+    def test_does_not_false_positive_on_freeform_nested_structures(self, caplog):
+        """services.overrides.<service-name>, plugins.builtin.<plugin-id>,
+        and a network.peers entry are all user-defined maps/lists one level
+        below a recognized field — their own contents must never be checked
+        against BuoyConfig's dataclass fields."""
+        raw = {
+            "network": {"peers": [{"name": "harbor", "url": "https://harbor.local", "tier": "x"}]},
+            "services": {"overrides": {"grafana": {"icon": "📊", "desc": "dashboards"}}},
+            "plugins": {"builtin": {"smart_disk": {"enabled": True, "drives": ["/dev/sda"]}}},
+        }
+
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys(raw)
+
+        assert caplog.records == []
+
+    def test_realistic_full_config_warns_about_nothing(self, caplog):
+        """A config touching every section with real-world keys must not
+        produce any false-positive warnings."""
+        raw = {
+            "node": {"name": "compass", "tier": "primary", "role": "server"},
+            "network": {
+                "tailnet_domain": "example.ts.net",
+                "listen_port": 8090,
+                "base_path": "/buoy",
+                "peers": [{"name": "harbor", "url": "https://harbor.local"}],
+                "allowed_origins": ["https://harbor.example.ts.net"],
+                "trusted_proxies": ["10.0.0.1"],
+                "verify_ssl": True,
+            },
+            "services": {"hidden": ["internal-tool"], "overrides": {}},
+            "theme": {"preset": "nord", "custom": {}},
+            "auth": {"enabled": True, "type": "token", "token": "secret"},
+            "features": {"websocket": True, "demo_mode": False},
+            "refresh": {"stats_interval": 5, "fleet_interval": 15},
+            "plugins": {"enabled": True, "directory": "/plugins", "builtin": {}, "user": {}},
+            "alerts": {"webhook_url": "https://example.com/hook"},
+            "logging": {"level": "DEBUG"},
+        }
+
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys(raw)
+
+        assert caplog.records == []
+
+    def test_load_config_warns_on_typo_without_raising(self, tmp_path, caplog):
+        """End-to-end: a typo'd config file still starts (matching the
+        existing "everything has sensible defaults" behavior) but the
+        typo is no longer completely silent."""
+        config_file = tmp_path / "buoy.yaml"
+        config_file.write_text(yaml.dump({"noed": {"nmae": "compass"}}))
+
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = load_config(path=str(config_file))
+
+        assert config.node.name == "buoy"  # typo'd section had no effect, as before
+        assert any("noed" in r.message for r in caplog.records)
+
+    def test_empty_config_warns_about_nothing(self, caplog):
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys({})
+
+        assert caplog.records == []
 
 
 class TestNetworkVerifySsl:
