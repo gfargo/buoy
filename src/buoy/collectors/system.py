@@ -19,6 +19,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger("buoy.collectors.system")
 
 
+def _round_cores(cores: float) -> int | float:
+    """Whole quotas (e.g. --cpus=2) render as a clean int; fractional
+    quotas (e.g. --cpus=1.5) round to 2 decimal places to avoid floating-
+    point noise (quota/period division rarely lands on an exact value)."""
+    return int(cores) if cores == int(cores) else round(cores, 2)
+
+
 class SystemCollector:
     """Collects system metrics from /proc and /sys."""
 
@@ -101,7 +108,7 @@ class SystemCollector:
 
     async def _read_cpu_detail(self) -> dict:
         """Extended CPU info: model, cores, load averages, top processes."""
-        cores = os.cpu_count() or 1
+        cores = self._effective_cpu_cores()
         model = "unknown"
         try:
             with open("/proc/cpuinfo") as f:
@@ -133,6 +140,57 @@ class SystemCollector:
             "load_15": load_15,
             "top_processes": top_processes,
         }
+
+    def _effective_cpu_cores(self) -> int | float:
+        """Effective CPU core count, respecting a cgroup CPU quota if set.
+
+        os.cpu_count() reflects the host's total core count and ignores any
+        cgroup CPU quota (e.g. Docker's --cpus=N, a Kubernetes CPU limit) —
+        a real gap on any container host, not an edge case, since this
+        number both displays directly as "Cores" and drives detail.js's
+        `load_1 > cores` overload warning threshold (BUG-32). A load
+        average that looks fine against 16 host cores can already be well
+        over budget against an actual 2-CPU quota.
+        """
+        host_cores = os.cpu_count() or 1
+        quota_cores = self._cgroup_cpu_quota_cores()
+        if quota_cores is not None:
+            return min(quota_cores, host_cores)
+        return host_cores
+
+    def _cgroup_cpu_quota_cores(self) -> int | float | None:
+        """Read the cgroup CPU quota as a core count, or None if unset/unreadable.
+
+        Tries cgroup v2's unified `cpu.max` first, then falls back to
+        cgroup v1's separate `cpu.cfs_quota_us`/`cpu.cfs_period_us`. Returns
+        None (meaning "no quota — use the host's real core count") when the
+        quota is explicitly unlimited, or when neither file is readable
+        (not running under cgroups at all, e.g. macOS/Windows).
+        """
+        try:
+            with open("/sys/fs/cgroup/cpu.max") as f:
+                quota_str, period_str = f.read().split()
+            if quota_str == "max":
+                return None
+            quota, period = int(quota_str), int(period_str)
+            if period > 0:
+                return _round_cores(quota / period)
+        except (OSError, ValueError):
+            pass
+
+        try:
+            with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as f:
+                quota = int(f.read().strip())
+            if quota <= 0:
+                return None
+            with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as f:
+                period = int(f.read().strip())
+            if period > 0:
+                return _round_cores(quota / period)
+        except (OSError, ValueError):
+            pass
+
+        return None
 
     # ── Memory ─────────────────────────────────────────────────────────────────
 
