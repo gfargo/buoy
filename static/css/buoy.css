@@ -1,6 +1,65 @@
 /* Buoy — core layout and component styles.
    Theme colors are defined in themes/*.css via CSS custom properties. */
 
+/* Self-hosted fonts (BUG-48) — previously loaded from fonts.googleapis.com,
+   which broke the README's "zero external dependencies" claim and leaked a
+   request per page load on air-gapped/offline homelabs. Each family ships
+   as a single variable-font file; the four/three @font-face blocks below
+   just pin the specific weights this stylesheet actually uses to named
+   instances within it (mirroring how Google's own CSS2 API serves the
+   same file for every requested weight of a variable font). Latin subset
+   only, matching what the UI actually renders (hostnames, numbers, English
+   text) — Google's cyrillic/greek/vietnamese subsets were dropped. */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('/static/fonts/jetbrains-mono.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/static/fonts/jetbrains-mono.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/static/fonts/jetbrains-mono.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/static/fonts/jetbrains-mono.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('/static/fonts/outfit.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/static/fonts/outfit.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('/static/fonts/outfit.woff2') format('woff2');
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {

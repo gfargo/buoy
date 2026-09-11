@@ -48,6 +48,19 @@ def test_csp_locks_down_dangerous_directives():
     assert "frame-ancestors 'none'" in csp
 
 
+def test_csp_does_not_allowlist_google_fonts():
+    """BUG-48: fonts are self-hosted (static/fonts/), not loaded from
+    fonts.googleapis.com/fonts.gstatic.com, so the CSP shouldn't need to
+    allowlist them — 'self' covers the vendored files."""
+    app = create_app(_make_config())
+    with TestClient(app) as client:
+        r = client.get("/api/health")
+    csp = r.headers["content-security-policy"]
+    assert "fonts.googleapis.com" not in csp
+    assert "fonts.gstatic.com" not in csp
+    assert "font-src 'self'" in csp
+
+
 def test_csp_no_wildcard():
     app = create_app(_make_config())
     with TestClient(app) as client:
