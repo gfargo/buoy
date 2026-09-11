@@ -85,6 +85,14 @@ class SmartDiskPlugin(Plugin):
                 health = "PASSED" if line.split()[-1] == "0x00" else "FAILED"
                 break
 
+        if health == "UNKNOWN":
+            # smartctl still writes its version/copyright banner to stdout
+            # even when it fails to open the device (e.g. "No such
+            # device") — non-empty `output` alone doesn't mean smartctl
+            # actually found a drive, so bail out if neither health marker
+            # was present to parse.
+            return None
+
         # Detect drive type: NVMe key:value vs SATA attribute table
         is_nvme = "NVMe" in output or "nvme" in device.lower()
 

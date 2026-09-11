@@ -58,6 +58,12 @@ Power On Hours:                     3500
 
     SCAN_OUTPUT = b"/dev/sda -d scsi # /dev/sda [SCSI disk], please try 'smartctl -a /dev/sda'\n/dev/nvme0 -d nvme # /dev/nvme0 [NVMe device]\n"
 
+    DEVICE_NOT_FOUND_BANNER = (
+        b"smartctl 7.3 2022-02-28 r5338 [x86_64-linux-6.1.0] (local build)\n"
+        b"Copyright (C) 2002-22, Bruce Allen, Christian Franke, www.smartmontools.org\n\n"
+        b"Smartctl open device: /dev/nvme0n1 failed: No such device\n"
+    )
+
     def _make_proc(self, stdout: bytes, returncode: int = 0):
         mock_proc = AsyncMock()
         mock_proc.returncode = returncode
@@ -145,6 +151,27 @@ Power On Hours:                     3500
         with patch("asyncio.create_subprocess_exec", return_value=proc):
             result = await plugin.collect()
         assert result.status == "disabled"
+
+    @pytest.mark.asyncio
+    async def test_device_not_found_banner_treated_as_no_data(self):
+        """smartctl still writes its version/copyright banner to stdout even
+        when it fails to open the device — non-empty stdout that contains
+        neither the SATA health line nor an NVMe "Critical Warning:" line
+        must not be parsed into a bogus drive entry with health="UNKNOWN"."""
+        plugin = self._make_plugin(drives=["/dev/nvme0n1"])
+        proc = self._make_proc(self.DEVICE_NOT_FOUND_BANNER)
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            result = await plugin.collect()
+        assert result.status == "disabled"
+        assert result.detail["drives"] == []
+
+    @pytest.mark.asyncio
+    async def test_read_drive_returns_none_for_device_not_found_banner(self):
+        plugin = self._make_plugin()
+        proc = self._make_proc(self.DEVICE_NOT_FOUND_BANNER)
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            result = await plugin._read_drive("/dev/nvme0n1")
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_render_no_drives_shows_text(self):

@@ -646,6 +646,72 @@ class TestDiskCollectorNvme:
         assert "read" in nvme
         assert "written" in nvme
 
+    @pytest.mark.asyncio
+    async def test_nvme_smart_returns_none_for_device_not_found_banner(self):
+        """smartctl still writes its version/copyright banner to stdout even
+        when it fails to open the device — e.g. probing /dev/nvme0n1 on a
+        host with no NVMe drive at all (reproduced on a Docker Desktop VM).
+        `output` is non-empty but contains none of the expected SMART
+        fields, so _nvme_smart() must return None instead of a misleading
+        all-zero dict that collect_summary() would then surface as a fake
+        "0% worn, 0°C" NVMe panel."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        config = _make_config()
+        coll = DiskCollector(config)
+
+        device_not_found_banner = (
+            "smartctl 7.3 2022-02-28 r5338 [x86_64-linux-6.1.0] (local build)\n"
+            "Copyright (C) 2002-22, Bruce Allen, Christian Franke, www.smartmontools.org\n\n"
+            "Smartctl open device: /dev/nvme0n1 failed: No such device\n"
+        )
+
+        with (
+            patch(
+                "buoy.collectors.disk.scan_nvme_devices",
+                new=AsyncMock(return_value=["/dev/nvme0n1"]),
+            ),
+            patch(
+                "buoy.collectors.disk.run_smartctl",
+                new=AsyncMock(return_value=device_not_found_banner),
+            ),
+        ):
+            result = await coll._nvme_smart()
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_nvme_smart_omitted_from_summary_when_device_not_found(self):
+        """End-to-end: collect_summary() must not include an "nvme" key at
+        all when smartctl only produced a banner, not real SMART data."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        config = _make_config()
+        coll = DiskCollector(config)
+
+        device_not_found_banner = (
+            "smartctl 7.3 2022-02-28 r5338\n"
+            "Smartctl open device: /dev/nvme0n1 failed: No such device\n"
+        )
+
+        with (
+            patch.object(coll, "_root_disk_percent", new=AsyncMock(return_value=42)),
+            patch(
+                "buoy.collectors.disk.scan_nvme_devices", new=AsyncMock(return_value=[])
+            ),
+            patch(
+                "buoy.collectors.disk.run_smartctl",
+                new=AsyncMock(return_value=device_not_found_banner),
+            ),
+        ):
+            summary = await coll.collect_summary()
+
+        assert "nvme" not in summary
+
 
 class TestDiskCollectorIo:
     """Tests for the real DiskCollector's /proc/diskstats-based I/O totals.

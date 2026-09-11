@@ -291,6 +291,14 @@ class DiskCollector:
         wear = self._extract_smart(output, "Percentage Used:", 2, strip_pct=True)
         hours = self._extract_smart(output, "Power On Hours:", 3, strip_comma=True)
 
+        if temp is None and wear is None and hours is None:
+            # smartctl still writes its version/copyright banner to stdout
+            # even when it fails to open the device (e.g. "No such
+            # device") — non-empty `output` alone doesn't mean smartctl
+            # actually found a drive, so bail out if none of the expected
+            # SMART fields were present to parse.
+            return None
+
         read_line = self._find_line(output, "Data Units Read:")
         written_line = self._find_line(output, "Data Units Written:")
         read_val = self._extract_bracket(read_line) if read_line else "unknown"
