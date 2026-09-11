@@ -25,6 +25,19 @@ class ConfigError(Exception):
     """Raised when configuration input is invalid (bad env value, etc.)."""
 
 
+def _coerce_int(value: Any, label: str) -> int:
+    """Coerce a config value to int, raising a clear ConfigError on failure.
+
+    Used for both env var overrides and YAML-sourced values so a typo like
+    ``listen_port: "eighty-ninety"`` fails with a named, actionable error
+    instead of a bare traceback.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"Invalid value for {label}: {value!r} (expected an integer)") from exc
+
+
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 
 
@@ -234,12 +247,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             # explicit invalid value, not "unset" — only a missing env var (checked
             # above) falls back to the YAML/default. There's no sensible int for "",
             # so we surface the same ConfigError as any other unparsable value.
-            try:
-                raw[section][key] = int(value)
-            except ValueError as exc:
-                raise ConfigError(
-                    f"Invalid value for {env_key}: {value!r} (expected an integer)"
-                ) from exc
+            raw[section][key] = _coerce_int(value, env_key)
         elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates", "verify_ssl"):
             raw[section][key] = value.lower() in ("true", "1", "yes")
         elif key == "allowed_origins":
@@ -309,7 +317,11 @@ def _parse_plugins(
     for plugin_id, cfg in raw_plugins.items():
         enabled = cfg.get("enabled", default_enabled) if isinstance(cfg, dict) else default_enabled
         raw_interval = cfg.get("refresh_interval", None) if isinstance(cfg, dict) else None
-        refresh_interval = int(raw_interval) if raw_interval is not None else None
+        refresh_interval = (
+            _coerce_int(raw_interval, f"plugins.{plugin_id}.refresh_interval")
+            if raw_interval is not None
+            else None
+        )
         settings = (
             {k: v for k, v in cfg.items() if k not in ("enabled", "refresh_interval")}
             if isinstance(cfg, dict)
@@ -343,7 +355,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     peers = _parse_peers(network_raw.get("peers", []))
     network = NetworkConfig(
         tailnet_domain=network_raw.get("tailnet_domain", ""),
-        listen_port=int(network_raw.get("listen_port", 8090)),
+        listen_port=_coerce_int(network_raw.get("listen_port", 8090), "network.listen_port"),
         base_path=normalize_base_path(network_raw.get("base_path", "")),
         peers=peers,
         allowed_origins=list(network_raw.get("allowed_origins", [])),
@@ -379,11 +391,17 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     )
 
     refresh = RefreshConfig(
-        stats_interval=int(refresh_raw.get("stats_interval", 5)),
-        services_interval=int(refresh_raw.get("services_interval", 30)),
-        fleet_interval=int(refresh_raw.get("fleet_interval", 15)),
-        plugins_interval=int(refresh_raw.get("plugins_interval", 60)),
-        image_updates_interval=int(refresh_raw.get("image_updates_interval", 21600)),
+        stats_interval=_coerce_int(refresh_raw.get("stats_interval", 5), "refresh.stats_interval"),
+        services_interval=_coerce_int(
+            refresh_raw.get("services_interval", 30), "refresh.services_interval"
+        ),
+        fleet_interval=_coerce_int(refresh_raw.get("fleet_interval", 15), "refresh.fleet_interval"),
+        plugins_interval=_coerce_int(
+            refresh_raw.get("plugins_interval", 60), "refresh.plugins_interval"
+        ),
+        image_updates_interval=_coerce_int(
+            refresh_raw.get("image_updates_interval", 21600), "refresh.image_updates_interval"
+        ),
     )
 
     plugins = PluginsConfig(
