@@ -49,6 +49,20 @@ header .access-badge { font-size: 0.55rem; color: var(--cyan); text-transform: u
 header .uptime { margin-left: auto; font-size: 0.7rem; color: var(--text-dim); }
 header .uptime span { color: var(--green); }
 
+/* ── Active Alerts ───────────────────────────────────── */
+
+.active-alerts { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 1.25rem; }
+.active-alerts:empty { display: none; margin: 0; }
+.active-alert-item {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: var(--surface); border-radius: 4px; border-left: 3px solid var(--amber);
+  padding: 0.5rem 0.75rem; font-size: 0.65rem; color: var(--text);
+  animation: fadeIn 0.3s ease-out;
+}
+.active-alert-item.crit { border-left-color: var(--red); }
+.active-alert-item .aa-icon { font-size: 0.8rem; color: var(--amber); }
+.active-alert-item.crit .aa-icon { color: var(--red); }
+
 /* ── Gauges ──────────────────────────────────────────── */
 
 .gauges { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 2rem; animation: fadeIn 0.6s ease-out 0.1s both; }
