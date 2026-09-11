@@ -679,3 +679,86 @@ class TestDemoDockerListContainerStates:
         states = await coll.list_container_states()
         for s in states:
             assert s["status"] == "running"
+
+
+class TestSystemCollectorMemory:
+    """Tests for the real SystemCollector's /proc/meminfo-based memory reads.
+
+    Regression coverage for BUG-29 (used = MemTotal - MemFree - Buffers -
+    Cached overstated usage vs free/htop, since it ignores SReclaimable and
+    Shmem) and BUG-30 (memory detail's top_processes was hardcoded empty).
+    """
+
+    MEMINFO = (
+        "MemTotal:       16384000 kB\n"
+        "MemFree:         1024000 kB\n"
+        "MemAvailable:    9000000 kB\n"
+        "Buffers:          500000 kB\n"
+        "Cached:          6000000 kB\n"
+        "SwapTotal:       2048000 kB\n"
+        "SwapFree:        1500000 kB\n"
+    )
+
+    def test_used_matches_total_minus_available(self):
+        """used should track MemAvailable, not the free/buffers/cached formula
+        that ignores reclaimable slab and shared memory."""
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with patch("builtins.open", mock_open(read_data=self.MEMINFO)):
+            used_gb, total_gb = coll._read_memory()
+
+        # 16384000 - 9000000 = 7384000 kB ≈ 7.0 GB, not the ~8.9 GB the old
+        # (MemFree+Buffers+Cached) formula would have produced.
+        assert used_gb == pytest.approx(7.0, abs=0.01)
+        assert total_gb == pytest.approx(15.6, abs=0.01)
+
+    def test_detail_used_mb_matches_total_minus_available(self):
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        with patch("builtins.open", mock_open(read_data=self.MEMINFO)):
+            detail = coll._read_memory_detail()
+
+        assert detail["used_mb"] == detail["total_mb"] - detail["available_mb"]
+
+    def test_falls_back_to_memfree_when_memavailable_missing(self):
+        """Very old kernels don't expose MemAvailable at all."""
+        from unittest.mock import mock_open, patch
+
+        from buoy.collectors.system import SystemCollector
+
+        meminfo = "MemTotal:       16384000 kB\nMemFree:         1024000 kB\n"
+        coll = SystemCollector(_make_config())
+        with patch("builtins.open", mock_open(read_data=meminfo)):
+            used_gb, total_gb = coll._read_memory()
+
+        assert used_gb == pytest.approx(14.6, abs=0.01)
+        assert total_gb == pytest.approx(15.6, abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_collect_detail_populates_top_processes(self):
+        """collect_detail() must wire memory.top_processes from
+        _top_processes_by("mem") instead of leaving it hardcoded empty."""
+        from unittest.mock import AsyncMock, mock_open, patch
+
+        from buoy.collectors.system import SystemCollector
+
+        coll = SystemCollector(_make_config())
+        coll._is_linux = True  # exercise the real (non-fallback) path regardless of test host OS
+        fake_top = [{"pid": 1, "cpu": 0.1, "mem": 42.0, "cmd": "buoy"}]
+        top_processes_mock = AsyncMock(return_value=fake_top)
+
+        with (
+            patch("builtins.open", mock_open(read_data=self.MEMINFO)),
+            patch.object(coll, "_top_processes_by", new=top_processes_mock),
+            patch.object(coll, "_read_cpu_detail", new=AsyncMock(return_value={})),
+        ):
+            detail = await coll.collect_detail()
+
+        assert detail["memory"]["top_processes"] == fake_top
+        top_processes_mock.assert_awaited_once_with("mem")
