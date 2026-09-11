@@ -31,12 +31,22 @@ COPY static/ ./static/
 RUN pip install --no-cache-dir ".[zigbee2mqtt]"
 COPY buoy.yaml.example ./buoy.yaml.example
 
-# Create plugin + data directories
-RUN mkdir -p /plugins /data
+# Create plugin + data directories. Owned by uid/gid 1000 (not just root) so
+# a hardened deployment can run as a non-root user via compose's `user:`
+# (see docker-compose.minimal.yml) without a separate chown step — this is
+# a no-op for the default root-user run, since root can write here either
+# way. The image's default user stays root: buoy's host-introspection
+# features (nsenter into the host mount/PID namespace, docker.sock) need
+# it. See SEC-10 hardening docs (README) for what each privilege tier
+# actually unlocks, verified against a real container rather than assumed.
+RUN mkdir -p /plugins /data && chown -R 1000:1000 /plugins /data
 
 EXPOSE 8090
 
 VOLUME ["/plugins", "/data", "/config"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:8090/api/health || exit 1
 
 ENTRYPOINT ["python", "-m", "buoy"]
 CMD ["--config", "/config/buoy.yaml"]

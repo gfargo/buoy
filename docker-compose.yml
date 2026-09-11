@@ -15,7 +15,8 @@ services:
       # - /etc/caddy/certs:/etc/caddy/certs:ro
     environment:
       - BUOY_AUTH_TOKEN=${BUOY_AUTH_TOKEN:-}
-    # Required for full host metrics (temp, disk mounts, NVMe SMART)
+    # Required for full host metrics (temp, disk mounts, NVMe SMART).
+    # For the same metrics without `privileged`, see docker-compose.hardened.yml.
     privileged: true
     pid: host
 

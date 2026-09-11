@@ -1,0 +1,36 @@
+# Least-privilege profile with the SAME functionality as docker-compose.yml's
+# default — verified against a real container, not just assumed. `nsenter -t 1
+# -m` (the host mount list, NVMe SMART) only needs SYS_ADMIN + SYS_PTRACE, not
+# every capability `privileged: true` grants plus the blanket device access
+# and disabled seccomp/AppArmor confinement that comes with it.
+#
+# See docs/deployment/privilege-matrix.md#tier-2b--full-metrics-no-privileged-verified
+# for what was tested and why this still needs to run as root.
+#
+# Usage: docker compose -f docker-compose.hardened.yml up -d
+services:
+  buoy:
+    image: ghcr.io/gfargo/buoy:latest
+    container_name: buoy
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./buoy.yaml:/config/buoy.yaml:ro
+      - buoy-data:/data
+      # Optional: mount a plugins directory for custom plugins
+      # - ./plugins:/plugins:ro
+      # Optional: mount TLS certs (read-only) for the cert_expiry plugin
+      # - /etc/caddy/certs:/etc/caddy/certs:ro
+    environment:
+      - BUOY_AUTH_TOKEN=${BUOY_AUTH_TOKEN:-}
+    pid: host
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN # nsenter -m: join the host mount namespace
+      - SYS_PTRACE # nsenter -t 1: open /proc/1/ns/* to join it
+
+volumes:
+  buoy-data:
