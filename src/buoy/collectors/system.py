@@ -341,15 +341,25 @@ class SystemCollector:
     # ── Fallback (non-Linux) ───────────────────────────────────────────────────
 
     def _fallback_stats(self) -> dict:
-        """Return placeholder stats on non-Linux platforms."""
+        """Return placeholder stats on non-Linux platforms.
+
+        These metrics all come from /proc and /sys, which don't exist on
+        macOS/Windows. Report them as unavailable (None) rather than 0
+        (BUG-33) — a contributor running `python -m buoy` locally for
+        development otherwise sees a dashboard that looks broken (every
+        gauge pinned at zero) instead of one that's honest about not having
+        real data on this platform. Downstream consumers (frontend gauges,
+        AlertEngine, the Prometheus exporter) already treat None as "no
+        reading" rather than crashing or reporting a fake value.
+        """
         return {
             "hostname": self.config.node.name,
             "model": f"{platform.system()} {platform.machine()}",
             "tailscale": self.config.network.tailnet_domain,
-            "cpu": 0,
-            "mem_used": 0.0,
-            "mem_total": 0.0,
-            "temp": 0,
+            "cpu": None,
+            "mem_used": None,
+            "mem_total": None,
+            "temp": None,
             "uptime_h": 0,
             "uptime_m": 0,
             "uptime_s": 0,

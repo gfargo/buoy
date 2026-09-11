@@ -81,6 +81,19 @@ class TestAlertEngineEvaluation:
         assert len(engine.active_alerts) == 0
 
     @pytest.mark.asyncio
+    async def test_non_linux_fallback_stats_do_not_crash_evaluation(self):
+        """BUG-33: the non-Linux fallback reports cpu/mem_used/mem_total/temp
+        as None. `None > 0` raises TypeError, so building the memory
+        percentage must guard on None, not just "mem_total > 0"."""
+        config = _make_config()
+        engine = AlertEngine(config)
+
+        await engine.evaluate(
+            {"cpu": None, "mem_used": None, "mem_total": None, "temp": None, "disk_pct": 50}
+        )
+        assert len(engine.active_alerts) == 0
+
+    @pytest.mark.asyncio
     async def test_cpu_crit_immediate_fire(self):
         """CPU at critical level fires immediately (duration=60 but tested with sustained breach)."""
         config = _make_config()
