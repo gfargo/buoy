@@ -51,6 +51,34 @@ All notable changes to Buoy are documented here.
 - Frontend: correct `formatUptime` boundary and extract shared util (#218)
 - Alerts: webhook dispatch reads URL from `config.alerts` not `plugins.builtin` (#217)
 
+## [2.3.1](https://github.com/gfargo/buoy/compare/buoy-v2.3.0...buoy-v2.3.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **alerts:** cap alert history on write instead of only slicing on read (BUG-21) ([#312](https://github.com/gfargo/buoy/issues/312)) ([dfbcfd6](https://github.com/gfargo/buoy/commit/dfbcfd64edb9ae390f477e7a55aa9331d1e8b9be)), closes [#164](https://github.com/gfargo/buoy/issues/164)
+* **auth:** compare credentials as bytes to avoid crashing on non-ASCII (SEC-7) ([#304](https://github.com/gfargo/buoy/issues/304)) ([c8ffa95](https://github.com/gfargo/buoy/commit/c8ffa956e188e04cd9847822b1966d3cff5dde25)), closes [#82](https://github.com/gfargo/buoy/issues/82)
+* **collectors:** compute CPU usage from prior sample instead of blocking 100ms (BUG-31) ([#308](https://github.com/gfargo/buoy/issues/308)) ([c28b7d4](https://github.com/gfargo/buoy/commit/c28b7d4908f8ccfebd5ff9afec3ba91afbdb1230)), closes [#174](https://github.com/gfargo/buoy/issues/174)
+* **collectors:** derive disk gauge from the same host-aware mounts (BUG-25) ([#310](https://github.com/gfargo/buoy/issues/310)) ([9642eb8](https://github.com/gfargo/buoy/commit/9642eb8a347781450f65c7778cc5f6bc26a51cba)), closes [#168](https://github.com/gfargo/buoy/issues/168)
+* **collectors:** detect the CPU temperature sensor instead of always reading thermal_zone0 (BUG-28) ([#313](https://github.com/gfargo/buoy/issues/313)) ([24e3787](https://github.com/gfargo/buoy/commit/24e3787b3ecd38d9bf3c7a9e259f38f1bd7a9030)), closes [#171](https://github.com/gfargo/buoy/issues/171)
+* **collectors:** discover the NVMe device instead of hardcoding nvme0n1 (BUG-27) ([#315](https://github.com/gfargo/buoy/issues/315)) ([e1a80a5](https://github.com/gfargo/buoy/commit/e1a80a5427d03f4b8cfbf25e3e5d592c0f64ee07)), closes [#170](https://github.com/gfargo/buoy/issues/170)
+* **collectors:** interleave stdout/stderr log lines by timestamp (BUG-49) ([#316](https://github.com/gfargo/buoy/issues/316)) ([49118dd](https://github.com/gfargo/buoy/commit/49118ddac3d9a880da838e382f2e21fb2205a970)), closes [#179](https://github.com/gfargo/buoy/issues/179)
+* **collectors:** match disk I/O by device pattern, sum across all whole disks (BUG-26) ([#309](https://github.com/gfargo/buoy/issues/309)) ([071174b](https://github.com/gfargo/buoy/commit/071174b062d5cdff0dce29939c3a79c37123cf5e)), closes [#169](https://github.com/gfargo/buoy/issues/169)
+* **collectors:** report memory used via MemAvailable, populate detail top_processes ([#305](https://github.com/gfargo/buoy/issues/305)) ([a85b152](https://github.com/gfargo/buoy/commit/a85b152c5875878764cdadb6a9d7af07f83ff924))
+* **collectors:** report unavailable metrics as None instead of 0 on non-Linux (BUG-33) ([#314](https://github.com/gfargo/buoy/issues/314)) ([a260373](https://github.com/gfargo/buoy/commit/a260373d42e4f1cb17752a688666a7613d875041)), closes [#176](https://github.com/gfargo/buoy/issues/176)
+* **collectors:** respect cgroup CPU quota for core count (BUG-32) ([#318](https://github.com/gfargo/buoy/issues/318)) ([bc6f8d8](https://github.com/gfargo/buoy/commit/bc6f8d8ddfd1fdfd40ae323d84ca4ba7f5dab750)), closes [#175](https://github.com/gfargo/buoy/issues/175)
+* **config:** guard unguarded int() casts on YAML-sourced values ([#306](https://github.com/gfargo/buoy/issues/306)) ([e5f297e](https://github.com/gfargo/buoy/commit/e5f297e84bcc506757c97aba1b8876b530f574c0)), closes [#268](https://github.com/gfargo/buoy/issues/268)
+* **config:** warn on unrecognized config keys instead of silently ignoring them (BUG-24) ([#320](https://github.com/gfargo/buoy/issues/320)) ([c4f9dc8](https://github.com/gfargo/buoy/commit/c4f9dc834cfdf86cde6986427d2944ec06feafaa)), closes [#167](https://github.com/gfargo/buoy/issues/167)
+* **disk:** don't treat smartctl's failure banner as valid SMART data ([0d8970c](https://github.com/gfargo/buoy/commit/0d8970c346553625438909bdb8dad74b6f1338e9))
+* **frontend:** self-host fonts instead of loading from Google Fonts CDN (BUG-48) ([#322](https://github.com/gfargo/buoy/issues/322)) ([cf9f7ab](https://github.com/gfargo/buoy/commit/cf9f7abce2bc11fbc823dc37c0341513e4570835)), closes [#105](https://github.com/gfargo/buoy/issues/105)
+* **frontend:** surface active alerts on page load, not just as toasts (BUG-12) ([#317](https://github.com/gfargo/buoy/issues/317)) ([ae0a66b](https://github.com/gfargo/buoy/commit/ae0a66bb86176f64e3a698670a29ddd1793ac1f4)), closes [#155](https://github.com/gfargo/buoy/issues/155)
+* **network:** measure peer latency concurrently instead of serially (BUG-34) ([#307](https://github.com/gfargo/buoy/issues/307)) ([fe13894](https://github.com/gfargo/buoy/commit/fe13894927a8f2bf81aa06512883d880433008ca)), closes [#177](https://github.com/gfargo/buoy/issues/177)
+
+
+### Documentation
+
+* **security:** stop hardcoding a specific supported version ([#319](https://github.com/gfargo/buoy/issues/319)) ([c8dde40](https://github.com/gfargo/buoy/commit/c8dde40f835525968b34b492df62751e612b7237))
+
 ## [2.3.0](https://github.com/gfargo/buoy/compare/buoy-v2.2.1...buoy-v2.3.0) (2026-09-10)
 
 
