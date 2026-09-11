@@ -474,6 +474,64 @@ class TestDiskCollectorNvme:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_nvme_smart_probes_discovered_device_not_hardcoded_path(self):
+        """BUG-27: the discovered NVMe device is used, not a hardcoded
+        /dev/nvme0n1 guess — fixes hosts where the drive is numbered
+        differently (e.g. nvme1n1) or otherwise isn't named nvme0n1."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        config = _make_config()
+        coll = DiskCollector(config)
+
+        smartctl_output = (
+            "Temperature:                        41 Celsius\n"
+            "Percentage Used:                    3%\n"
+            "Power On Hours:                     1200\n"
+            "Data Units Read:                    1,000 [512 MB]\n"
+            "Data Units Written:                 500 [256 MB]\n"
+        )
+
+        with (
+            patch(
+                "buoy.collectors.disk.scan_nvme_devices",
+                new=AsyncMock(return_value=["/dev/nvme1"]),
+            ),
+            patch(
+                "buoy.collectors.disk.run_smartctl", new=AsyncMock(return_value=smartctl_output)
+            ) as mock_run,
+        ):
+            result = await coll._nvme_smart()
+
+        mock_run.assert_awaited_once_with("-a", "/dev/nvme1")
+        assert result["temp"] == 41
+        assert result["wear_pct"] == 3
+        assert result["power_hours"] == 1200
+
+    @pytest.mark.asyncio
+    async def test_nvme_smart_falls_back_to_default_path_when_scan_finds_nothing(self):
+        """If smartctl --scan finds no NVMe device at all, fall back to the
+        historical /dev/nvme0n1 guess rather than giving up entirely."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.disk import DiskCollector
+
+        config = _make_config()
+        coll = DiskCollector(config)
+
+        with (
+            patch("buoy.collectors.disk.scan_nvme_devices", new=AsyncMock(return_value=[])),
+            patch(
+                "buoy.collectors.disk.run_smartctl", new=AsyncMock(return_value=None)
+            ) as mock_run,
+        ):
+            result = await coll._nvme_smart()
+
+        mock_run.assert_awaited_once_with("-a", "/dev/nvme0n1")
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_demo_disk_nvme_in_summary(self):
         """DemoDiskCollector always returns nvme data in collect_summary."""
         config = _make_config()

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 
 from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
-from buoy.subprocess_utils import communicate
+from buoy.smartctl import run_smartctl, scan_devices
 
 
 class SmartDiskPlugin(Plugin):
@@ -65,51 +64,11 @@ class SmartDiskPlugin(Plugin):
 
     async def _scan_drives(self) -> list[str]:
         """Auto-detect drives via smartctl --scan (nsenter first, then direct)."""
-        nsenter_cmd = ["nsenter", "-t", "1", "-m", "--", "smartctl", "--scan"]
-        direct_cmd = ["smartctl", "--scan"]
-
-        for cmd in (nsenter_cmd, direct_cmd):
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await communicate(proc, timeout=5)
-                if proc.returncode is not None and stdout:
-                    devices = []
-                    for line in stdout.decode().strip().split("\n"):
-                        if not line:
-                            continue
-                        # Format: /dev/sda -d scsi # /dev/sda [SCSI disk], ...
-                        parts = line.split()
-                        if parts:
-                            devices.append(parts[0])
-                    return devices
-            except (TimeoutError, FileNotFoundError):
-                continue
-        return []
+        return [device for device, _dev_type in await scan_devices()]
 
     async def _read_drive(self, device: str) -> dict | None:
         """Run smartctl -A -H on a device and parse SMART data."""
-        nsenter_cmd = ["nsenter", "-t", "1", "-m", "--", "smartctl", "-A", "-H", device]
-        direct_cmd = ["smartctl", "-A", "-H", device]
-
-        output: str | None = None
-        for cmd in (nsenter_cmd, direct_cmd):
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await communicate(proc, timeout=5)
-                if proc.returncode is not None and stdout:
-                    output = stdout.decode()
-                    break
-            except (TimeoutError, FileNotFoundError):
-                continue
-
+        output = await run_smartctl("-A", "-H", device)
         if not output:
             return None
 
