@@ -2,11 +2,32 @@
  * Gauges module — renders gauge cards, sparklines, and bar fills.
  */
 
+import { escapeHtml } from './escape.js';
 import { formatUptime } from './format.js';
 
 const SPARK_MAX = 30;
 const tempHistory = [];
 const diskHistory = [];
+
+/**
+ * Build the active-alerts banner HTML from /api/stats' `alerts` array
+ * (BUG-12). Pure so it's testable without a DOM — see updateGauges()
+ * for how the result actually reaches the page.
+ */
+export function activeAlertsHtml(alerts) {
+  if (!alerts || alerts.length === 0) return '';
+  return alerts
+    .map((a) => {
+      const isCrit = a.level === 'crit';
+      return (
+        `<div class="active-alert-item${isCrit ? ' crit' : ''}">` +
+        `<span class="aa-icon">${isCrit ? '⚠' : '△'}</span>` +
+        `<span>${escapeHtml(a.message)}</span>` +
+        `</div>`
+      );
+    })
+    .join('');
+}
 
 /**
  * Format the memory gauge's "used/total" text. mem_used/mem_total are null
@@ -35,6 +56,17 @@ export function updateGauges(data) {
   if (tierTag && data.hostname) {
     // Config-driven tier is shown; fallback to node name
     tierTag.textContent = tierTag.dataset.tier || data.hostname;
+  }
+
+  // Active alerts (BUG-12): /api/stats already included this array, but it
+  // was ignored — alerts only ever appeared as transient WebSocket toasts,
+  // so loading the page (or reconnecting) while an alert was already active
+  // showed no indication at all. `undefined` means this particular update
+  // didn't carry alert info; leave whatever's already shown as-is rather
+  // than treating "no info" as "no alerts".
+  if (data.alerts !== undefined) {
+    const alertsEl = document.getElementById('active-alerts');
+    if (alertsEl) alertsEl.innerHTML = activeAlertsHtml(data.alerts);
   }
 
   // CPU

@@ -2,6 +2,7 @@
  * WebSocket module — connects to /ws with auto-reconnect and exponential backoff.
  */
 
+import { escapeHtml } from './escape.js';
 import { wsUrl } from './paths.js';
 
 let ws = null;
@@ -133,7 +134,7 @@ function showAlertToast(alert) {
 
   const toast = document.createElement('div');
   toast.style.cssText = `background:var(--surface);border:1px solid ${color};border-radius:6px;padding:0.75rem 1rem;font-size:0.65rem;color:var(--text);animation:fadeIn 0.3s ease-out;display:flex;align-items:center;gap:0.5rem;box-shadow:0 4px 12px rgba(0,0,0,0.3)`;
-  toast.innerHTML = `<span style="color:${color};font-size:0.9rem">${icon}</span><span>${alert.message}</span>`;
+  toast.innerHTML = `<span style="color:${color};font-size:0.9rem">${icon}</span><span>${escapeHtml(alert.message)}</span>`;
 
   container.appendChild(toast);
 

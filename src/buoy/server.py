@@ -597,6 +597,17 @@ async def _stats_loop(state: BuoyAppState):
                     if entry:
                         ctr["update_status"] = entry["status"]
 
+            # Same "alerts" field api_stats() already includes (BUG-12) — a
+            # client relying on the WebSocket push (the common case once
+            # connected) otherwise never saw active-alerts state at all
+            # outside of the transient toast fired at the moment an alert
+            # changes, so reconnecting or loading mid-incident showed nothing.
+            combined["alerts"] = (
+                [a.to_dict() for a in state.alert_engine.active_alerts]
+                if state.alert_engine
+                else []
+            )
+
             # Broadcast to WebSocket clients (only when websocket feature enabled)
             if state.config.features.websocket:
                 await broadcast_stats(state, combined)
