@@ -220,6 +220,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Cert Expiry | `cert_expiry` | TLS certificate days remaining | (none) |
 | Actual Budget | `actual_budget` | Monthly spend vs budget | `url`, `api_key`, `budget_sync_id` |
 | Backups | `backup_status` | Backup health & freshness | (none) |
+| Bans | `ban_status` | Fail2ban / CrowdSec active bans & offenders | (none) |
 | Cron | `cron_health` | Recent cron job runs | (none) |
 | DNS Filter | `dns_filter` | Pi-hole / AdGuard Home filtering stats | `type`, `url` |
 | Grafana / Alertmanager | `grafana_alerts` | Firing alerts by severity | `type`, `url` (+ `token` for Grafana) |

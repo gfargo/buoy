@@ -25,7 +25,7 @@ see [Tier 0](#tier-0--native--systemd) below.
 | `CAP_SYS_ADMIN` + device access (via `privileged: true`, or explicitly granted — see [Tier 0](#tier-0--native--systemd)) | `smartctl`'s NVMe admin-passthrough ioctl on `/dev/nvme0n1` for SMART data | NVMe SMART section is omitted entirely (`nvme` key absent from `/api/stats`) — the kernel requires `CAP_SYS_ADMIN` for this specific ioctl regardless of file permissions or container boundary, so this is lost even on an otherwise-unprivileged **native** install | `src/buoy/collectors/disk.py` (`_nvme_smart`) |
 | Host `/sys` visibility (implied by `privileged`, or native) | CPU temperature reading from `/sys/class/thermal/thermal_zone0/temp` | Temperature reports as `0` | `src/buoy/collectors/system.py` (`_read_temperature`) |
 | Linux host / container (vs. macOS/Windows) | CPU %, memory, uptime, device model from `/proc` | All of `cpu`, `mem_used`, `mem_total`, `uptime_*` report as `0`/`0.0`; `model` falls back to `platform.system() + platform.machine()` | `src/buoy/collectors/system.py` (`_fallback_stats`) |
-| `privileged` + `pid: host` (nsenter into host PID 1) | Plugins that read host-only state: `tailscale` (peer status), `wireguard` (tunnel stats), `smart_disk` (SATA/NVMe health), `cron_health` (cron logs), `journal_errors` (journald), `systemd_health` (unit status) | Those plugins can't reach host state from inside an unprivileged/non-`pid:host` container and report unavailable/empty | `buoy.yaml.example` (each plugin's comment notes this requirement) |
+| `privileged` + `pid: host` (nsenter into host PID 1) | Plugins that read host-only state: `tailscale` (peer status), `wireguard` (tunnel stats), `smart_disk` (SATA/NVMe health), `cron_health` (cron logs), `journal_errors` (journald), `systemd_health` (unit status), `ban_status` (Fail2ban/CrowdSec bans) | Those plugins can't reach host state from inside an unprivileged/non-`pid:host` container and report unavailable/empty | `buoy.yaml.example` (each plugin's comment notes this requirement) |
 
 ## Recommended tiers
 
@@ -106,7 +106,7 @@ typical single-`overlay`-root container, that's just the container's own
 root, not the host's real mounts). You lose: temperature, the host's real
 mount list, NVMe SMART, host top-processes, and every host-introspection
 plugin (`tailscale`, `wireguard`, `smart_disk`, `cron_health`,
-`journal_errors`, `systemd_health`).
+`journal_errors`, `systemd_health`, `ban_status`).
 
 #### Tier 3b — Non-root, no Docker socket (verified)
 
