@@ -630,7 +630,7 @@ class DiskCollector:
 
 ### 8.4 Network Collector
 
-Fleet polling + latency measurement:
+Fleet polling + latency measurement, plus per-interface throughput:
 
 ```python
 class NetworkCollector:
@@ -646,6 +646,18 @@ class NetworkCollector:
         async with httpx.AsyncClient(timeout=4) as client:
             r = await client.get(f"{peer.url}/api/stats")
             return PeerStatus(name=peer.name, online=True, data=r.json())
+
+    async def collect_throughput(self) -> dict:
+        """Sample rx/tx byte rates per interface from /proc/net/dev (or
+        /proc/1/net/dev, when the host netns is reachable — see the
+        privilege matrix). Rates are a delta against the previous sample,
+        so the first call after startup reports 0 rather than a spike, and
+        a counter that goes backwards (wrap, NIC reset) clamps to 0 rather
+        than going negative. Loopback and container/bridge interfaces (lo,
+        veth*, docker*, br-*, virbr*) are excluded unless explicitly listed
+        in network.interfaces. Returns {} on non-Linux or when
+        /proc/net/dev is unreadable — the "net" key is then absent from
+        /api/stats entirely (BUG-33 convention)."""
 ```
 
 ### 8.5 Collector Scheduler

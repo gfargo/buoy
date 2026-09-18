@@ -275,3 +275,60 @@ class DemoDiskCollector:
             "io_read_gb": round(_sinusoidal(142, 2), 1),
             "io_write_gb": round(_sinusoidal(86, 1), 1),
         }
+
+
+class DemoNetworkCollector:
+    """Mock network collector: synthetic per-interface throughput, no peers.
+
+    ``collect()`` and ``measure_latency()`` mirror the real collector's
+    peer-polling/latency shape but return empty results (demo mode has no
+    real peers to poll), so ``api_fleet`` and ``_latency_loop`` behave
+    exactly as they did before demo mode had a "network" collector at all.
+    """
+
+    def __init__(self, config: BuoyConfig):
+        self.config = config
+
+    async def collect(self) -> dict:
+        return {"peers": []}
+
+    async def measure_latency(self) -> list:
+        return []
+
+    async def collect_throughput(self) -> dict:
+        rx0 = max(0, _sinusoidal(1_800_000, 900_000, period=180))
+        tx0 = max(0, _sinusoidal(320_000, 160_000, period=180))
+        rx1 = max(0, _sinusoidal(45_000, 30_000, period=240))
+        tx1 = max(0, _sinusoidal(12_000, 8_000, period=240))
+        return {
+            "net": {
+                "primary": "eth0",
+                "rx_bytes_per_sec": round(rx0, 1),
+                "tx_bytes_per_sec": round(tx0, 1),
+                "source": "demo",
+                "interfaces": [
+                    {
+                        "name": "eth0",
+                        "rx_bytes": 128_849_018_880,
+                        "tx_bytes": 42_949_672_960,
+                        "rx_bytes_per_sec": round(rx0, 1),
+                        "tx_bytes_per_sec": round(tx0, 1),
+                        "rx_errors": 0,
+                        "tx_errors": 0,
+                        "rx_dropped": 0,
+                        "tx_dropped": 0,
+                    },
+                    {
+                        "name": "tailscale0",
+                        "rx_bytes": 4_294_967_296,
+                        "tx_bytes": 2_147_483_648,
+                        "rx_bytes_per_sec": round(rx1, 1),
+                        "tx_bytes_per_sec": round(tx1, 1),
+                        "rx_errors": 0,
+                        "tx_errors": 0,
+                        "rx_dropped": 0,
+                        "tx_dropped": 0,
+                    },
+                ],
+            }
+        }

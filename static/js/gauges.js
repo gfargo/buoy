@@ -3,11 +3,13 @@
  */
 
 import { escapeHtml } from './escape.js';
-import { formatUptime } from './format.js';
+import { formatUptime, formatRate } from './format.js';
 
 const SPARK_MAX = 30;
 const tempHistory = [];
 const diskHistory = [];
+const netHistory = [];
+let netRollingMax = 1; // sane floor so an idle link doesn't flatline at max scale
 
 /**
  * Build the active-alerts banner HTML from /api/stats' `alerts` array
@@ -122,6 +124,23 @@ export function updateGauges(data) {
       badge.textContent = wear >= 90 ? 'Critical' : wear >= 70 ? 'Warning' : 'Healthy';
       badge.className = 'health-badge' + (wear >= 90 ? ' crit' : wear >= 70 ? ' warn' : '');
     }
+  }
+
+  // Network throughput. `net` is absent entirely (rather than present with
+  // nulls) on non-Linux or when /proc/net/dev couldn't be read (BUG-33
+  // convention), so the gauge stays hidden instead of rendering "NaN B/s".
+  if (data.net) {
+    show('net-gauge');
+    const rx = formatRate(data.net.rx_bytes_per_sec);
+    const tx = formatRate(data.net.tx_bytes_per_sec);
+    setText('net', `↓ ${rx.value} ↑ ${tx.value}`);
+    setText('net-unit', rx.unit === tx.unit ? rx.unit : `${rx.unit}/${tx.unit}`);
+
+    const total = (data.net.rx_bytes_per_sec || 0) + (data.net.tx_bytes_per_sec || 0);
+    netHistory.push(total);
+    if (netHistory.length > SPARK_MAX) netHistory.shift();
+    netRollingMax = Math.max(netRollingMax, ...netHistory);
+    renderSparkline('net-sparkline', netHistory, 0, netRollingMax, 'var(--cyan)');
   }
 
   // Tailscale badge

@@ -63,6 +63,16 @@ network:
   # Also settable via BUOY_NETWORK_VERIFY_SSL=false.
   verify_ssl: true
 
+  # Interfaces to report throughput for (the Network gauge + detail panel).
+  # Empty (default) auto-detects: every interface except loopback and
+  # container/bridge virtual interfaces (lo, veth*, docker*, br-*, virbr*).
+  # Set this to an explicit allowlist to include a normally-skipped
+  # interface, or to narrow reporting to just the ones you care about.
+  # Also settable via BUOY_NETWORK_INTERFACES (comma-separated).
+  interfaces: []
+  # Example:
+  # interfaces: ["eth0", "tailscale0"]
+
   # Browser CORS is same-origin only by default (no cross-origin reads at
   # all). Only set this if another origin's browser needs to call this
   # buoy's API directly (e.g. a fleet dashboard embedding this node's data).

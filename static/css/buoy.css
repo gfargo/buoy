@@ -185,6 +185,7 @@ header .uptime span { color: var(--green); }
 .detail-panel .process-table th { font-size: 0.5rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
 .detail-panel .process-table td { font-size: 0.6rem; color: var(--text); padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
 .detail-panel .process-table tr:last-child td { border-bottom: none; }
+.detail-panel .process-table td.warn { color: var(--amber); }
 
 /* Mount bars */
 .mount-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; }

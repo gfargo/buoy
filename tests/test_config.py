@@ -483,6 +483,7 @@ class TestWarnUnknownKeys:
                 "allowed_origins": ["https://harbor.example.ts.net"],
                 "trusted_proxies": ["10.0.0.1"],
                 "verify_ssl": True,
+                "interfaces": ["eth0"],
             },
             "services": {"hidden": ["internal-tool"], "overrides": {}},
             "theme": {"preset": "nord", "custom": {}},
@@ -604,3 +605,34 @@ class TestNetworkVerifySsl:
         raw = _apply_env_overrides({"network": {"verify_ssl": True}})
         config = _build_config(raw)
         assert config.network.verify_ssl is False
+
+
+class TestNetworkInterfaces:
+    """Tests for network.interfaces (the throughput collector's allowlist)."""
+
+    def test_default_empty(self):
+        config = _build_config({})
+        assert config.network.interfaces == []
+
+    def test_parses_from_yaml(self):
+        raw = {"network": {"interfaces": ["eth0", "tailscale0"]}}
+        config = _build_config(raw)
+        assert config.network.interfaces == ["eth0", "tailscale0"]
+
+    def test_env_override_splits_on_commas(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_INTERFACES", "eth0, tailscale0 ,wg0")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.network.interfaces == ["eth0", "tailscale0", "wg0"]
+
+    def test_env_override_overrides_yaml(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_INTERFACES", "wg0")
+        raw = _apply_env_overrides({"network": {"interfaces": ["eth0"]}})
+        config = _build_config(raw)
+        assert config.network.interfaces == ["wg0"]
+
+    def test_realistic_config_with_interfaces_warns_about_nothing(self, caplog):
+        raw = {"network": {"interfaces": ["eth0", "tailscale0"]}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys(raw)
+        assert caplog.records == []

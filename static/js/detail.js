@@ -5,6 +5,7 @@
 import { authedFetch } from './auth.js';
 import { escapeHtml } from './escape.js';
 import { apiUrl } from './paths.js';
+import { formatRate } from './format.js';
 
 let currentDetail = null;
 
@@ -59,6 +60,7 @@ async function openDetail(type) {
       case 'cpu': content.innerHTML = renderCpuDetail(d); break;
       case 'memory': content.innerHTML = renderMemoryDetail(d); break;
       case 'disk': content.innerHTML = renderDiskDetail(d); break;
+      case 'network': content.innerHTML = renderNetworkDetail(d); break;
       default: content.innerHTML = '';
     }
   } catch (e) {
@@ -127,6 +129,31 @@ function renderDiskDetail(d) {
         <span class="mount-info">${escapeHtml(mnt.used)}/${escapeHtml(mnt.size)} (${mnt.pct}%)</span>
       </div>`;
     });
+  }
+  return html;
+}
+
+function renderNetworkDetail(d) {
+  const net = d.net || {};
+  const interfaces = net.interfaces || [];
+  let html = `
+    <div class="detail-header">
+      <div class="detail-title">Network — Interfaces${net.primary ? ` (primary: ${escapeHtml(net.primary)})` : ''}</div>
+      <button class="detail-close">&#10005; close</button>
+    </div>`;
+
+  if (interfaces.length) {
+    html += `<table class="process-table"><thead><tr><th>Interface</th><th>Down</th><th>Up</th><th>Rx Err/Drop</th><th>Tx Err/Drop</th></tr></thead><tbody>`;
+    interfaces.forEach((iface) => {
+      const rx = formatRate(iface.rx_bytes_per_sec);
+      const tx = formatRate(iface.tx_bytes_per_sec);
+      const hasErrors = (iface.rx_errors || 0) + (iface.tx_errors || 0) + (iface.rx_dropped || 0) + (iface.tx_dropped || 0) > 0;
+      const errCls = hasErrors ? ' class="warn"' : '';
+      html += `<tr><td>${escapeHtml(iface.name)}</td><td>&#8595; ${rx.value} ${rx.unit}</td><td>&#8593; ${tx.value} ${tx.unit}</td><td${errCls}>${iface.rx_errors || 0}/${iface.rx_dropped || 0}</td><td${errCls}>${iface.tx_errors || 0}/${iface.tx_dropped || 0}</td></tr>`;
+    });
+    html += `</tbody></table>`;
+  } else {
+    html += `<div style="color:var(--text-dim);font-size:0.7rem">No interfaces reporting</div>`;
   }
   return html;
 }

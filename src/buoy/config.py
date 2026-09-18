@@ -65,6 +65,10 @@ class NetworkConfig:
     allowed_origins: list[str] = field(default_factory=list)
     trusted_proxies: list[str] = field(default_factory=list)
     verify_ssl: bool = True  # TLS verification for peer polling (default on)
+    # Explicit allowlist of interface names for throughput collection. Empty
+    # (default) means auto-detect: every interface except loopback/virtual
+    # (lo, veth*, docker*, br-*, virbr*).
+    interfaces: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -206,6 +210,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_NETWORK_ALLOWED_ORIGINS": ("network", "allowed_origins"),
         "BUOY_NETWORK_TRUSTED_PROXIES": ("network", "trusted_proxies"),
         "BUOY_NETWORK_VERIFY_SSL": ("network", "verify_ssl"),
+        "BUOY_NETWORK_INTERFACES": ("network", "interfaces"),
         "BUOY_AUTH_ENABLED": ("auth", "enabled"),
         "BUOY_AUTH_TOKEN": ("auth", "token"),
         "BUOY_AUTH_TYPE": ("auth", "type"),
@@ -252,7 +257,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             raw[section][key] = value.lower() in ("true", "1", "yes")
         elif key == "allowed_origins":
             raw[section][key] = [origin.strip() for origin in value.split(",") if origin.strip()]
-        elif key == "trusted_proxies":
+        elif key in ("trusted_proxies", "interfaces"):
             raw[section][key] = [entry.strip() for entry in value.split(",") if entry.strip()]
         else:
             raw[section][key] = value
@@ -361,6 +366,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         allowed_origins=list(network_raw.get("allowed_origins", [])),
         trusted_proxies=list(network_raw.get("trusted_proxies", [])),
         verify_ssl=bool(network_raw.get("verify_ssl", True)),
+        interfaces=list(network_raw.get("interfaces", [])),
     )
 
     services = ServicesConfig(

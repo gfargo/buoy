@@ -229,6 +229,7 @@ async def api_stats(request: Request) -> JSONResponse:
     system_coll = state.collectors.get("system")
     docker_coll = state.collectors.get("docker")
     disk_coll = state.collectors.get("disk")
+    network_coll = state.collectors.get("network")
 
     is_tailscale = _is_tailscale(request, state.config)
 
@@ -237,6 +238,7 @@ async def api_stats(request: Request) -> JSONResponse:
         system_coll.collect() if system_coll else _empty_system(state.config),
         docker_coll.collect_summary() if docker_coll else _empty_docker(),
         disk_coll.collect_summary() if disk_coll else _empty_disk(),
+        network_coll.collect_throughput() if network_coll else _empty_net(),
         top_services(state.config, is_tailscale, collector=docker_coll),
         return_exceptions=True,
     )
@@ -244,7 +246,8 @@ async def api_stats(request: Request) -> JSONResponse:
     system_data = results[0] if not isinstance(results[0], Exception) else {}
     docker_data = results[1] if not isinstance(results[1], Exception) else {}
     disk_data = results[2] if not isinstance(results[2], Exception) else {}
-    services = results[3] if not isinstance(results[3], Exception) else []
+    net_data = results[3] if not isinstance(results[3], Exception) else {}
+    services = results[4] if not isinstance(results[4], Exception) else []
 
     # Decorate each container entry with update status from cache (pure dict lookup)
     if state.image_update_cache and "containers_list" in docker_data:
@@ -255,7 +258,14 @@ async def api_stats(request: Request) -> JSONResponse:
 
     alerts = [a.to_dict() for a in state.alert_engine.active_alerts] if state.alert_engine else []
     return JSONResponse(
-        {**system_data, **docker_data, **disk_data, "top_services": services, "alerts": alerts}
+        {
+            **system_data,
+            **docker_data,
+            **disk_data,
+            **net_data,
+            "top_services": services,
+            "alerts": alerts,
+        }
     )
 
 
@@ -265,23 +275,27 @@ async def api_stats_detail(request: Request) -> JSONResponse:
 
     system_coll = state.collectors.get("system")
     disk_coll = state.collectors.get("disk")
+    network_coll = state.collectors.get("network")
 
     results = await asyncio.gather(
         system_coll.collect_detail() if system_coll else _empty_detail(),
         disk_coll.collect_detail() if disk_coll else _empty_disk_detail(),
+        network_coll.collect_throughput() if network_coll else _empty_net(),
         return_exceptions=True,
     )
 
     system_detail = results[0] if not isinstance(results[0], Exception) else {}
     disk_detail = results[1] if not isinstance(results[1], Exception) else {}
+    net_data = results[2] if not isinstance(results[2], Exception) else {}
 
-    return JSONResponse(
-        {
-            "cpu": system_detail.get("cpu", {}),
-            "memory": system_detail.get("memory", {}),
-            "disk": disk_detail,
-        }
-    )
+    response = {
+        "cpu": system_detail.get("cpu", {}),
+        "memory": system_detail.get("memory", {}),
+        "disk": disk_detail,
+    }
+    if "net" in net_data:
+        response["net"] = net_data["net"]
+    return JSONResponse(response)
 
 
 async def api_services(request: Request) -> JSONResponse:
@@ -446,18 +460,21 @@ async def api_metrics(request: Request) -> Response:
     system_coll = state.collectors.get("system")
     docker_coll = state.collectors.get("docker")
     disk_coll = state.collectors.get("disk")
+    network_coll = state.collectors.get("network")
 
     results = await asyncio.gather(
         system_coll.collect() if system_coll else _empty_system(state.config),
         docker_coll.collect_summary() if docker_coll else _empty_docker(),
         disk_coll.collect_summary() if disk_coll else _empty_disk(),
+        network_coll.collect_throughput() if network_coll else _empty_net(),
         return_exceptions=True,
     )
 
     system_data = results[0] if not isinstance(results[0], Exception) else {}
     docker_data = results[1] if not isinstance(results[1], Exception) else {}
     disk_data = results[2] if not isinstance(results[2], Exception) else {}
-    combined = {**system_data, **docker_data, **disk_data}
+    net_data = results[3] if not isinstance(results[3], Exception) else {}
+    combined = {**system_data, **docker_data, **disk_data, **net_data}
 
     body = PrometheusExporterPlugin.format_metrics(combined)
     return Response(body, media_type="text/plain; version=0.0.4; charset=utf-8")
@@ -576,19 +593,22 @@ async def _stats_loop(state: BuoyAppState):
             system_coll = state.collectors.get("system")
             docker_coll = state.collectors.get("docker")
             disk_coll = state.collectors.get("disk")
+            network_coll = state.collectors.get("network")
 
             results = await asyncio.gather(
                 system_coll.collect() if system_coll else _empty_system(state.config),
                 docker_coll.collect_summary() if docker_coll else _empty_docker(),
                 disk_coll.collect_summary() if disk_coll else _empty_disk(),
+                network_coll.collect_throughput() if network_coll else _empty_net(),
                 return_exceptions=True,
             )
 
             system_data = results[0] if not isinstance(results[0], Exception) else {}
             docker_data = results[1] if not isinstance(results[1], Exception) else {}
             disk_data = results[2] if not isinstance(results[2], Exception) else {}
+            net_data = results[3] if not isinstance(results[3], Exception) else {}
 
-            combined = {**system_data, **docker_data, **disk_data}
+            combined = {**system_data, **docker_data, **disk_data, **net_data}
 
             # Decorate containers with update status from cache (pure dict lookup)
             if state.image_update_cache and "containers_list" in combined:
@@ -614,7 +634,18 @@ async def _stats_loop(state: BuoyAppState):
 
             # Store in history (if enabled)
             if state.metric_store:
-                await asyncio.to_thread(state.metric_store.record, "stats", combined)
+                # Drop the per-interface breakdown before persisting — it's
+                # ~150 bytes/interface/sample, which balloons the 24h ring
+                # buffer (roughly 17k samples/day at the default 5s
+                # interval) for data the sparkline/gauge don't need from
+                # history (they track an in-memory rolling window instead).
+                stored = combined
+                if "net" in combined and "interfaces" in combined["net"]:
+                    stored = {
+                        **combined,
+                        "net": {k: v for k, v in combined["net"].items() if k != "interfaces"},
+                    }
+                await asyncio.to_thread(state.metric_store.record, "stats", stored)
                 # Sample container states every ~30s (every 6th cycle at 5s interval)
                 if docker_coll and cycle % 6 == 0:
                     try:
@@ -680,11 +711,17 @@ async def on_startup(state: BuoyAppState):
         raise RuntimeError("cannot start app while previous shutdown cleanup is incomplete")
 
     if state.config.features.demo_mode:
-        from buoy.demo import DemoDiskCollector, DemoDockerCollector, DemoSystemCollector
+        from buoy.demo import (
+            DemoDiskCollector,
+            DemoDockerCollector,
+            DemoNetworkCollector,
+            DemoSystemCollector,
+        )
 
         state.collectors["system"] = DemoSystemCollector(state.config)
         state.collectors["docker"] = DemoDockerCollector(state.config)
         state.collectors["disk"] = DemoDiskCollector(state.config)
+        state.collectors["network"] = DemoNetworkCollector(state.config)
     else:
         from buoy.collectors.disk import DiskCollector
         from buoy.collectors.docker import DockerCollector
@@ -859,6 +896,10 @@ async def _empty_docker():
 
 async def _empty_disk():
     return {"disk_pct": 0}
+
+
+async def _empty_net():
+    return {}
 
 
 async def _empty_detail():

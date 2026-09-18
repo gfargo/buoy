@@ -119,5 +119,63 @@ class PrometheusExporterPlugin(Plugin):
             lines.append("# TYPE buoy_nvme_wear_percent gauge")
             lines.append(f'buoy_nvme_wear_percent{{host="{host}"}} {nvme.get("wear_pct", 0)}')
 
+        # Network interface metrics (if available) — absent entirely on
+        # non-Linux or when /proc/net/dev couldn't be read, same convention
+        # as the NVMe block above.
+        net = stats.get("net")
+        if net:
+            lines.append("# HELP buoy_network_receive_bytes_total Cumulative bytes received")
+            lines.append("# TYPE buoy_network_receive_bytes_total counter")
+            lines.append("# HELP buoy_network_transmit_bytes_total Cumulative bytes transmitted")
+            lines.append("# TYPE buoy_network_transmit_bytes_total counter")
+            lines.append(
+                "# HELP buoy_network_receive_bytes_per_second Receive throughput in bytes/sec"
+            )
+            lines.append("# TYPE buoy_network_receive_bytes_per_second gauge")
+            lines.append(
+                "# HELP buoy_network_transmit_bytes_per_second Transmit throughput in bytes/sec"
+            )
+            lines.append("# TYPE buoy_network_transmit_bytes_per_second gauge")
+            lines.append("# HELP buoy_network_receive_errors_total Cumulative receive errors")
+            lines.append("# TYPE buoy_network_receive_errors_total counter")
+            lines.append("# HELP buoy_network_transmit_errors_total Cumulative transmit errors")
+            lines.append("# TYPE buoy_network_transmit_errors_total counter")
+            lines.append(
+                "# HELP buoy_network_receive_drops_total Cumulative received packets dropped"
+            )
+            lines.append("# TYPE buoy_network_receive_drops_total counter")
+            lines.append(
+                "# HELP buoy_network_transmit_drops_total Cumulative transmitted packets dropped"
+            )
+            lines.append("# TYPE buoy_network_transmit_drops_total counter")
+
+            for iface in net.get("interfaces", []):
+                device = PrometheusExporterPlugin._escape_label_value(iface.get("name", ""))
+                labels = f'host="{host}",device="{device}"'
+                lines.append(
+                    f"buoy_network_receive_bytes_total{{{labels}}} {iface.get('rx_bytes', 0)}"
+                )
+                lines.append(
+                    f"buoy_network_transmit_bytes_total{{{labels}}} {iface.get('tx_bytes', 0)}"
+                )
+                lines.append(
+                    f"buoy_network_receive_bytes_per_second{{{labels}}} {iface.get('rx_bytes_per_sec', 0)}"
+                )
+                lines.append(
+                    f"buoy_network_transmit_bytes_per_second{{{labels}}} {iface.get('tx_bytes_per_sec', 0)}"
+                )
+                lines.append(
+                    f"buoy_network_receive_errors_total{{{labels}}} {iface.get('rx_errors', 0)}"
+                )
+                lines.append(
+                    f"buoy_network_transmit_errors_total{{{labels}}} {iface.get('tx_errors', 0)}"
+                )
+                lines.append(
+                    f"buoy_network_receive_drops_total{{{labels}}} {iface.get('rx_dropped', 0)}"
+                )
+                lines.append(
+                    f"buoy_network_transmit_drops_total{{{labels}}} {iface.get('tx_dropped', 0)}"
+                )
+
         lines.append("")
         return "\n".join(lines)
