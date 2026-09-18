@@ -315,6 +315,29 @@ plugins:
                                # AdGuard: Basic-auth password
       verify_ssl: true         # Set false for self-signed certs (insecure)
 
+    # Reverse proxy router/route count, 5xx rate, and per-host cert status
+    # type: traefik → GET {url}/api/overview + {url}/api/http/routers
+    #   Needs --api.insecure=true, or an exposed & authenticated API router
+    # type: caddy   → GET {url}/config/apps/http/servers (admin API)
+    #   Optionally reads {url}/reverse_proxy/upstreams for upstream health
+    # type: npm     → Nginx Proxy Manager; logs in via username/password,
+    #   then GET {url}/api/nginx/proxy-hosts?expand=certificate (port 81)
+    # Capability matrix (missing signals are omitted, not errors):
+    #   - Per-host cert *expiry* is only available from NPM.
+    #   - 5xx rate needs `metrics_url` (Traefik/Caddy Prometheus metrics).
+    reverse_proxy:
+      enabled: false
+      type: traefik            # traefik | caddy | npm
+      url: ""                  # e.g. http://traefik:8080, http://caddy:2019, http://npm:81
+      username: ""             # NPM only: login identity
+      password: ""             # NPM only: login secret (or BUOY_PLUGIN_REVERSE_PROXY_PASSWORD)
+      api_key: ""              # Optional bearer token if the admin API sits behind auth
+      metrics_url: ""          # Optional Traefik/Caddy Prometheus /metrics endpoint
+      verify_ssl: true         # Set false for self-signed certs (insecure)
+      warn_days: 30            # Cert expiry warning threshold (NPM only)
+      critical_days: 7         # Cert expiry error threshold (NPM only)
+      error_rate_warn: 5.0     # 5xx rate (%) that triggers a warning
+
     # Trigger.dev task run status (recent runs, 24h failures, queue depth)
     trigger_dev:
       enabled: false

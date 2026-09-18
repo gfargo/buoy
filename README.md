@@ -225,6 +225,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Photos | `immich` | Immich photo library stats | `url`, `api_key` |
 | Journal | `journal_errors` | Priority-error journal entries | (none) |
 | Proxmox | `proxmox` | Proxmox VE node + guest status | `url`, `token_id`, `token_secret`, `node` |
+| Reverse Proxy | `reverse_proxy` | Traefik / Caddy / NPM router count, 5xx rate, cert status | `type`, `url` |
 | Speedtest | `speedtest` | Periodic internet speed tests with trend tracking | (none) |
 | Systemd | `systemd_health` | Systemd service health checks | (none) |
 | Tailscale | `tailscale` | Tailnet peer status | (none) |
