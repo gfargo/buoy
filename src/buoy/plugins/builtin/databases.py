@@ -455,9 +455,7 @@ class DatabasesPlugin(Plugin):
             now = time.monotonic()
             prev = self._prev_counters.get(target.get("name", ""))
             prev_value, prev_ts = prev if prev else (None, None)
-            metrics = _mysql_metrics(
-                status, max_connections, replica_row, prev_value, prev_ts, now
-            )
+            metrics = _mysql_metrics(status, max_connections, replica_row, prev_value, prev_ts, now)
             self._prev_counters[target.get("name", "")] = (metrics["slow_queries_total"], now)
             return metrics
         finally:
