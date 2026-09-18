@@ -315,6 +315,26 @@ plugins:
                                # AdGuard: Basic-auth password
       verify_ssl: true         # Set false for self-signed certs (insecure)
 
+    # Download client queues, speeds, ratio, and free disk space
+    download_clients:
+      enabled: false
+      timeout_s: 8             # per-client request timeout
+      verify_ssl: true
+      disk_warn_gb: 50         # amber at or below this much free space
+      disk_critical_gb: 10     # red at or below this much free space
+      max_rows: 10             # queue rows shown on the card
+      clients: []
+      # clients:
+      #   - name: qbit
+      #     type: qbittorrent   # qbittorrent | transmission | sabnzbd | nzbget
+      #     url: http://qbittorrent:8080
+      #     username: admin
+      #     password_env: QBIT_PW   # env var holding the password (or `password:` directly)
+      #   - name: sab
+      #     type: sabnzbd
+      #     url: http://sabnzbd:8080
+      #     api_key_env: SAB_API_KEY
+
     # Trigger.dev task run status (recent runs, 24h failures, queue depth)
     trigger_dev:
       enabled: false
