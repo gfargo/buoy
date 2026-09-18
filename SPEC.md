@@ -366,7 +366,7 @@ install a plugin package.
 
 ### 4.3 Built-in Plugins (ship with hub)
 
-> Historical planning subset. As shipped, Buoy includes 22 built-in plugins (see `src/buoy/plugins/builtin/`) — the table below was the initial planning list and doesn't reflect the current set. `docker_updates` was planned but never implemented; several others (`dns_filter`, `jellyfin`, `journal_errors`, `portainer`, `proxmox`, `smart_disk`, `snapraid`, `speedtest`, `tailscale`, `trigger_dev`, and more) shipped later and aren't listed here. The plugin protocol (§4.1) remains accurate.
+> Historical planning subset. As shipped, Buoy includes 25 built-in plugins (see `src/buoy/plugins/builtin/`) — the table below was the initial planning list and doesn't reflect the current set. `docker_updates` was planned but never implemented; several others (`dns_filter`, `jellyfin`, `journal_errors`, `portainer`, `proxmox`, `smart_disk`, `snapraid`, `speedtest`, `tailscale`, `trigger_dev`, and more) shipped later and aren't listed here. The plugin protocol (§4.1) remains accurate.
 
 | Plugin | What it does | Config needed |
 |--------|-------------|---------------|
