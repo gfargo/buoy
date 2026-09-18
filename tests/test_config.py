@@ -49,6 +49,18 @@ class TestConfigDefaults:
         config = _build_config({})
         assert config.logging.level == "INFO"
 
+    def test_default_log_streaming_enabled(self):
+        config = _build_config({})
+        assert config.features.log_streaming is True
+
+    def test_default_logs_config(self):
+        config = _build_config({})
+        assert config.logs.default_tail == 100
+        assert config.logs.max_tail == 1000
+        assert config.logs.max_streams == 4
+        assert config.logs.max_line_bytes == 8192
+        assert config.logs.stream_rate_limit == 500
+
 
 class TestConfigFromYAML:
     """Config loaded from a YAML dict."""
@@ -197,6 +209,19 @@ class TestConfigFromYAML:
         assert config.theme.custom["bg"] == "#ff0000"
         assert config.theme.custom["amber"] == "#00ff00"
 
+    def test_logs_section_from_yaml(self):
+        raw = {"logs": {"default_tail": 200, "max_tail": 5000, "max_streams": 2}}
+        config = _build_config(raw)
+        assert config.logs.default_tail == 200
+        assert config.logs.max_tail == 5000
+        assert config.logs.max_streams == 2
+        # Unset fields still take their dataclass defaults.
+        assert config.logs.max_line_bytes == 8192
+
+    def test_log_streaming_disabled_from_yaml(self):
+        config = _build_config({"features": {"log_streaming": False}})
+        assert config.features.log_streaming is False
+
     def test_logging_level_from_yaml(self):
         config = _build_config({"logging": {"level": "DEBUG"}})
         assert config.logging.level == "DEBUG"
@@ -328,6 +353,32 @@ class TestEnvOverrides:
         monkeypatch.setenv("BUOY_REFRESH_PLUGINS_INTERVAL", "90")
         result = _apply_env_overrides({})
         assert result["refresh"]["plugins_interval"] == 90
+
+    def test_log_streaming_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_FEATURES_LOG_STREAMING", "false")
+        result = _apply_env_overrides({})
+        assert result["features"]["log_streaming"] is False
+
+    def test_logs_default_tail_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOGS_DEFAULT_TAIL", "250")
+        result = _apply_env_overrides({})
+        assert result["logs"]["default_tail"] == 250
+
+    def test_logs_max_tail_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOGS_MAX_TAIL", "5000")
+        result = _apply_env_overrides({})
+        assert result["logs"]["max_tail"] == 5000
+
+    def test_logs_default_tail_env_builds_config(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOGS_DEFAULT_TAIL", "250")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.logs.default_tail == 250
+
+    def test_logs_default_tail_env_invalid_raises(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOGS_DEFAULT_TAIL", "lots")
+        with pytest.raises(ConfigError):
+            _apply_env_overrides({})
 
 
 class TestLoadConfig:
@@ -492,10 +543,19 @@ class TestWarnUnknownKeys:
             "plugins": {"enabled": True, "directory": "/plugins", "builtin": {}, "user": {}},
             "alerts": {"webhook_url": "https://example.com/hook"},
             "logging": {"level": "DEBUG"},
+            "logs": {"default_tail": 200, "max_tail": 2000, "max_streams": 8},
         }
 
         with caplog.at_level("WARNING", logger="buoy.config"):
             _warn_unknown_keys(raw)
+
+        assert caplog.records == []
+
+    def test_logs_section_does_not_warn(self, caplog):
+        """logs: is a recognized top-level section (LogsConfig) — omitting it
+        from _CONFIG_SECTIONS would make every logs.* key look like a typo."""
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys({"logs": {"default_tail": 50, "max_tail": 500}})
 
         assert caplog.records == []
 

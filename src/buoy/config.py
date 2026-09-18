@@ -105,6 +105,16 @@ class FeaturesConfig:
     night_mode: str = "auto"  # auto | always | never
     keyboard_shortcuts: bool = True
     image_updates: bool = False  # Docker image update checker (off by default)
+    log_streaming: bool = True  # Live WebSocket container log streaming
+
+
+@dataclass
+class LogsConfig:
+    default_tail: int = 100
+    max_tail: int = 1000
+    max_streams: int = 4  # concurrent live log streams per app instance
+    max_line_bytes: int = 8192
+    stream_rate_limit: int = 500  # max lines/sec forwarded to a single client
 
 
 @dataclass
@@ -156,6 +166,7 @@ class BuoyConfig:
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    logs: LogsConfig = field(default_factory=LogsConfig)
 
 
 # ── Loader ─────────────────────────────────────────────────────────────────────
@@ -216,6 +227,9 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_WEBSOCKET": ("features", "websocket"),
         "BUOY_FEATURES_HISTORY": ("features", "history"),
         "BUOY_FEATURES_IMAGE_UPDATES": ("features", "image_updates"),
+        "BUOY_FEATURES_LOG_STREAMING": ("features", "log_streaming"),
+        "BUOY_LOGS_DEFAULT_TAIL": ("logs", "default_tail"),
+        "BUOY_LOGS_MAX_TAIL": ("logs", "max_tail"),
         "BUOY_REFRESH_STATS_INTERVAL": ("refresh", "stats_interval"),
         "BUOY_REFRESH_SERVICES_INTERVAL": ("refresh", "services_interval"),
         "BUOY_REFRESH_FLEET_INTERVAL": ("refresh", "fleet_interval"),
@@ -242,13 +256,23 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "fleet_interval",
             "plugins_interval",
             "image_updates_interval",
+            "default_tail",
+            "max_tail",
         ):
             # An empty string (e.g. `BUOY_NETWORK_LISTEN_PORT=`) is treated as an
             # explicit invalid value, not "unset" — only a missing env var (checked
             # above) falls back to the YAML/default. There's no sensible int for "",
             # so we surface the same ConfigError as any other unparsable value.
             raw[section][key] = _coerce_int(value, env_key)
-        elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates", "verify_ssl"):
+        elif key in (
+            "enabled",
+            "websocket",
+            "history",
+            "demo_mode",
+            "image_updates",
+            "log_streaming",
+            "verify_ssl",
+        ):
             raw[section][key] = value.lower() in ("true", "1", "yes")
         elif key == "allowed_origins":
             raw[section][key] = [origin.strip() for origin in value.split(",") if origin.strip()]
@@ -345,6 +369,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     plugins_raw = raw.get("plugins", {})
     alerts_raw = raw.get("alerts", {})
     logging_raw = raw.get("logging", {})
+    logs_raw = raw.get("logs", {})
 
     node = NodeConfig(
         name=node_raw.get("name", "buoy"),
@@ -388,6 +413,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         night_mode=features_raw.get("night_mode", "auto"),
         keyboard_shortcuts=bool(features_raw.get("keyboard_shortcuts", True)),
         image_updates=bool(features_raw.get("image_updates", False)),
+        log_streaming=bool(features_raw.get("log_streaming", True)),
     )
 
     refresh = RefreshConfig(
@@ -419,6 +445,16 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         level=logging_raw.get("level", "INFO") if isinstance(logging_raw, dict) else "INFO",
     )
 
+    logs = LogsConfig(
+        default_tail=_coerce_int(logs_raw.get("default_tail", 100), "logs.default_tail"),
+        max_tail=_coerce_int(logs_raw.get("max_tail", 1000), "logs.max_tail"),
+        max_streams=_coerce_int(logs_raw.get("max_streams", 4), "logs.max_streams"),
+        max_line_bytes=_coerce_int(logs_raw.get("max_line_bytes", 8192), "logs.max_line_bytes"),
+        stream_rate_limit=_coerce_int(
+            logs_raw.get("stream_rate_limit", 500), "logs.stream_rate_limit"
+        ),
+    )
+
     return BuoyConfig(
         node=node,
         network=network,
@@ -430,6 +466,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         plugins=plugins,
         alerts=alerts,
         logging=logging_cfg,
+        logs=logs,
     )
 
 
@@ -449,6 +486,7 @@ _CONFIG_SECTIONS: dict[str, type] = {
     "plugins": PluginsConfig,
     "alerts": AlertsConfig,
     "logging": LoggingConfig,
+    "logs": LogsConfig,
 }
 
 

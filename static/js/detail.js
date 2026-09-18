@@ -4,9 +4,21 @@
 
 import { authedFetch } from './auth.js';
 import { escapeHtml } from './escape.js';
+import { openLogViewer } from './logs.js';
 import { apiUrl } from './paths.js';
 
 let currentDetail = null;
+let buoyConfig = null;
+
+/**
+ * detail.js is initialized before buoy.js finishes fetching /api/config
+ * (see initDetail() in buoy.js's init()), so the log viewer — which needs
+ * auth/logs/features to build its ticket + tail-depth flow — is handed the
+ * config once it's available rather than fetching its own copy.
+ */
+export function setDetailConfig(config) {
+  buoyConfig = config;
+}
 
 export function initDetail() {
   document.querySelectorAll('.gauge[data-detail]').forEach(gauge => {
@@ -364,27 +376,11 @@ async function restartContainer(name, btn) {
 }
 
 /**
- * Show recent logs for a container inline.
+ * Toggle a live log viewer for the container inline (WS streaming with a
+ * one-shot fallback — see logs.js).
  */
-async function showContainerLogs(name) {
+function showContainerLogs(name) {
   const panel = document.getElementById('container-inspect-panel');
   if (!panel) return;
-
-  try {
-    const r = await authedFetch(apiUrl(`container/${encodeURIComponent(name)}/logs`));
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-
-    const lines = (d.lines || []).join('\n');
-    const existing = panel.querySelector('.ctr-logs');
-    if (existing) { existing.remove(); return; }
-
-    const logsDiv = document.createElement('div');
-    logsDiv.className = 'ctr-logs';
-    logsDiv.innerHTML = `<div class="ctr-logs-header">Logs — ${escapeHtml(name)} (last ${d.lines?.length || 0} lines)<button class="ctr-logs-close">&#10005;</button></div><pre class="ctr-logs-pre">${escapeHtml(lines)}</pre>`;
-    logsDiv.querySelector('.ctr-logs-close')?.addEventListener('click', () => logsDiv.remove());
-    panel.appendChild(logsDiv);
-  } catch (e) {
-    // Silently fail
-  }
+  openLogViewer(name, panel, buoyConfig);
 }

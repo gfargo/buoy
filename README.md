@@ -16,6 +16,7 @@ Deploy one container per host. Buoy auto-discovers your Docker services, shows s
 
 - **System vitals** — CPU, RAM, disk, temperature, NVMe health, container count
 - **Service discovery** — auto-finds running Docker containers; customize with display overrides
+- **Live log streaming** — WebSocket-backed `docker logs --follow` with tail depth, follow toggle, and client-side search
 - **Fleet overview** — poll peer Buoy instances for a multi-node dashboard
 - **Tailscale-aware** — links auto-switch between HTTPS tailnet URLs and localhost
 - **Plugin system** — extend with GitHub, UptimeKuma, Loki, Prometheus, or your own plugins
