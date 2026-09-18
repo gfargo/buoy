@@ -700,9 +700,7 @@ class TestDiskCollectorNvme:
 
         with (
             patch.object(coll, "_root_disk_percent", new=AsyncMock(return_value=42)),
-            patch(
-                "buoy.collectors.disk.scan_nvme_devices", new=AsyncMock(return_value=[])
-            ),
+            patch("buoy.collectors.disk.scan_nvme_devices", new=AsyncMock(return_value=[])),
             patch(
                 "buoy.collectors.disk.run_smartctl",
                 new=AsyncMock(return_value=device_not_found_banner),
