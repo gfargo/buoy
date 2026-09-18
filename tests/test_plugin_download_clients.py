@@ -641,8 +641,42 @@ class TestRenderAndDemo:
 
         blocks = plugin.render(data)
         assert blocks[0]["type"] == "keyvalue"
-        assert blocks[1]["type"] == "table"
-        assert blocks[1]["columns"] == ["Name", "Client", "Progress", "Speed", "ETA"]
+        assert blocks[1]["type"] == "badges"
+        assert blocks[2]["type"] == "table"
+        assert blocks[2]["columns"] == ["Name", "Client", "Progress", "Speed", "ETA"]
+
+    def test_render_shows_free_disk_space_per_client(self):
+        plugin = DownloadClientsPlugin()
+        data = plugin.demo_data()
+
+        blocks = plugin.render(data)
+        disk_badges = next(b for b in blocks if b["type"] == "badges")
+        labels = [item["label"] for item in disk_badges["items"]]
+        assert any("420 GB free" in label for label in labels)
+        assert any("15 GB free" in label for label in labels)
+        # The demo SABnzbd client is below the default 50 GB warn threshold.
+        sab_badge = next(item for item in disk_badges["items"] if "sab" in item["label"])
+        assert sab_badge["status"] == "warn"
+
+    def test_render_omits_disk_badges_when_no_free_bytes_reported(self):
+        plugin = DownloadClientsPlugin()
+        row = {
+            "name": "a",
+            "type": "qbittorrent",
+            "status": "error",
+            "error": "unreachable",
+            "active": 0,
+            "queued": 0,
+            "dl_bytes_s": 0,
+            "ul_bytes_s": 0,
+            "ratio": None,
+            "free_bytes": None,
+            "items": [],
+        }
+        data = plugin._make_panel([row])
+
+        blocks = plugin.render(data)
+        assert all(b["type"] != "badges" for b in blocks)
 
     def test_render_no_clients_shows_dim_text(self):
         plugin = DownloadClientsPlugin()

@@ -91,6 +91,16 @@ def _fmt_rate(bytes_s: float) -> str:
     return f"{bytes_s:.0f} B/s"
 
 
+def _fmt_bytes(n: float) -> str:
+    if n >= 1024**4:
+        return f"{n / 1024**4:.1f} TB"
+    if n >= 1024**3:
+        return f"{n / 1024**3:.0f} GB"
+    if n >= 1024**2:
+        return f"{n / 1024**2:.0f} MB"
+    return f"{n:.0f} B"
+
+
 def _fmt_eta(eta: Any) -> str:
     """Format a seconds-remaining value; unknown/infinite sentinels render as '—'."""
     try:
@@ -648,6 +658,20 @@ class DownloadClientsPlugin(Plugin):
             kv_rows.append({"label": "Ratio", "value": f"{sum(ratios) / len(ratios):.2f}"})
 
         blocks: list[dict] = [panel.keyvalue(kv_rows)]
+
+        disk_rows = [r for r in rows if r.get("free_bytes") is not None]
+        if disk_rows:
+            blocks.append(
+                panel.badges(
+                    [
+                        panel.badge(
+                            f"{r['name']}: {_fmt_bytes(r['free_bytes'])} free",
+                            status=r["status"] if r["status"] in ("warn", "error") else None,
+                        )
+                        for r in disk_rows
+                    ]
+                )
+            )
 
         max_rows = int(self.config.get("max_rows", 10))
         table_rows = []
