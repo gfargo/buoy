@@ -1,7 +1,7 @@
 """Tests for the Databases plugin."""
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -186,6 +186,37 @@ class TestRedisMetrics:
         assert m["replica_link_status"] == "down"
         assert m["memory_pct"] == 50.0
         assert m["evicted_keys_per_min"] == pytest.approx((20.0 - 10.0) * 60 / 60)
+
+
+class TestProbeRedis:
+    @pytest.mark.asyncio
+    async def test_probe_consumes_already_parsed_info_dict(self):
+        # redis-py's INFO response callback returns a parsed dict, not raw
+        # text/bytes — the probe must call client.info() directly rather
+        # than treat the response as something to decode/parse itself.
+        plugin = _make_plugin(targets=[{"name": "cache", "engine": "redis", "host": "h1"}])
+        fake_client = AsyncMock()
+        fake_client.info = AsyncMock(
+            return_value={
+                "connected_clients": 7,
+                "used_memory": 2048,
+                "maxmemory": 4096,
+                "evicted_keys": 3,
+                "role": "master",
+            }
+        )
+        fake_redis_module = MagicMock()
+        fake_redis_module.Redis = MagicMock(return_value=fake_client)
+
+        with patch(
+            "buoy.plugins.builtin.databases._load_redis",
+            return_value=fake_redis_module,
+        ):
+            metrics = await plugin._probe_redis({"name": "cache", "engine": "redis", "host": "h1"})
+
+        assert metrics["connected_clients"] == 7
+        assert metrics["memory_pct"] == 50.0
+        fake_client.aclose.assert_awaited_once()
 
 
 class TestStatusFor:

@@ -144,7 +144,7 @@ def _parse_redis_info(text: str) -> dict[str, str]:
 
 
 def _redis_metrics(
-    info: dict[str, str],
+    info: dict[str, Any],
     prev_evicted: float | None,
     prev_ts: float | None,
     now: float,
@@ -482,10 +482,7 @@ class DatabasesPlugin(Plugin):
             socket_connect_timeout=5,
         )
         try:
-            raw_info = await client.execute_command("INFO")
-            if isinstance(raw_info, bytes):
-                raw_info = raw_info.decode("utf-8", errors="replace")
-            info = _parse_redis_info(raw_info)
+            info = await client.info()
 
             now = time.monotonic()
             prev = self._prev_counters.get(target.get("name", ""))
