@@ -86,7 +86,8 @@ class Plugin:
         """Preferred rendering path: return a declarative panel spec.
 
         Build the list from the helpers in ``buoy.plugins.panel`` (``text``,
-        ``table``, ``keyvalue``, ``badges``, ``bar``, ``sparkline``, ``list_``).
+        ``heading``, ``table``, ``keyvalue``, ``badges``, ``bar``,
+        ``sparkline``, ``list_``, ``log``).
         Trusted, escaping frontend code (``static/js/panel.js``) turns the
         spec into HTML, so no plugin-authored markup ever reaches the page.
         If None, ``frontend_js()`` (if any) or the default renderer is used.

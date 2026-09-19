@@ -345,7 +345,7 @@ class GitHubPlugin(Plugin):
 ```
 
 > [!NOTE]
-> **As shipped**, `frontend_js()` is a deprecated escape hatch, not the recommended custom-rendering path — see §4.4. All built-in plugins implement `render()` instead, returning a declarative panel spec (`buoy.plugins.panel`: `text`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`) that trusted frontend code (`static/js/panel.js`) turns into HTML, escaping every value itself. This closes the XSS surface `frontend_js()` had (a plugin's raw JS/HTML string, `eval`'d via `new Function()`) and is what makes a strict CSP for the dashboard possible. `frontend_js()` still works for third-party plugins that need it.
+> **As shipped**, `frontend_js()` is a deprecated escape hatch, not the recommended custom-rendering path — see §4.4. All built-in plugins implement `render()` instead, returning a declarative panel spec (`buoy.plugins.panel`: `text`, `heading`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`, `log`) that trusted frontend code (`static/js/panel.js`) turns into HTML, escaping every value itself. This closes the XSS surface `frontend_js()` had (a plugin's raw JS/HTML string, `eval`'d via `new Function()`) and is what makes a strict CSP for the dashboard possible. `frontend_js()` still works for third-party plugins that need it.
 
 ### 4.2 Plugin Lifecycle
 

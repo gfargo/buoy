@@ -253,10 +253,11 @@ class WeatherPlugin(Plugin):
 ```
 
 For a richer panel than the default key-value grid, implement `render()` and return blocks from
-`buoy.plugins.panel` (`text`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`) — trusted,
-escaping frontend code turns them into HTML, so untrusted data (names, log lines, URLs) can never
-inject markup. `frontend_js()` (raw JS executed via `new Function()`) is still supported but is a
-deprecated escape hatch — it can't run under a strict CSP and requires escaping every value by hand.
+`buoy.plugins.panel` (`text`, `heading`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`,
+`log`) — trusted, escaping frontend code turns them into HTML, so untrusted data (names, log lines,
+URLs) can never inject markup. `frontend_js()` (raw JS executed via `new Function()`) is still
+supported but is a deprecated escape hatch — it can't run under a strict CSP and requires escaping
+every value by hand.
 
 ```python
 from buoy.plugins import panel
