@@ -27,6 +27,10 @@ exclude = [
   # Placeholder hostname illustrating a reverse-proxy sub-path in
   # buoy.yaml.example, not a real endpoint.
   '^https?://host(:[0-9]+)?/',
+  # Unresolvable example hostname used in buoy.yaml.example to illustrate the
+  # Actual Budget plugin's `url` config (the actual-http-api sidecar); not a
+  # real endpoint.
+  '^https?://actual-http-api(:[0-9]+)?',
   # release-please-generated semver compare links necessarily point at the
   # not-yet-created target tag while a release PR is open, so they return 404
   # until that PR merges. The tags and release workflow verify the range after
