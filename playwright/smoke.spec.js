@@ -95,3 +95,27 @@ test('deep link #plugin=github opens the Github detail on load and clears on clo
   await expect(dialog).toBeHidden();
   await expect.poll(() => page.evaluate(() => location.hash)).toBe('');
 });
+
+test('plugin detail dialog shows health/config and refresh-now works in demo mode (OSS-2718)', async ({ page }) => {
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+
+  await page.goto('/#plugin=github');
+
+  const dialog = page.locator('#plugin-detail');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('.plugin-health')).toBeVisible();
+  await expect(dialog.locator('.plugin-config')).toBeVisible();
+
+  const refreshBtn = dialog.locator('.plugin-refresh-btn');
+  await expect(refreshBtn).toBeVisible();
+  await refreshBtn.click();
+  await expect(refreshBtn).toHaveText(/refreshed|refreshing/i);
+
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
