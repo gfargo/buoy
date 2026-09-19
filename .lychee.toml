@@ -15,6 +15,11 @@ exclude = [
   '^https?://[a-z0-9.-]*\.example\.ts\.net',
   # Unresolvable example hostname used in a buoy.yaml.example config comment.
   '^https?://adguard(:[0-9]+)?',
+  # Unresolvable example hostnames used in the reverse_proxy config comment
+  # in buoy.yaml.example (Traefik/Caddy/NPM admin endpoints), not real hosts.
+  '^https?://traefik(:[0-9]+)?',
+  '^https?://caddy(:[0-9]+)?',
+  '^https?://npm(:[0-9]+)?',
   # Unresolvable example hostnames used in buoy.yaml.example's
   # download_clients config comment (qBittorrent/SABnzbd containers).
   '^https?://qbittorrent(:[0-9]+)?',
