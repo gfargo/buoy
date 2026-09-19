@@ -261,7 +261,7 @@ class BanStatusPlugin(Plugin):
                 ]
             ),
             panel.table(
-                ["IP", "Scenario", "Expires"],
+                ["IP", "Scenario", "Duration"],
                 [
                     [
                         panel.cell(dec.get("ip", ""), mono=True),
@@ -304,7 +304,7 @@ _COUNT_PATTERNS = {
     "currently_banned": re.compile(r"Currently banned:\s*(\d+)"),
     "total_banned": re.compile(r"Total banned:\s*(\d+)"),
 }
-_BANNED_IP_LIST_RE = re.compile(r"Banned IP list:\s*(.*)")
+_BANNED_IP_LIST_RE = re.compile(r"Banned IP list:[ \t]*(.*)")
 
 
 def _parse_jail_status(status_output: str) -> dict:
