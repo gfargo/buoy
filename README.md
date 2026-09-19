@@ -96,6 +96,31 @@ patterns against the full container name instead (e.g. `"plane-*-worker-*"`).
 Compose-managed `plane-plane-grafana-1` container as well as a bare `grafana`
 container run outside Compose.
 
+**Static (non-Docker) services and bookmarks:**
+```yaml
+services:
+  static:
+    - name: NAS
+      icon: "💾"
+      desc: "Synology DS920+"
+      url: https://nas.example.ts.net
+      health_check: true       # or an explicit URL to poll instead of `url`
+    - name: Router
+      icon: "📡"
+      url: https://192.168.1.1
+      verify_ssl: false        # self-signed appliance cert
+```
+
+`services.static` entries appear alongside Docker-discovered services —
+useful for a NAS, router, printer, VM, or anything else that isn't a
+container on this host. Unlike Docker services, `services.hidden` and
+`services.overrides` don't apply to them. `health_check: true` polls `url`
+itself; a string instead polls that URL; omitting it (or `false`) renders the
+entry with no status dot. Checks run in the background on
+`refresh.health_check_interval` (default 60s) and never block a page load.
+`verify_ssl` overrides `network.verify_ssl` per entry — handy for
+self-signed certs on home appliances.
+
 Environment variables override any YAML value (prefix: `BUOY_`):
 ```bash
 BUOY_NODE_NAME=harbor
@@ -210,10 +235,11 @@ Buoy ships with built-in plugins (disabled by default):
 | Plugin | Config key | What it shows | Config needed |
 |--------|------------|----------------|---------------|
 | GitHub | `github` | Notifications + open PRs | `token` |
+| Gitea / Forgejo | `gitea` | Repos, open PRs, Actions queue & failures | `url`, `token` |
 | UptimeKuma | `uptime_kuma` | Service health badges | `url` |
 | Loki | `loki` | Recent error log entries | `url` |
 | Plane | `plane` | Sprint/cycle progress | `api_key`, `url` |
-| Prometheus | `prometheus_exporter` | `/metrics` endpoint | (none) |
+| Prometheus | `prometheus_exporter` | `/metrics` endpoint — see [Grafana dashboard + rules](docs/grafana/README.md) | (none) |
 | SnapRAID | `snapraid` | Parity sync age & disk health | `status_file` |
 | Jellyfin | `jellyfin` | Active streams, libraries, transcoding | `url`, `api_key` |
 | *arr Stack | `arr_stack` | Queue depth, wanted/missing, indexer & system health | at least one `<service>_url` + `<service>_api_key` |
@@ -223,18 +249,23 @@ Buoy ships with built-in plugins (disabled by default):
 | Cert Expiry | `cert_expiry` | TLS certificate days remaining | (none) |
 | Actual Budget | `actual_budget` | Monthly spend vs budget | `url`, `api_key`, `budget_sync_id` |
 | Backups | `backup_status` | Backup health & freshness | (none) |
+| Bans | `ban_status` | Fail2ban / CrowdSec active bans & offenders | (none) |
+| Cloudflare Tunnel | `cloudflare_tunnel` | Connector health, active connections | `account_id`, `api_token` |
 | Cron | `cron_health` | Recent cron job runs | (none) |
 | DNS Filter | `dns_filter` | Pi-hole / AdGuard Home filtering stats | `type`, `url` |
+| Downloads | `download_clients` | qBittorrent / Transmission / SABnzbd / NZBGet queue, speeds, disk | `clients` |
 | Grafana / Alertmanager | `grafana_alerts` | Firing alerts by severity | `type`, `url` (+ `token` for Grafana) |
 | Photos | `immich` | Immich photo library stats | `url`, `api_key` |
 | Journal | `journal_errors` | Priority-error journal entries | (none) |
 | Proxmox | `proxmox` | Proxmox VE node + guest status | `url`, `token_id`, `token_secret`, `node` |
+| Reverse Proxy | `reverse_proxy` | Traefik / Caddy / NPM router count, 5xx rate, cert status | `type`, `url` |
 | Speedtest | `speedtest` | Periodic internet speed tests with trend tracking | (none) |
 | Systemd | `systemd_health` | Systemd service health checks | (none) |
 | Tailscale | `tailscale` | Tailnet peer status | (none) |
 | Trigger.dev | `trigger_dev` | Task run status | `url`, `api_key`, `project_ref` |
 | WireGuard | `wireguard` | WireGuard tunnel peer status | (none) |
 | Zigbee2MQTT | `zigbee2mqtt` | Coordinator status + per-device link quality | `host` (needs `pip install "buoy[zigbee2mqtt]"`) |
+| Databases | `databases` | Connections, replication lag, slow queries, memory/evictions | `targets` (needs `pip install "buoy[databases]"`) |
 
 **Custom plugins** are Python files dropped into the `/plugins` volume:
 
@@ -348,6 +379,7 @@ ruff check src/ tests/
 - [Kubernetes](docs/deployment/kubernetes.md) — plain manifests and a Helm chart
 - [Ansible](docs/deployment/ansible.md) — automated native install
 - [Privilege / Metrics Matrix](docs/deployment/privilege-matrix.md) — what each privilege level gains or costs
+- [Grafana Dashboard + Rules](docs/grafana/README.md) — dashboard JSON and Prometheus recording/alert rules for the exporter
 - [Changelog](CHANGELOG.md) — release history
 - [Contributing](CONTRIBUTING.md) — dev setup, PR process
 

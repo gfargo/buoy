@@ -34,9 +34,9 @@ class GrafanaAlertsPlugin(Plugin):
         config_schema={
             "type": {"type": "string", "default": "alertmanager"},  # alertmanager | grafana
             "url": {"type": "string", "required": True},
-            "token": {"type": "string"},  # Grafana service-account token (Bearer)
+            "token": {"type": "string", "secret": True},  # Grafana service-account token (Bearer)
             "username": {"type": "string"},  # optional basic auth (AM behind a proxy)
-            "password": {"type": "string"},
+            "password": {"type": "string", "secret": True},
             "include_silenced": {"type": "boolean", "default": False},
             "verify_ssl": {"type": "boolean", "default": True},
         },

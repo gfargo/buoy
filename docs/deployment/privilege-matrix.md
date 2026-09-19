@@ -29,7 +29,7 @@ see [Tier 0](#tier-0--native--systemd) below.
 | `/dev/dri` + host `/sys` visibility | Intel GPU identity + clock frequency via `i915`/`xe` sysfs | Intel GPU omitted from `gpus` | `src/buoy/collectors/gpu.py` (`_probe_intel`) |
 | `intel_gpu_top` binary + `CAP_PERFMON` (neither present in the published image) | Intel GPU utilisation percentage | `util_pct` stays `null` with a `util_note` explaining why — this is expected on the stock image, not a bug | `src/buoy/collectors/gpu.py` (`_intel_gpu_top_utilization`) |
 | Linux host / container (vs. macOS/Windows) | CPU %, memory, uptime, device model from `/proc` | All of `cpu`, `mem_used`, `mem_total`, `uptime_*` report as `0`/`0.0`; `model` falls back to `platform.system() + platform.machine()` | `src/buoy/collectors/system.py` (`_fallback_stats`) |
-| `privileged` + `pid: host` (nsenter into host PID 1) | Plugins that read host-only state: `tailscale` (peer status), `wireguard` (tunnel stats), `smart_disk` (SATA/NVMe health), `cron_health` (cron logs), `journal_errors` (journald), `systemd_health` (unit status) | Those plugins can't reach host state from inside an unprivileged/non-`pid:host` container and report unavailable/empty | `buoy.yaml.example` (each plugin's comment notes this requirement) |
+| `privileged` + `pid: host` (nsenter into host PID 1) | Plugins that read host-only state: `tailscale` (peer status), `wireguard` (tunnel stats), `smart_disk` (SATA/NVMe health), `cron_health` (cron logs), `journal_errors` (journald), `systemd_health` (unit status), `ban_status` (Fail2ban/CrowdSec bans) | Those plugins can't reach host state from inside an unprivileged/non-`pid:host` container and report unavailable/empty | `buoy.yaml.example` (each plugin's comment notes this requirement) |
 | `pid: host` (readable `/proc/1/net/dev`) or running natively on the host | Network throughput reads the *host's* NIC (`eth0`, etc.) instead of the container's own veth | Without `pid: host`, `/proc/1/net/dev` isn't reachable and the collector falls back to this container's own `/proc/net/dev` — the veth Docker created for buoy's own traffic, not the host's real interface(s). Access to another PID's `/proc/<pid>/net` is also subject to ptrace-style permission checks, so a `pid: host` container that also drops `SYS_PTRACE` (`docker-compose.hardened.yml`) may still fall back to the container's own veth even with the namespace nominally shared. The `source` field in the `net` response (`/proc/1/net/dev` vs `/proc/net/dev`) shows which one is actually in play | `src/buoy/collectors/network.py` (`_read_net_dev_and_route`) |
 
 ## Recommended tiers
@@ -111,7 +111,7 @@ typical single-`overlay`-root container, that's just the container's own
 root, not the host's real mounts). You lose: temperature, the host's real
 mount list, NVMe SMART, host top-processes, and every host-introspection
 plugin (`tailscale`, `wireguard`, `smart_disk`, `cron_health`,
-`journal_errors`, `systemd_health`).
+`journal_errors`, `systemd_health`, `ban_status`).
 
 #### Tier 3b — Non-root, no Docker socket (verified)
 

@@ -28,7 +28,7 @@ class TriggerDevPlugin(Plugin):
         version="1.0.0",
         config_schema={
             "url": {"type": "string", "required": True},
-            "api_key": {"type": "string", "required": True},
+            "api_key": {"type": "string", "required": True, "secret": True},
             "project_ref": {"type": "string", "required": True},
         },
         refresh_interval=60,

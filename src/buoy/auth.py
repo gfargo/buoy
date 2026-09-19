@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hmac
 import ipaddress
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,14 @@ PROTECTED_PATHS = {
     "/api/config/debug",
     "/metrics",  # Prometheus scrape endpoint — rate-limited always; auth-gated when auth.enabled
 }
+
+# Endpoints that require authentication when auth is enabled, matched by regex
+# rather than prefix. Plain PROTECTED_PATHS can't express "protect only the
+# /collect sub-path of a variable plugin id" without also catching
+# GET /api/plugins/{id} and GET /api/plugins/js (both must stay public — see
+# _is_protected below). Method-agnostic: the route itself is POST-only, so a
+# stray GET here just 405s.
+PROTECTED_PATH_PATTERNS = (re.compile(r"^/api/plugins/[^/]+/collect/?$"),)
 
 # Rate limiting: track requests per IP for protected endpoints
 _rate_limit: dict[str, list[float]] = {}
@@ -64,7 +73,9 @@ def _is_protected(path: str, base_path: str = "") -> bool:
     for prefix in PROTECTED_PATHS:
         if path.startswith(prefix) or stripped.startswith(prefix):
             return True
-    return False
+    return any(
+        pattern.match(path) or pattern.match(stripped) for pattern in PROTECTED_PATH_PATTERNS
+    )
 
 
 def check_rate_limit(client_ip: str) -> bool:

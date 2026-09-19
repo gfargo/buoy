@@ -15,6 +15,15 @@ exclude = [
   '^https?://[a-z0-9.-]*\.example\.ts\.net',
   # Unresolvable example hostname used in a buoy.yaml.example config comment.
   '^https?://adguard(:[0-9]+)?',
+  # Unresolvable example hostnames used in the reverse_proxy config comment
+  # in buoy.yaml.example (Traefik/Caddy/NPM admin endpoints), not real hosts.
+  '^https?://traefik(:[0-9]+)?',
+  '^https?://caddy(:[0-9]+)?',
+  '^https?://npm(:[0-9]+)?',
+  # Unresolvable example hostnames used in buoy.yaml.example's
+  # download_clients config comment (qBittorrent/SABnzbd containers).
+  '^https?://qbittorrent(:[0-9]+)?',
+  '^https?://sabnzbd(:[0-9]+)?',
   # Unresolvable example hostname used in buoy.yaml.example to illustrate the
   # Grafana/Alertmanager plugin's `url` config; not a real endpoint.
   '^https?://alertmanager(:[0-9]+)?',
@@ -27,6 +36,10 @@ exclude = [
   # Placeholder hostname illustrating a reverse-proxy sub-path in
   # buoy.yaml.example, not a real endpoint.
   '^https?://host(:[0-9]+)?/',
+  # Unresolvable example hostname used in buoy.yaml.example to illustrate the
+  # Actual Budget plugin's `url` config (the actual-http-api sidecar); not a
+  # real endpoint.
+  '^https?://actual-http-api(:[0-9]+)?',
   # release-please-generated semver compare links necessarily point at the
   # not-yet-created target tag while a release PR is open, so they return 404
   # until that PR merges. The tags and release workflow verify the range after

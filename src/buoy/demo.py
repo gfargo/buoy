@@ -227,6 +227,20 @@ class DemoImageUpdateChecker:
         }
 
 
+class DemoStaticHealthChecker:
+    """Mock static-service health checker — makes no outbound requests."""
+
+    def __init__(self, config: BuoyConfig):
+        self.config = config
+
+    async def check_all(self) -> dict[str, dict]:
+        return {
+            entry.name: {"status": "ok", "latency_ms": round(random.uniform(5, 40), 1)}
+            for entry in self.config.services.static
+            if entry.health_check
+        }
+
+
 class DemoDiskCollector:
     """Mock disk collector with realistic mount data."""
 

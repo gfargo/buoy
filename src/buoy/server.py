@@ -25,6 +25,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from buoy._version import VERSION
+from buoy.redaction import redact_secrets as _redact_secrets
 from buoy.subprocess_utils import communicate
 
 if TYPE_CHECKING:
@@ -47,6 +48,7 @@ class BuoyAppState:
     metric_store: MetricStore | None = None
     alert_engine: AlertEngine | None = None
     image_update_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    static_health: dict[str, dict[str, Any]] = field(default_factory=dict)
     background_tasks: list[asyncio.Task[None]] = field(default_factory=list)
 
 
@@ -115,6 +117,7 @@ async def api_config(request: Request) -> JSONResponse:
                 "fleet_interval": state.config.refresh.fleet_interval,
                 "plugins_interval": state.config.refresh.plugins_interval,
                 "image_updates_interval": state.config.refresh.image_updates_interval,
+                "health_check_interval": state.config.refresh.health_check_interval,
             },
         }
     )
@@ -316,7 +319,10 @@ async def api_services(request: Request) -> JSONResponse:
 
     is_tailscale = _is_tailscale(request, state.config)
     data = await discover_services(
-        state.config, is_tailscale, collector=state.collectors.get("docker")
+        state.config,
+        is_tailscale,
+        collector=state.collectors.get("docker"),
+        health=state.static_health,
     )
     return JSONResponse(data)
 
@@ -450,6 +456,34 @@ async def api_plugin_detail(request: Request) -> JSONResponse:
     if payload is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse(payload)
+
+
+async def api_plugin_collect(request: Request) -> JSONResponse:
+    state: BuoyAppState = request.app.state.buoy
+    """Run one out-of-band collect for a plugin and return its fresh detail payload.
+
+    Requires ``Content-Type: application/json`` for the same CORS-preflight
+    reason as ``api_container_restart``. Rate-limited always; auth-gated when
+    ``auth.enabled`` (see ``PROTECTED_PATH_PATTERNS`` in ``buoy.auth``).
+    """
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        return JSONResponse({"error": "Content-Type must be application/json"}, status_code=415)
+
+    if not state.plugin_manager:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    plugin_id = request.path_params["id"]
+    result = await state.plugin_manager.collect_once(plugin_id)
+    if result == "unknown":
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if result == "busy":
+        return JSONResponse({"error": "collect already in flight"}, status_code=409)
+    if result == "disabled":
+        return JSONResponse({"error": "plugin disabled by config"}, status_code=400)
+    if result == "demo":
+        return JSONResponse({"demo": True})
+    return JSONResponse(state.plugin_manager.get_plugin_or_stub_payload(plugin_id, detail=True))
 
 
 def _prometheus_enabled(config: BuoyConfig) -> bool:
@@ -732,6 +766,20 @@ async def _image_update_loop(state: BuoyAppState, checker: Any):
             logger.warning("image update check failed", exc_info=True)
 
 
+async def _health_check_loop(state: BuoyAppState, checker: Any):
+    """Periodically check configured static-service health-check URLs."""
+    try:
+        state.static_health = await checker.check_all()
+    except Exception:
+        logger.warning("static health check failed", exc_info=True)
+    while True:
+        await asyncio.sleep(state.config.refresh.health_check_interval)
+        try:
+            state.static_health = await checker.check_all()
+        except Exception:
+            logger.warning("static health check failed", exc_info=True)
+
+
 # ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 
@@ -815,6 +863,24 @@ async def on_startup(state: BuoyAppState):
             state.config.refresh.image_updates_interval,
         )
 
+    # Start static-service health checker (only when at least one entry configured one)
+    if any(entry.health_check for entry in state.config.services.static):
+        if state.config.features.demo_mode:
+            from buoy.demo import DemoStaticHealthChecker
+
+            health_checker = DemoStaticHealthChecker(state.config)
+        else:
+            from buoy.collectors.health import StaticHealthChecker
+
+            health_checker = StaticHealthChecker(state.config)
+        state.background_tasks.append(
+            asyncio.create_task(_health_check_loop(state, health_checker))
+        )
+        logger.info(
+            "Static service health checker enabled (interval: %ss)",
+            state.config.refresh.health_check_interval,
+        )
+
     # PluginManager owns its own plugin collection tasks; keep them separate
     # from the server loops tracked above.
     from buoy.plugins.loader import PluginManager
@@ -850,6 +916,7 @@ async def on_shutdown(state: BuoyAppState):
         state.collectors.clear()
         state.ws_clients.clear()
         state.image_update_cache.clear()
+        state.static_health.clear()
         state.background_tasks.clear()
 
 
@@ -867,25 +934,6 @@ async def lifespan(app: Starlette):
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
-
-_SECRET_KEY_FRAGMENTS = {"token", "password", "secret", "key"}
-
-
-def _redact_secrets(obj):
-    """Recursively replace secret-bearing string values with a redaction marker.
-
-    Only string values are redacted (booleans/ints with "key" in the name are left alone).
-    """
-    if isinstance(obj, dict):
-        return {
-            k: "***REDACTED***"
-            if isinstance(v, str) and v and any(frag in k.lower() for frag in _SECRET_KEY_FRAGMENTS)
-            else _redact_secrets(v)
-            for k, v in obj.items()
-        }
-    if isinstance(obj, list):
-        return [_redact_secrets(item) for item in obj]
-    return obj
 
 
 def _resolve_static_dir() -> Path:
@@ -1081,6 +1129,7 @@ def create_app(config: BuoyConfig) -> Starlette:
         # Must come after /api/plugins/js — Starlette matches routes in list
         # order, and {id} would otherwise swallow /js. A plugin whose id is
         # literally "js" is unreachable via this route; an acceptable trade.
+        Route("/api/plugins/{id}/collect", api_plugin_collect, methods=["POST"]),
         Route("/api/plugins/{id}", api_plugin_detail),
         Route("/api/history/{metric}", api_history),
         Route("/api/container/{name}/history", api_container_history),
