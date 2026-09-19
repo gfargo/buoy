@@ -208,6 +208,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Plugin | Config key | What it shows | Config needed |
 |--------|------------|----------------|---------------|
 | GitHub | `github` | Notifications + open PRs | `token` |
+| Gitea / Forgejo | `gitea` | Repos, open PRs, Actions queue & failures | `url`, `token` |
 | UptimeKuma | `uptime_kuma` | Service health badges | `url` |
 | Loki | `loki` | Recent error log entries | `url` |
 | Plane | `plane` | Sprint/cycle progress | `api_key`, `url` |

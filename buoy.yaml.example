@@ -206,6 +206,15 @@ plugins:
       enabled: false
       token: ""              # Or BUOY_PLUGIN_GITHUB_TOKEN (or legacy BUOY_GITHUB_TOKEN)
 
+    # Gitea / Forgejo repos, open PRs, Actions queue & failures
+    gitea:
+      enabled: false
+      url: ""                  # e.g., https://git.example.com (include a subpath if used)
+      token: ""                # Or BUOY_PLUGIN_GITEA_TOKEN — needs read:repository
+      repos: []                # "owner/name" entries to poll for Actions (max 3)
+      verify_ssl: true         # Set false for self-signed certs (insecure)
+      queue_warn_threshold: 5  # Queued Actions jobs before status → warn
+
     # UptimeKuma service health badges
     uptime_kuma:
       enabled: false
