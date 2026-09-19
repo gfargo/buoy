@@ -50,8 +50,20 @@ def _load_rule_file(name: str) -> dict:
     return yaml.safe_load((GRAFANA_DIR / name).read_text())
 
 
+def _iter_panels(panels: list[dict]):
+    """Yield every panel, recursing into row panels' nested panels[].
+
+    Grafana moves panels into a row's own "panels" array when a row is
+    collapsed (e.g. after re-exporting from the UI), so a walker that only
+    looks at the top level silently stops covering them.
+    """
+    for panel in panels:
+        yield panel
+        yield from _iter_panels(panel.get("panels", []))
+
+
 def _dashboard_panel_exprs(dashboard: dict):
-    for panel in dashboard.get("panels", []):
+    for panel in _iter_panels(dashboard.get("panels", [])):
         for target in panel.get("targets", []):
             if "expr" in target:
                 yield target["expr"]
@@ -86,7 +98,7 @@ def test_dashboard_uses_datasource_variable():
     assert ds_vars, "expected a datasource-type template variable"
     ds_var_name = ds_vars[0]["name"]
 
-    for panel in dashboard["panels"]:
+    for panel in _iter_panels(dashboard["panels"]):
         ds = panel.get("datasource")
         if ds is None:
             continue

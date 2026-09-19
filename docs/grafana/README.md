@@ -71,10 +71,16 @@ reliable tiebreaker if you forget.
 ## 3. Import the dashboard
 
 Grafana → Dashboards → New → Import → upload `buoy.json` (or paste its
-contents) → pick your Prometheus datasource when prompted → Import.
+contents) → Import.
 
-The dashboard has one variable to select: `host`, populated from
-`label_values(buoy_uptime_seconds, host)`. It defaults to "All".
+The dashboard uses a datasource template variable rather than Grafana's
+`__inputs` prompt, so the import screen only asks for a name/folder/UID —
+it will not prompt you to pick a datasource. After import, use the
+dashboard's own `Datasource` variable (top left) to select your Prometheus
+datasource; panels show "No data" until it's set.
+
+The `host` variable, populated from
+`label_values(buoy_uptime_seconds, host)`, defaults to "All".
 
 A few panels (CPU, memory, temperature, NVMe) show "No data" on hosts where
 the underlying collector can't read that metric (e.g. no CPU temperature
