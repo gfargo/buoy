@@ -327,6 +327,10 @@ def _parse_static_services(raw_static: list) -> list[StaticService]:
     """
     entries = []
     for cfg in raw_static:
+        if not isinstance(cfg, dict):
+            logger.warning("services.static: expected a mapping, got %r — skipped", cfg)
+            continue
+
         name = cfg.get("name", "")
         if not name:
             logger.warning("services.static: entry without a 'name' skipped: %r", cfg)

@@ -316,6 +316,14 @@ class TestServicesStatic:
         assert config.services.static == []
         assert any("services.static" in r.message for r in caplog.records)
 
+    def test_non_dict_static_entry_skipped_with_warning(self, caplog):
+        raw = {"services": {"static": ["https://nas.local", {"name": "Router"}]}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert len(config.services.static) == 1
+        assert config.services.static[0].name == "Router"
+        assert any("services.static" in r.message for r in caplog.records)
+
     def test_services_static_produces_no_unknown_key_warning(self, caplog):
         raw = {
             "services": {

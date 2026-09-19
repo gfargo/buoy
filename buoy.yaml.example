@@ -135,7 +135,7 @@ services:
   #     icon: "\U0001F4BE"   # 💾
   #     desc: "Synology DS920+"
   #     url: https://nas.example.ts.net
-  #     health_check: true          # poll `url`; or set an explicit URL/path instead
+  #     health_check: true          # poll `url`; or set an explicit full URL instead
   #   - name: Router
   #     icon: "\U0001F4E1"   # 📡
   #     url: https://192.168.1.1
