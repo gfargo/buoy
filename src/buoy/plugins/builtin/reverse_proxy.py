@@ -18,6 +18,7 @@ that as broken.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import ssl
@@ -39,7 +40,14 @@ _LABEL_RE = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
 
 
 def _parse_5xx_counters(text: str) -> tuple[float, float]:
-    """Sum `*_requests_total` counter samples into (five_xx_total, all_total)."""
+    """Sum `*_requests_total` counter samples into (five_xx_total, all_total).
+
+    Only samples carrying a `code`/`status` label are counted at all — some
+    exporters (e.g. Caddy's `caddy_http_requests_total`) expose a request
+    counter with no response-code label, putting codes on a separate metric
+    instead. Including those in the denominator would silently dilute the
+    rate toward 0%, so they're excluded entirely rather than guessed at.
+    """
     five_xx = 0.0
     total = 0.0
     for line in text.splitlines():
@@ -49,12 +57,14 @@ def _parse_5xx_counters(text: str) -> tuple[float, float]:
         m = _METRIC_LINE_RE.match(line)
         if not m or not m.group("name").endswith("_requests_total"):
             continue
+        labels = dict(_LABEL_RE.findall(m.group("labels") or ""))
+        code = labels.get("code") or labels.get("status") or ""
+        if not code:
+            continue
         try:
             value = float(m.group("value"))
         except ValueError:
             continue
-        labels = dict(_LABEL_RE.findall(m.group("labels") or ""))
-        code = labels.get("code") or labels.get("status") or ""
         total += value
         if code.startswith("5"):
             five_xx += value
@@ -118,13 +128,14 @@ class ReverseProxyPlugin(Plugin):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
+        loop = asyncio.get_running_loop()
         try:
             if rp_type == "traefik":
-                return self._collect_traefik(url, ctx, headers)
+                return await loop.run_in_executor(None, self._collect_traefik, url, ctx, headers)
             elif rp_type == "caddy":
-                return self._collect_caddy(url, ctx, headers)
+                return await loop.run_in_executor(None, self._collect_caddy, url, ctx, headers)
             elif rp_type == "npm":
-                return self._collect_npm(url, ctx, headers)
+                return await loop.run_in_executor(None, self._collect_npm, url, ctx, headers)
             else:
                 return PanelData(status="error", summary=f"Unknown type: {rp_type!r}")
         except Exception as e:
@@ -223,7 +234,12 @@ class ReverseProxyPlugin(Plugin):
             domain = ", ".join(h.get("domain_names") or []) or "unknown"
             enabled = bool(h.get("enabled", True))
             online = (h.get("meta") or {}).get("nginx_online", True)
-            status = "error" if (not enabled or online is False) else "ok"
+            if not enabled:
+                status = "warn"  # deliberately disabled by the user, not a failure
+            elif online is False:
+                status = "error"
+            else:
+                status = "ok"
 
             cert_status = None
             cert_label = "—"
@@ -369,7 +385,8 @@ class ReverseProxyPlugin(Plugin):
             detail={
                 "backend": backend,
                 "router_count": count_shown,
-                "hosts": hosts,
+                "hosts": hosts[:_MAX_ROWS],
+                "host_total": len(hosts),
                 "error_rate": error_rate,
             },
         )
@@ -410,11 +427,12 @@ class ReverseProxyPlugin(Plugin):
         rows = [{"label": label, "value": str(d.get("router_count", len(hosts)))}]
         error_rate = d.get("error_rate")
         if error_rate is not None:
+            error_rate_warn = float(self.config.get("error_rate_warn", 5.0))
             rows.append(
                 {
                     "label": "5xx rate",
                     "value": f"{error_rate:.1f}%",
-                    "status": "warn" if error_rate > 0 else "ok",
+                    "status": "warn" if error_rate > error_rate_warn else "ok",
                 }
             )
         blocks: list[dict] = [panel.keyvalue(rows)]
@@ -425,7 +443,12 @@ class ReverseProxyPlugin(Plugin):
                 panel.cell(h.get("status", "ok"), status=h.get("status")),
                 panel.cell(h.get("cert_label", "—"), status=h.get("cert_status")),
             ]
-            for h in hosts[:_MAX_ROWS]
+            for h in hosts
         ]
         blocks.append(panel.table(["Host", "Status", "Cert"], table_rows))
+
+        host_total = d.get("host_total", len(hosts))
+        remaining = host_total - len(hosts)
+        if remaining > 0:
+            blocks.append(panel.text(f"+{remaining} more", status="dim"))
         return blocks

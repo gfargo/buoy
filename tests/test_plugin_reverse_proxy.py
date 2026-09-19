@@ -241,6 +241,25 @@ class TestReverseProxyPlugin:
 
         assert result.status == "error"
 
+    @pytest.mark.asyncio
+    async def test_npm_disabled_host_returns_warn_not_error(self):
+        plugin = self._npm_plugin()
+        token_resp = {"token": "tok_123", "expires": "2099-01-01T00:00:00.000Z"}
+        hosts_resp = [
+            {
+                "domain_names": ["off.example.com"],
+                "enabled": False,
+                "meta": {"nginx_online": True},
+            }
+        ]
+        side_effects = _mock_sequence([token_resp, hosts_resp])
+        with patch("urllib.request.urlopen", side_effect=side_effects):
+            result = await plugin.collect()
+
+        assert result.status == "warn"
+        host = result.detail["hosts"][0]
+        assert host["status"] == "warn"
+
     @pytest.mark.parametrize(
         "days_out,expected_status",
         [(3, "error"), (20, "warn"), (90, "ok")],
@@ -343,6 +362,36 @@ class TestReverseProxyPlugin:
         assert result.detail["error_rate"] is None
 
     @pytest.mark.asyncio
+    async def test_metrics_ignores_counters_without_code_label(self):
+        # Caddy's caddy_http_requests_total carries no code/status label (codes
+        # live on a separate histogram) — those samples must not inflate the
+        # denominator and silently dilute the rate toward 0%.
+        plugin = self._traefik_plugin(metrics_url="http://traefik:8080/metrics")
+        overview = {"http": {"routers": {"total": 1, "warnings": 0, "errors": 0}}}
+        routers = [{"name": "app@docker", "rule": "Host(`app.local`)", "status": "enabled"}]
+        metrics_1 = (
+            'traefik_service_requests_total{code="200"} 100\n'
+            'traefik_service_requests_total{code="500"} 0\n'
+            'caddy_http_requests_total{server="srv0",handler="reverse_proxy"} 1000\n'
+        )
+        metrics_2 = (
+            'traefik_service_requests_total{code="200"} 150\n'
+            'traefik_service_requests_total{code="500"} 10\n'
+            'caddy_http_requests_total{server="srv0",handler="reverse_proxy"} 5000\n'
+        )
+        side_effects = _mock_sequence([overview, routers, metrics_1])
+        with patch("urllib.request.urlopen", side_effect=side_effects):
+            await plugin.collect()
+
+        side_effects = _mock_sequence([overview, routers, metrics_2])
+        with patch("urllib.request.urlopen", side_effect=side_effects):
+            result = await plugin.collect()
+
+        # If the uncoded caddy_http_requests_total samples leaked into the
+        # denominator, this would come out far below 16.67%.
+        assert result.detail["error_rate"] == pytest.approx(16.666, rel=1e-2)
+
+    @pytest.mark.asyncio
     async def test_malformed_metrics_omits_rate_but_stays_ok(self):
         plugin = self._traefik_plugin(metrics_url="http://traefik:8080/metrics")
         overview = {"http": {"routers": {"total": 1, "warnings": 0, "errors": 0}}}
@@ -373,3 +422,68 @@ class TestReverseProxyPlugin:
         data = plugin.demo_data()
         blocks = plugin.render(data)
         assert [b["type"] for b in blocks] == ["keyvalue", "table"]
+
+    def test_render_5xx_row_ok_below_warn_threshold(self):
+        from buoy.plugins.builtin.reverse_proxy import ReverseProxyPlugin
+
+        # demo_data()'s 0.4% rate is well under the 5.0% default threshold —
+        # the row must not read "warn" just because the rate is nonzero.
+        plugin = ReverseProxyPlugin()
+        data = plugin.demo_data()
+        blocks = plugin.render(data)
+        rate_row = next(r for r in blocks[0]["rows"] if r["label"] == "5xx rate")
+        assert rate_row["status"] == "ok"
+
+    def test_render_5xx_row_warn_above_threshold(self):
+        from buoy.plugins.builtin.reverse_proxy import ReverseProxyPlugin
+        from buoy.plugins.protocol import PanelData
+
+        plugin = ReverseProxyPlugin()
+        plugin.configure({"type": "traefik", "url": "http://traefik:8080", "error_rate_warn": 5.0})
+        hosts = [{"name": "app", "status": "ok", "cert_status": None, "cert_label": "—"}]
+        data = PanelData(
+            status="warn",
+            summary="",
+            detail={"backend": "traefik", "router_count": 1, "hosts": hosts, "error_rate": 12.0},
+        )
+        blocks = plugin.render(data)
+        rate_row = next(r for r in blocks[0]["rows"] if r["label"] == "5xx rate")
+        assert rate_row["status"] == "warn"
+
+    def test_render_truncated_hosts_shows_more_line(self):
+        from buoy.plugins.builtin.reverse_proxy import ReverseProxyPlugin
+        from buoy.plugins.protocol import PanelData
+
+        plugin = ReverseProxyPlugin()
+        hosts = [{"name": f"host{i}", "status": "ok"} for i in range(10)]
+        data = PanelData(
+            status="ok",
+            summary="",
+            detail={
+                "backend": "traefik",
+                "router_count": 15,
+                "hosts": hosts,
+                "host_total": 15,
+                "error_rate": None,
+            },
+        )
+        blocks = plugin.render(data)
+        assert blocks[-1] == {"type": "text", "value": "+5 more", "status": "dim"}
+
+    def test_make_panel_caps_hosts_in_detail(self):
+        from buoy.plugins.builtin.reverse_proxy import ReverseProxyPlugin
+
+        plugin = ReverseProxyPlugin()
+        hosts = [
+            {
+                "name": f"host{i}",
+                "status": "ok",
+                "detail": "",
+                "cert_status": None,
+                "cert_label": "—",
+            }
+            for i in range(25)
+        ]
+        data = plugin._make_panel("traefik", hosts, error_rate=None, router_count=25)
+        assert len(data.detail["hosts"]) == 10
+        assert data.detail["host_total"] == 25
