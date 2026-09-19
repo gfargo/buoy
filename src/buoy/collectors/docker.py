@@ -7,6 +7,7 @@ before passing to shell commands.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -167,6 +168,16 @@ class DockerCollector:
         )
         stats = await self._container_stats_cached() if self.config.features.container_stats else {}
 
+        if not states and containers:
+            # `docker ps -a` (states) failed/timed out while the separate `docker
+            # ps` call (containers) succeeded — fall back to the running set so
+            # `containers_list` doesn't go empty while `containers` still shows a
+            # count. Self-heals once the states cache TTL expires.
+            states = [
+                {"name": c["name"], "state": "running", "status": "", "health": None}
+                for c in containers
+            ]
+
         containers_list = []
         for s in states:
             name = s["name"]
@@ -284,6 +295,15 @@ class DockerCollector:
         if stale and (self._stats_task is None or self._stats_task.done()):
             self._stats_task = asyncio.create_task(self._refresh_stats())
         return self._stats_cache
+
+    async def aclose(self) -> None:
+        """Cancel an in-flight background stats refresh, if any (called from
+        on_shutdown so a refresh doesn't outlive the app and log a 'Task was
+        destroyed but it is pending' warning)."""
+        if self._stats_task is not None and not self._stats_task.done():
+            self._stats_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stats_task
 
     async def inspect_container(self, name: str) -> dict:
         """Get detailed info for a single container."""

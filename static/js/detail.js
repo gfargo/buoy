@@ -138,8 +138,8 @@ const _HEALTH_DOT_CLASS = { unhealthy: 'unhealthy', starting: 'starting', health
 const _STATE_DOT_CLASS = { running: '' };
 
 function _dotClass(c) {
-  if (c.health && c.health in _HEALTH_DOT_CLASS) return _HEALTH_DOT_CLASS[c.health];
-  return c.state in _STATE_DOT_CLASS ? _STATE_DOT_CLASS[c.state] : 'stopped';
+  if (c.health && Object.hasOwn(_HEALTH_DOT_CLASS, c.health)) return _HEALTH_DOT_CLASS[c.health];
+  return Object.hasOwn(_STATE_DOT_CLASS, c.state) ? _STATE_DOT_CLASS[c.state] : 'stopped';
 }
 
 function _sortPriority(c) {
@@ -169,12 +169,18 @@ export function containerRowHtml(c) {
   const badge = _updateBadge(c.update_status);
   const cpu = c.cpu_pct ?? '--';
   const mem = c.mem_usage ?? '--';
+  // History is only fetched for running containers (see renderContainersDetail) —
+  // on a host with many one-shot/exited containers, firing one
+  // /api/container/<name>/history request per row on open would self-inflict
+  // 429s against the shared 60/60s rate limit. Omit data-ctr for the rest so
+  // the fetch loop's selector skips them entirely.
+  const uptimeAttr = c.state === 'running' ? ` data-ctr="${escapeHtml(c.name)}"` : '';
   return `<div class="ctr" data-ctr-name="${escapeHtml(c.name)}">` +
     `<div class="dot-sm ${_dotClass(c)}"></div>` +
     `<div class="ctr-name">${escapeHtml(c.name)}</div>` +
     `<div class="ctr-status" title="${escapeHtml(c.status || '')}">${escapeHtml(c.status || '')}</div>` +
     `<div class="ctr-metrics">${escapeHtml(cpu)} &middot; ${escapeHtml(mem)}</div>` +
-    `<div class="ctr-uptime" data-ctr="${escapeHtml(c.name)}"></div>${badge}</div>`;
+    `<div class="ctr-uptime"${uptimeAttr}></div>${badge}</div>`;
 }
 
 function _containersHeaderText(containers) {
@@ -209,12 +215,27 @@ function renderContainersDetail() {
   return html;
 }
 
+function _applyRowUpdate(row, c) {
+  const dot = row.querySelector('.dot-sm');
+  if (dot) dot.className = `dot-sm ${_dotClass(c)}`;
+  const statusEl = row.querySelector('.ctr-status');
+  if (statusEl) {
+    statusEl.textContent = c.status || '';
+    statusEl.title = c.status || '';
+  }
+  const metricsEl = row.querySelector('.ctr-metrics');
+  if (metricsEl) metricsEl.textContent = `${c.cpu_pct ?? '--'} · ${c.mem_usage ?? '--'}`;
+}
+
 /**
  * Called on every stats tick (WebSocket or poll) while the containers panel
  * is open. Updates existing rows in place (dot/status/cpu/mem) instead of
  * re-rendering — a full re-render every 5s would wipe the uptime bars and
- * re-fire one history fetch per container. Only falls back to a full
- * re-render when the set of container names actually changed.
+ * re-fire one history fetch per container. When the set of names changes,
+ * rows are added/removed in place rather than blowing away
+ * `#container-inspect-panel` (and any open logs view) with a full
+ * `content.innerHTML` replace. New rows are appended rather than re-sorted
+ * into position, which is an acceptable tradeoff to keep an open panel alive.
  */
 export function refreshContainersPanel(containers) {
   if (currentDetail !== 'containers') return;
@@ -222,12 +243,9 @@ export function refreshContainersPanel(containers) {
   if (!content) return;
 
   const sorted = sortContainers(containers || []);
-  const rows = Array.from(content.querySelectorAll('.ctr[data-ctr-name]'));
-  const existingNames = new Set(rows.map(el => el.dataset.ctrName));
-  const newNames = new Set(sorted.map(c => c.name));
-  const sameSet = existingNames.size === newNames.size && [...existingNames].every(n => newNames.has(n));
+  const grid = content.querySelector('.container-grid');
 
-  if (!sameSet) {
+  if (!grid || !sorted.length) {
     content.innerHTML = renderContainersDetail();
     return;
   }
@@ -235,19 +253,29 @@ export function refreshContainersPanel(containers) {
   const title = content.querySelector('.detail-title');
   if (title) title.textContent = _containersHeaderText(sorted);
 
-  const byName = new Map(sorted.map(c => [c.name, c]));
+  const rows = Array.from(grid.querySelectorAll('.ctr[data-ctr-name]'));
+  const existingNames = new Set(rows.map(el => el.dataset.ctrName));
+  const newNames = new Set(sorted.map(c => c.name));
+
   rows.forEach(row => {
+    if (!newNames.has(row.dataset.ctrName)) row.remove();
+  });
+
+  const byName = new Map(sorted.map(c => [c.name, c]));
+  grid.querySelectorAll('.ctr[data-ctr-name]').forEach(row => {
     const c = byName.get(row.dataset.ctrName);
-    if (!c) return;
-    const dot = row.querySelector('.dot-sm');
-    if (dot) dot.className = `dot-sm ${_dotClass(c)}`;
-    const statusEl = row.querySelector('.ctr-status');
-    if (statusEl) {
-      statusEl.textContent = c.status || '';
-      statusEl.title = c.status || '';
-    }
-    const metricsEl = row.querySelector('.ctr-metrics');
-    if (metricsEl) metricsEl.textContent = `${c.cpu_pct ?? '--'} · ${c.mem_usage ?? '--'}`;
+    if (c) _applyRowUpdate(row, c);
+  });
+
+  sorted.forEach(c => {
+    if (existingNames.has(c.name)) return;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = containerRowHtml(c);
+    const rowEl = wrapper.firstElementChild;
+    grid.appendChild(rowEl);
+    rowEl.addEventListener('click', () => inspectContainer(rowEl.dataset.ctrName));
+    const uptimeEl = rowEl.querySelector('.ctr-uptime[data-ctr]');
+    if (uptimeEl) loadContainerHistory(uptimeEl.dataset.ctr, uptimeEl);
   });
 }
 

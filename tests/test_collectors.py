@@ -395,6 +395,86 @@ class TestDockerCollectSummary:
         assert fetch_stats.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_ps_a_failure_falls_back_to_running_set(self):
+        """A transient `docker ps -a` failure/timeout must not empty
+        `containers_list` while `containers` still reports a count — fall
+        back to the already-fetched running set instead."""
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(
+            return_value=[
+                {"name": "grafana", "host_port": 3000},
+                {"name": "redis", "host_port": None},
+            ]
+        )
+        coll._fetch_container_states = AsyncMock(return_value=[])
+
+        data = await coll.collect_summary()
+
+        assert data["containers"] == 2
+        assert len(data["containers_list"]) == 2
+        names = {c["name"] for c in data["containers_list"]}
+        assert names == {"grafana", "redis"}
+        assert all(c["state"] == "running" for c in data["containers_list"])
+
+    @pytest.mark.asyncio
+    async def test_ps_a_and_ps_both_empty_stays_empty(self):
+        """No containers running is not a failure — must not be confused
+        with the ps -a fallback path."""
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(return_value=[])
+        coll._fetch_container_states = AsyncMock(return_value=[])
+
+        data = await coll.collect_summary()
+
+        assert data["containers"] == 0
+        assert data["containers_list"] == []
+
+    @pytest.mark.asyncio
+    async def test_aclose_cancels_in_flight_stats_refresh(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(return_value=[{"name": "grafana", "host_port": 3000}])
+        coll._fetch_container_states = AsyncMock(
+            return_value=[{"name": "grafana", "state": "running", "status": "Up", "health": None}]
+        )
+
+        async def _slow_fetch():
+            await asyncio.sleep(10)
+            return {}
+
+        coll._fetch_container_stats = _slow_fetch
+
+        await coll.collect_summary()
+        assert coll._stats_task is not None
+        assert not coll._stats_task.done()
+
+        await coll.aclose()
+
+        assert coll._stats_task.cancelled() or coll._stats_task.done()
+
+    @pytest.mark.asyncio
+    async def test_aclose_is_a_noop_with_no_task(self):
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        await coll.aclose()  # must not raise
+
+    @pytest.mark.asyncio
     async def test_container_stats_feature_flag_disabled_skips_stats(self):
         from unittest.mock import AsyncMock
 

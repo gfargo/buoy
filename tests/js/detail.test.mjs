@@ -82,3 +82,10 @@ test('containerRowHtml renders the running healthy state with no extra dot class
   const html = containerRowHtml({ name: 'grafana', state: 'running', health: 'healthy', status: 'Up (healthy)' });
   assert.ok(html.includes('dot-sm "'));
 });
+
+test('containerRowHtml only wires a history fetch target for running containers', () => {
+  const running = containerRowHtml({ name: 'grafana', state: 'running', health: null, status: 'Up' });
+  const stopped = containerRowHtml({ name: 'old-job', state: 'exited', health: null, status: 'Exited (0)' });
+  assert.ok(running.includes('data-ctr="grafana"'));
+  assert.ok(!stopped.includes('data-ctr='));
+});

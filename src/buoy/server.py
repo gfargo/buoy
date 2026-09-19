@@ -777,6 +777,9 @@ async def on_shutdown(state: BuoyAppState):
                 task.cancel()
             if state.background_tasks:
                 await asyncio.gather(*state.background_tasks, return_exceptions=True)
+            docker_coll = state.collectors.get("docker")
+            if docker_coll is not None and hasattr(docker_coll, "aclose"):
+                await docker_coll.aclose()
         finally:
             try:
                 if state.plugin_manager:
