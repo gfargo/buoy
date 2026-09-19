@@ -119,5 +119,48 @@ class PrometheusExporterPlugin(Plugin):
             lines.append("# TYPE buoy_nvme_wear_percent gauge")
             lines.append(f'buoy_nvme_wear_percent{{host="{host}"}} {nvme.get("wear_pct", 0)}')
 
+        # GPU metrics (if any GPUs present) — omitted entirely on a host
+        # with no GPU, same "no key" contract as the nvme block above.
+        gpus = stats.get("gpus")
+        if gpus:
+            lines.append("# HELP buoy_gpu_utilization_percent GPU utilization percentage")
+            lines.append("# TYPE buoy_gpu_utilization_percent gauge")
+            lines.append("# HELP buoy_gpu_memory_used_bytes GPU memory used in bytes")
+            lines.append("# TYPE buoy_gpu_memory_used_bytes gauge")
+            lines.append("# HELP buoy_gpu_memory_total_bytes GPU memory total in bytes")
+            lines.append("# TYPE buoy_gpu_memory_total_bytes gauge")
+            lines.append("# HELP buoy_gpu_temperature_celsius GPU temperature")
+            lines.append("# TYPE buoy_gpu_temperature_celsius gauge")
+            lines.append("# HELP buoy_gpu_power_watts GPU power draw in watts")
+            lines.append("# TYPE buoy_gpu_power_watts gauge")
+
+            for gpu in gpus:
+                gpu_name = PrometheusExporterPlugin._escape_label_value(gpu.get("name", ""))
+                labels = f'host="{host}",gpu="{gpu.get("index", 0)}",name="{gpu_name}"'
+
+                util = gpu.get("util_pct")
+                if util is not None:
+                    lines.append(f"buoy_gpu_utilization_percent{{{labels}}} {util}")
+
+                mem_used = gpu.get("mem_used_mb")
+                if mem_used is not None:
+                    lines.append(
+                        f"buoy_gpu_memory_used_bytes{{{labels}}} {int(mem_used * 1048576)}"
+                    )
+
+                mem_total = gpu.get("mem_total_mb")
+                if mem_total is not None:
+                    lines.append(
+                        f"buoy_gpu_memory_total_bytes{{{labels}}} {int(mem_total * 1048576)}"
+                    )
+
+                temp = gpu.get("temp")
+                if temp is not None:
+                    lines.append(f"buoy_gpu_temperature_celsius{{{labels}}} {temp}")
+
+                power = gpu.get("power_w")
+                if power is not None:
+                    lines.append(f"buoy_gpu_power_watts{{{labels}}} {power}")
+
         lines.append("")
         return "\n".join(lines)

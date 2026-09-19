@@ -83,7 +83,7 @@ const SHORTCUTS = [
   { key: 'r', desc: 'Force refresh stats' },
   { key: 't', desc: 'Toggle light/dark theme' },
   { key: 'f', desc: 'Focus fleet section' },
-  { key: '1–4', desc: 'Open gauge detail panel' },
+  { key: '1–5', desc: 'Open gauge detail panel' },
   { key: 'Esc', desc: 'Close detail panel / help' },
   { key: '?', desc: 'Show this help' },
 ];
@@ -143,6 +143,7 @@ function initKeyboardShortcuts() {
       case '2': document.querySelector('.gauge[data-detail="memory"]')?.click(); break;
       case '3': document.querySelector('.gauge[data-detail="disk"]')?.click(); break;
       case '4': document.querySelector('.gauge[data-detail="containers"]')?.click(); break;
+      case '5': document.querySelector('.gauge[data-detail="gpu"]')?.click(); break;
       case 'Escape': {
         const helpOverlay = document.getElementById('kb-help-overlay');
         if (helpOverlay) { helpOverlay.remove(); break; }

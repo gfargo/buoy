@@ -276,3 +276,36 @@ class DemoDiskCollector:
             "io_read_gb": round(_sinusoidal(142, 2), 1),
             "io_write_gb": round(_sinusoidal(86, 1), 1),
         }
+
+
+class DemoGpuCollector:
+    """Mock GPU collector — one NVIDIA GPU, so the transcoding/ML audience
+    (Jellyfin, Frigate, Ollama) sees a populated GPU panel in `--demo`."""
+
+    def __init__(self, config: BuoyConfig):
+        self.config = config
+
+    async def collect_summary(self) -> dict:
+        return {"gpus": [self._gpu()]}
+
+    async def collect_detail(self) -> dict:
+        return {
+            "gpus": [self._gpu()],
+            "processes": [
+                {"pid": 4821, "name": "ffmpeg", "mem_mb": 1024},
+                {"pid": 5290, "name": "ollama", "mem_mb": 3072},
+            ],
+        }
+
+    def _gpu(self) -> dict:
+        return {
+            "vendor": "nvidia",
+            "index": 0,
+            "name": "NVIDIA GeForce RTX 3060",
+            "util_pct": max(0, min(100, int(_sinusoidal(35, 25, period=180)))),
+            "mem_used_mb": max(500, min(11500, int(_sinusoidal(4200, 1500, period=240)))),
+            "mem_total_mb": 12288,
+            "temp": max(35, min(80, int(_sinusoidal(58, 10, period=200)))),
+            "power_w": round(max(20, min(170, _sinusoidal(95, 40, period=180))), 1),
+            "power_limit_w": 170.0,
+        }

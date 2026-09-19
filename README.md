@@ -14,7 +14,7 @@ A lightweight, per-node system dashboard for homelabs and small infrastructure.
 
 Deploy one container per host. Buoy auto-discovers your Docker services, shows system vitals, and connects to peer nodes for a fleet overview — your tailnet landing page.
 
-- **System vitals** — CPU, RAM, disk, temperature, NVMe health, container count
+- **System vitals** — CPU, RAM, disk, temperature, NVMe health, GPU (NVIDIA/AMD/Intel), container count
 - **Service discovery** — auto-finds running Docker containers; customize with display overrides
 - **Fleet overview** — poll peer Buoy instances for a multi-node dashboard
 - **Tailscale-aware** — links auto-switch between HTTPS tailnet URLs and localhost
@@ -189,6 +189,8 @@ volumes:
 ```
 
 > **Note:** `privileged` + `pid: host` enables full system metrics (temperature, all disk mounts, NVMe SMART). If you only need container stats, you can drop `privileged` and keep just `pid: host`. See the [privilege matrix](docs/deployment/privilege-matrix.md) for the full breakdown, or the [native install](docs/deployment/native.md) to get full metrics without any container privilege flags at all.
+>
+> **GPU metrics:** NVIDIA needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (`--gpus all` / `runtime: nvidia`) so `nvidia-smi` is reachable inside the container; AMD/Intel read `/sys/class/drm` directly (present by default) and benefit from mounting `/dev/dri`. No GPU present or none of this configured? The GPU panel just doesn't appear — same graceful degradation as every other collector.
 >
 > Want the same metrics without `privileged`, or to run as a non-root user? Two ready-to-use, verified alternatives: [`docker-compose.hardened.yml`](docker-compose.hardened.yml) (full functionality, specific capabilities instead of `privileged`) and [`docker-compose.minimal.yml`](docker-compose.minimal.yml) (non-root, container-only metrics, no Docker socket).
 
