@@ -253,6 +253,22 @@ plugins:
       url: ""                # e.g., http://localhost:8096
       api_key: ""            # Jellyfin API key (Dashboard → API Keys)
 
+    # *arr stack — queue depth, wanted/missing, and health warnings.
+    # Configure only the services you run; each needs Settings → General → API Key.
+    arr_stack:
+      enabled: false
+      sonarr_url: ""           # e.g., http://localhost:8989
+      sonarr_api_key: ""       # Or BUOY_PLUGIN_ARR_STACK_SONARR_API_KEY
+      radarr_url: ""           # e.g., http://localhost:7878
+      radarr_api_key: ""
+      prowlarr_url: ""         # e.g., http://localhost:9696
+      prowlarr_api_key: ""
+      bazarr_url: ""           # e.g., http://localhost:6767
+      bazarr_api_key: ""
+      queue_warn_threshold: 20     # queued items before status → warn
+      missing_warn_threshold: 50   # wanted/missing items before status → warn
+      verify_ssl: true             # set false for self-signed certs (insecure)
+
     # Home Assistant entity/automation counts, unavailable entities, updates
     home_assistant:
       enabled: false
