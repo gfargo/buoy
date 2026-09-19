@@ -90,10 +90,10 @@ ruff format --check src/ tests/
 3. Implement `collect()` method
 4. Add config schema to `buoy.yaml.example`
 5. Implement `render()` to describe your panel using the declarative blocks in
-   `buoy.plugins.panel` (`text`, `table`, `keyvalue`, `badges`, `bar`,
-   `sparkline`, `list_`) — trusted frontend code (`static/js/panel.js`) turns
-   these into HTML and escapes every value for you. `frontend_js()` (raw JS
-   executed via `new Function()`) still works but is a deprecated escape
+   `buoy.plugins.panel` (`text`, `heading`, `table`, `keyvalue`, `badges`, `bar`,
+   `sparkline`, `list_`, `log`) — trusted frontend code (`static/js/panel.js`)
+   turns these into HTML and escapes every value for you. `frontend_js()` (raw
+   JS executed via `new Function()`) still works but is a deprecated escape
    hatch — it can't be used under a strict CSP and every value must be
    escaped by hand.
 
