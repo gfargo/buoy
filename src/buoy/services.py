@@ -47,13 +47,19 @@ def _resolve_override(overrides: dict, ctr: dict):
     return overrides.get(ctr["name"])
 
 
-async def discover_services(config: BuoyConfig, is_tailscale: bool, collector=None) -> dict:
+async def discover_services(
+    config: BuoyConfig, is_tailscale: bool, collector=None, health: dict | None = None
+) -> dict:
     """Discover local services from Docker and build the full response.
 
     Args:
         collector: Optional pre-built Docker collector to reuse (avoids a
             redundant `docker ps` and preserves its caches). Defaults to a
             fresh `DockerCollector`.
+        health: Optional map of static-service name -> health check result
+            (as produced by `StaticHealthChecker.check_all()`), applied to
+            `services.static` entries. Never fetched here — this function
+            does no network I/O of its own.
 
     Returns:
         Dict with 'local', 'network', 'hostname', 'tailscale', 'tailnet_domain' keys.
@@ -102,6 +108,24 @@ async def discover_services(config: BuoyConfig, is_tailscale: bool, collector=No
                 "desc": desc,
                 "icon": icon,
                 "url": url,
+                "source": "docker",
+                "status": None,
+            }
+        )
+
+    # Static (non-Docker) services and bookmarks — not subject to
+    # services.hidden/overrides, which only apply to Docker discovery.
+    for entry in config.services.static:
+        h = (health or {}).get(entry.name) or {}
+        local_services.append(
+            {
+                "name": entry.name,
+                "desc": entry.desc,
+                "icon": entry.icon,
+                "url": entry.url,
+                "source": "static",
+                "status": h.get("status"),
+                "latency_ms": h.get("latency_ms"),
             }
         )
 

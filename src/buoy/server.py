@@ -47,6 +47,7 @@ class BuoyAppState:
     metric_store: MetricStore | None = None
     alert_engine: AlertEngine | None = None
     image_update_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    static_health: dict[str, dict[str, Any]] = field(default_factory=dict)
     background_tasks: list[asyncio.Task[None]] = field(default_factory=list)
 
 
@@ -115,6 +116,7 @@ async def api_config(request: Request) -> JSONResponse:
                 "fleet_interval": state.config.refresh.fleet_interval,
                 "plugins_interval": state.config.refresh.plugins_interval,
                 "image_updates_interval": state.config.refresh.image_updates_interval,
+                "health_check_interval": state.config.refresh.health_check_interval,
             },
         }
     )
@@ -291,7 +293,10 @@ async def api_services(request: Request) -> JSONResponse:
 
     is_tailscale = _is_tailscale(request, state.config)
     data = await discover_services(
-        state.config, is_tailscale, collector=state.collectors.get("docker")
+        state.config,
+        is_tailscale,
+        collector=state.collectors.get("docker"),
+        health=state.static_health,
     )
     return JSONResponse(data)
 
@@ -671,6 +676,20 @@ async def _image_update_loop(state: BuoyAppState, checker: Any):
             logger.warning("image update check failed", exc_info=True)
 
 
+async def _health_check_loop(state: BuoyAppState, checker: Any):
+    """Periodically check configured static-service health-check URLs."""
+    try:
+        state.static_health = await checker.check_all()
+    except Exception:
+        logger.warning("static health check failed", exc_info=True)
+    while True:
+        await asyncio.sleep(state.config.refresh.health_check_interval)
+        try:
+            state.static_health = await checker.check_all()
+        except Exception:
+            logger.warning("static health check failed", exc_info=True)
+
+
 # ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 
@@ -741,6 +760,24 @@ async def on_startup(state: BuoyAppState):
             state.config.refresh.image_updates_interval,
         )
 
+    # Start static-service health checker (only when at least one entry configured one)
+    if any(entry.health_check for entry in state.config.services.static):
+        if state.config.features.demo_mode:
+            from buoy.demo import DemoStaticHealthChecker
+
+            health_checker = DemoStaticHealthChecker(state.config)
+        else:
+            from buoy.collectors.health import StaticHealthChecker
+
+            health_checker = StaticHealthChecker(state.config)
+        state.background_tasks.append(
+            asyncio.create_task(_health_check_loop(state, health_checker))
+        )
+        logger.info(
+            "Static service health checker enabled (interval: %ss)",
+            state.config.refresh.health_check_interval,
+        )
+
     # PluginManager owns its own plugin collection tasks; keep them separate
     # from the server loops tracked above.
     from buoy.plugins.loader import PluginManager
@@ -776,6 +813,7 @@ async def on_shutdown(state: BuoyAppState):
         state.collectors.clear()
         state.ws_clients.clear()
         state.image_update_cache.clear()
+        state.static_health.clear()
         state.background_tasks.clear()
 
 

@@ -126,6 +126,21 @@ services:
   #     desc: "Media Server"
   #     port: 8096
 
+  # Non-Docker services and bookmarks (NAS, router, printer, VM, bare-metal
+  # app, or just a link) — always shown, not affected by `hidden`/`overrides`.
+  static: []
+  # Example:
+  # static:
+  #   - name: NAS
+  #     icon: "\U0001F4BE"   # 💾
+  #     desc: "Synology DS920+"
+  #     url: https://nas.example.ts.net
+  #     health_check: true          # poll `url`; or set an explicit URL/path instead
+  #   - name: Router
+  #     icon: "\U0001F4E1"   # 📡
+  #     url: https://192.168.1.1
+  #     verify_ssl: false           # self-signed appliance cert
+
 # ── Theme ──────────────────────────────────────────────────
 theme:
   preset: terminal           # terminal (dark) | light | solarized | nord | high-contrast
@@ -162,6 +177,7 @@ refresh:
   fleet_interval: 15         # Peer node polling
   plugins_interval: 60       # Global minimum interval for server-side plugin collection (plugins may poll less often per their own manifest)
   image_updates_interval: 21600  # Image update check interval (6 hours)
+  health_check_interval: 60  # services.static health-check polling interval
 
 # ── Alerts ─────────────────────────────────────────────────
 # Optional: POST a JSON payload to a webhook when a threshold alert fires.
