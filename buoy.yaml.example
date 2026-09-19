@@ -184,6 +184,7 @@ alerts:
 #   BUOY_PLUGIN_GITHUB_TOKEN         → plugins.builtin.github.token
 #   BUOY_PLUGIN_TRIGGER_DEV_API_KEY  → plugins.builtin.trigger_dev.api_key
 #   BUOY_PLUGIN_PROXMOX_TOKEN_SECRET → plugins.builtin.proxmox.token_secret
+#   BUOY_PLUGIN_GRAFANA_ALERTS_TOKEN → plugins.builtin.grafana_alerts.token
 # The same convention applies to drop-in plugins under plugins.user.<id> (see below).
 # Env present always wins over the YAML value.
 #
@@ -314,6 +315,19 @@ plugins:
       password: ""             # Pi-hole v6: instance password (leave empty if open)
                                # AdGuard: Basic-auth password
       verify_ssl: true         # Set false for self-signed certs (insecure)
+
+    # Grafana / Alertmanager firing alerts by severity
+    # type: alertmanager → {url}/api/v2/alerts
+    # type: grafana      → {url}/api/alertmanager/grafana/api/v2/alerts (needs token)
+    grafana_alerts:
+      enabled: false
+      type: alertmanager     # alertmanager | grafana
+      url: ""                # e.g. http://alertmanager:9093 or https://grafana.example.com
+      token: ""              # Grafana service-account token (or BUOY_PLUGIN_GRAFANA_ALERTS_TOKEN)
+      username: ""           # optional HTTP basic auth
+      password: ""
+      include_silenced: false
+      verify_ssl: true
 
     # Trigger.dev task run status (recent runs, 24h failures, queue depth)
     trigger_dev:

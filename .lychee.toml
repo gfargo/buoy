@@ -15,6 +15,9 @@ exclude = [
   '^https?://[a-z0-9.-]*\.example\.ts\.net',
   # Unresolvable example hostname used in a buoy.yaml.example config comment.
   '^https?://adguard(:[0-9]+)?',
+  # Unresolvable example hostname used in buoy.yaml.example to illustrate the
+  # Grafana/Alertmanager plugin's `url` config; not a real endpoint.
+  '^https?://alertmanager(:[0-9]+)?',
   # Truncated example webhook URL in buoy.yaml.example ("...api/webhooks/...
   # "), not a real endpoint.
   '^https?://discord\.com/api/webhooks',
