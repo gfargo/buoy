@@ -91,7 +91,7 @@ test('deep link #plugin=github opens the Github detail on load and clears on clo
   await expect(dialog).toBeVisible();
   await expect(page.locator('#plugin-detail-title')).toHaveText(/github/i);
 
-  await page.locator('.plugin-dialog-close').click();
+  await dialog.locator('.plugin-dialog-close').click();
   await expect(dialog).toBeHidden();
   await expect.poll(() => page.evaluate(() => location.hash)).toBe('');
 });
@@ -115,6 +115,27 @@ test('plugin detail dialog shows health/config and refresh-now works in demo mod
   await expect(refreshBtn).toBeVisible();
   await refreshBtn.click();
   await expect(refreshBtn).toHaveText(/refreshed|refreshing/i);
+
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('demo mode reports a healthy /api/health and no health badge (FEAT-12)', async ({ page, request }) => {
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+
+  const res = await request.get('/api/health');
+  expect(res.ok()).toBeTruthy();
+  const health = await res.json();
+  expect(health.status).toBe('ok');
+  expect(health.degraded).toBe(false);
+
+  await page.goto('/');
+  await expect(page.locator('#health-badge')).toBeHidden();
 
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);

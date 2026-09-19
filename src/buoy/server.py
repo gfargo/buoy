@@ -49,6 +49,7 @@ class BuoyAppState:
     alert_engine: AlertEngine | None = None
     image_update_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     static_health: dict[str, dict[str, Any]] = field(default_factory=dict)
+    capabilities: dict[str, Any] = field(default_factory=dict)
     background_tasks: list[asyncio.Task[None]] = field(default_factory=list)
 
 
@@ -65,14 +66,37 @@ def _is_tailscale(request: Request, config: BuoyConfig) -> bool:
     return bool(tailnet_domain) and (host == tailnet_domain or host.endswith(f".{tailnet_domain}"))
 
 
+def _is_degraded(subsystems: dict[str, Any], plugins: dict[str, Any]) -> bool:
+    subsystem_down = any(entry.get("status") == "unavailable" for entry in subsystems.values())
+    plugin_down = bool(plugins.get("error")) or bool(plugins.get("not_loaded"))
+    return subsystem_down or plugin_down
+
+
 async def api_health(request: Request) -> JSONResponse:
-    """Health check endpoint."""
+    """Health check endpoint.
+
+    Kept liveness/readiness-safe: ``status`` stays ``"ok"`` and the response
+    stays 200 whenever this process is alive, even when every subsystem below
+    is unavailable — k8s liveness/readiness probes and the CI smoke test key
+    off ``status``, not ``degraded``. Subsystem/plugin data is served from a
+    cached snapshot refreshed by a background loop (``_capability_loop``),
+    never probed inline, so this handler stays O(1) for a 10s-interval probe.
+    """
     state: BuoyAppState = request.app.state.buoy
+    plugins = (
+        state.plugin_manager.health_summary()
+        if state.plugin_manager
+        else {"total": 0, "ok": 0, "error": 0, "disabled": 0, "not_loaded": 0, "entries": []}
+    )
+    subsystems = state.capabilities
     return JSONResponse(
         {
             "status": "ok",
             "hostname": state.config.node.name,
             "version": VERSION,
+            "degraded": _is_degraded(subsystems, plugins),
+            "subsystems": subsystems,
+            "plugins": plugins,
         }
     )
 
@@ -755,6 +779,42 @@ async def _health_check_loop(state: BuoyAppState, checker: Any):
             logger.warning("static health check failed", exc_info=True)
 
 
+# Not a RefreshConfig field — this loop feeds a diagnostic snapshot, not a
+# user-visible refresh cadence, so it doesn't need to be operator-tunable.
+CAPABILITY_REFRESH_INTERVAL = 600
+
+
+async def _capability_loop(state: BuoyAppState):
+    """Periodically probe docker/nsenter/smartctl/proc/sys availability.
+
+    Runs on its own long interval (unlike the 5s stats loop) since these
+    probes shell out and rarely change. Never runs inline in api_health —
+    see that handler's docstring for why.
+    """
+    from buoy import capabilities
+
+    try:
+        state.capabilities = await capabilities.probe(
+            state.config,
+            docker_collector=state.collectors.get("docker"),
+            disk_collector=state.collectors.get("disk"),
+            gpu_collector=state.collectors.get("gpu"),
+        )
+    except Exception:
+        logger.warning("capability probe failed", exc_info=True)
+    while True:
+        await asyncio.sleep(CAPABILITY_REFRESH_INTERVAL)
+        try:
+            state.capabilities = await capabilities.probe(
+                state.config,
+                docker_collector=state.collectors.get("docker"),
+                disk_collector=state.collectors.get("disk"),
+                gpu_collector=state.collectors.get("gpu"),
+            )
+        except Exception:
+            logger.warning("capability probe failed", exc_info=True)
+
+
 # ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 
@@ -790,6 +850,10 @@ async def on_startup(state: BuoyAppState):
             from buoy.collectors.gpu import GpuCollector
 
             state.collectors["gpu"] = GpuCollector(state.config)
+
+    # Start capability probing loop — needs collectors constructed above so
+    # it can query docker/disk/gpu availability.
+    state.background_tasks.append(asyncio.create_task(_capability_loop(state)))
 
     # Initialize metric history store (if enabled)
     if state.config.features.history:
@@ -890,6 +954,7 @@ async def on_shutdown(state: BuoyAppState):
         state.ws_clients.clear()
         state.image_update_cache.clear()
         state.static_health.clear()
+        state.capabilities.clear()
         state.background_tasks.clear()
 
 
