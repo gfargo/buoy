@@ -46,6 +46,7 @@ DEMO_PLUGIN_IDS = (
     "jellyfin",
     "proxmox",
     "dns_filter",
+    "arr_stack",
 )
 
 

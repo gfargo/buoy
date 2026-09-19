@@ -8,7 +8,7 @@ import { initGauges, updateGauges } from './gauges.js';
 import { initDetail } from './detail.js';
 import { refreshServices } from './services.js';
 import { refreshFleet } from './fleet.js';
-import { refreshPlugins } from './plugins.js';
+import { refreshPlugins, initPluginDetail, openPluginDetailFromHash } from './plugins.js';
 import { connectWebSocket, isWebSocketOpen } from './ws.js';
 import { apiUrl, staticUrl } from './paths.js';
 
@@ -113,6 +113,7 @@ function showShortcutHelp() {
 function initKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (document.querySelector('dialog[open]')) return;
     switch (e.key) {
       case 'r': refreshStats(); break;
       case 't': {
@@ -295,12 +296,14 @@ async function init() {
   // Initialize modules
   initGauges();
   initDetail();
+  initPluginDetail();
 
   // Initial data fetch
   await refreshStats();
   await refreshServices(config);
   await refreshFleet(config);
   await refreshPlugins();
+  openPluginDetailFromHash();
   await fetchDeployInfo();
 
   // Refresh loops

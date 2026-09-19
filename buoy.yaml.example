@@ -184,6 +184,7 @@ alerts:
 #   BUOY_PLUGIN_GITHUB_TOKEN         → plugins.builtin.github.token
 #   BUOY_PLUGIN_TRIGGER_DEV_API_KEY  → plugins.builtin.trigger_dev.api_key
 #   BUOY_PLUGIN_PROXMOX_TOKEN_SECRET → plugins.builtin.proxmox.token_secret
+#   BUOY_PLUGIN_GRAFANA_ALERTS_TOKEN → plugins.builtin.grafana_alerts.token
 # The same convention applies to drop-in plugins under plugins.user.<id> (see below).
 # Env present always wins over the YAML value.
 #
@@ -252,6 +253,22 @@ plugins:
       enabled: false
       url: ""                # e.g., http://localhost:8096
       api_key: ""            # Jellyfin API key (Dashboard → API Keys)
+
+    # *arr stack — queue depth, wanted/missing, and health warnings.
+    # Configure only the services you run; each needs Settings → General → API Key.
+    arr_stack:
+      enabled: false
+      sonarr_url: ""           # e.g., http://localhost:8989
+      sonarr_api_key: ""       # Or BUOY_PLUGIN_ARR_STACK_SONARR_API_KEY
+      radarr_url: ""           # e.g., http://localhost:7878
+      radarr_api_key: ""
+      prowlarr_url: ""         # e.g., http://localhost:9696
+      prowlarr_api_key: ""
+      bazarr_url: ""           # e.g., http://localhost:6767
+      bazarr_api_key: ""
+      queue_warn_threshold: 20     # queued items before status → warn
+      missing_warn_threshold: 50   # wanted/missing items before status → warn
+      verify_ssl: true             # set false for self-signed certs (insecure)
 
     # Home Assistant entity/automation counts, unavailable entities, updates
     home_assistant:
@@ -335,6 +352,19 @@ plugins:
       #     url: http://sabnzbd:8080
       #     api_key_env: SAB_API_KEY
 
+    # Grafana / Alertmanager firing alerts by severity
+    # type: alertmanager → {url}/api/v2/alerts
+    # type: grafana      → {url}/api/alertmanager/grafana/api/v2/alerts (needs token)
+    grafana_alerts:
+      enabled: false
+      type: alertmanager     # alertmanager | grafana
+      url: ""                # e.g. http://alertmanager:9093 or https://grafana.example.com
+      token: ""              # Grafana service-account token (or BUOY_PLUGIN_GRAFANA_ALERTS_TOKEN)
+      username: ""           # optional HTTP basic auth
+      password: ""
+      include_silenced: false
+      verify_ssl: true
+
     # Trigger.dev task run status (recent runs, 24h failures, queue depth)
     trigger_dev:
       enabled: false
@@ -369,6 +399,8 @@ plugins:
     # Requires privileged + pid: host deployment (see README) for host cron log access
     cron_health:
       enabled: false
+      max_entries: 20          # max journald entries to fetch (also caps the detail view)
+      backup_log_path: ""      # host-absolute path to tail into the detail view's "Backup log"; "" = off
 
     # Priority-error journal entries (reads host journald via nsenter)
     # Requires privileged + pid: host deployment (see README)
