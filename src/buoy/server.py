@@ -414,6 +414,19 @@ async def api_plugin_js(request: Request) -> Response:
     return Response(combined, media_type="application/javascript")
 
 
+async def api_plugin_detail(request: Request) -> JSONResponse:
+    state: BuoyAppState = request.app.state.buoy
+    """Single plugin payload plus detail_panel and manifest (read-only, unauthenticated)."""
+    if not state.plugin_manager:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    plugin_id = request.path_params["id"]
+    payload = state.plugin_manager.get_plugin_or_stub_payload(plugin_id, detail=True)
+    if payload is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(payload)
+
+
 def _prometheus_enabled(config: BuoyConfig) -> bool:
     """Return True only when the prometheus_exporter builtin plugin is enabled.
 
@@ -992,6 +1005,10 @@ def create_app(config: BuoyConfig) -> Starlette:
         Route("/api/fleet/{peer}/latency-history", api_fleet_latency_history),
         Route("/api/plugins", api_plugins),
         Route("/api/plugins/js", api_plugin_js),
+        # Must come after /api/plugins/js — Starlette matches routes in list
+        # order, and {id} would otherwise swallow /js. A plugin whose id is
+        # literally "js" is unreachable via this route; an acceptable trade.
+        Route("/api/plugins/{id}", api_plugin_detail),
         Route("/api/history/{metric}", api_history),
         Route("/api/container/{name}/history", api_container_history),
         Route("/api/container/{name}", api_container_detail),

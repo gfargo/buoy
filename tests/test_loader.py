@@ -1067,6 +1067,203 @@ class TestPluginCollection:
 
 
 # =============================================================================
+# get_plugin_payload / detail view
+# =============================================================================
+
+
+class TestPluginDetailPayload:
+    """Test get_plugin_payload(detail=...) and the not-loaded stub."""
+
+    def test_non_detail_has_no_detail_panel_or_manifest(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok", summary="Fake data")}
+
+        payload = mgr.get_plugin_payload("fake")
+
+        assert "detail_panel" not in payload
+        assert "manifest" not in payload
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_entries_have_no_detail_panel(self):
+        """Guards the 'keep the 60s poll small' requirement across the whole list."""
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin(), "another": AnotherFakePlugin()}
+        mgr._latest_data = {
+            "fake": PanelData(status="ok", summary="Fake data"),
+            "another": PanelData(status="warn", summary="Warning"),
+        }
+
+        result = await mgr.collect_all_now()
+
+        for entry in result.values():
+            assert "detail_panel" not in entry
+            assert "manifest" not in entry
+
+    def test_detail_defaults_to_render_output(self):
+        class RenderOnlyPlugin(Plugin):
+            manifest = PluginManifest(id="render_only", name="Render Only")
+
+            def render(self, data):
+                return [{"type": "text", "value": data.summary}]
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"render_only": RenderOnlyPlugin()}
+        mgr._latest_data = {"render_only": PanelData(summary="hi")}
+
+        payload = mgr.get_plugin_payload("render_only", detail=True)
+
+        assert payload["detail_panel"] == payload["panel"]
+
+    def test_detail_uses_render_detail_override(self):
+        class OverridingPlugin(Plugin):
+            manifest = PluginManifest(id="overriding", name="Overriding")
+
+            def render(self, data):
+                return [{"type": "text", "value": "capped"}]
+
+            def render_detail(self, data):
+                return [{"type": "text", "value": "full"}]
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"overriding": OverridingPlugin()}
+        mgr._latest_data = {"overriding": PanelData()}
+
+        payload = mgr.get_plugin_payload("overriding", detail=True)
+
+        assert payload["panel"] == [{"type": "text", "value": "capped"}]
+        assert payload["detail_panel"] == [{"type": "text", "value": "full"}]
+
+    def test_render_detail_error_falls_back_to_panel_and_logs(self, caplog):
+        class BrokenDetailPlugin(Plugin):
+            manifest = PluginManifest(id="broken_detail", name="Broken Detail")
+
+            def render(self, data):
+                return [{"type": "text", "value": "capped"}]
+
+            def render_detail(self, data):
+                raise RuntimeError("boom")
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"broken_detail": BrokenDetailPlugin()}
+        mgr._latest_data = {"broken_detail": PanelData()}
+
+        with caplog.at_level(logging.WARNING, logger="buoy.plugins"):
+            payload = mgr.get_plugin_payload("broken_detail", detail=True)
+
+        assert payload["detail_panel"] == payload["panel"]
+        assert any("broken_detail" in r.message for r in caplog.records)
+
+    def test_render_and_render_detail_both_raising_stay_none(self):
+        class DoubleBrokenPlugin(Plugin):
+            manifest = PluginManifest(id="double_broken", name="Double Broken")
+
+            def render(self, data):
+                raise RuntimeError("render boom")
+
+            def render_detail(self, data):
+                raise RuntimeError("detail boom")
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"double_broken": DoubleBrokenPlugin()}
+        mgr._latest_data = {"double_broken": PanelData()}
+
+        payload = mgr.get_plugin_payload("double_broken", detail=True)
+
+        assert payload["panel"] is None
+        assert payload["detail_panel"] is None
+
+    def test_unknown_id_returns_none(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        assert mgr.get_plugin_payload("nope") is None
+        assert mgr.get_plugin_payload("nope", detail=True) is None
+
+    def test_pending_plugin_in_detail_mode_does_not_crash(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        # No entry in _latest_data — first collect() hasn't completed yet.
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["status"] == "pending"
+        assert payload["detail_panel"] is None
+
+    def test_manifest_reflects_effective_refresh_interval_and_source(self):
+        config = _make_config(
+            builtin={"fake": PluginEntry(enabled=True, refresh_interval=90)},
+        )
+        config.refresh = RefreshConfig(plugins_interval=10)
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._plugin_sources = {"fake": "builtin"}
+        mgr._latest_data = {"fake": PanelData(status="ok")}
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["manifest"]["source"] == "builtin"
+        assert payload["manifest"]["effective_refresh_interval"] == 90
+        assert payload["manifest"]["refresh_interval"] == FakePlugin.manifest.refresh_interval
+
+    def test_manifest_floor_from_global_refresh_interval(self):
+        config = _make_config(builtin={"fake": PluginEntry(enabled=True)})
+        config.refresh = RefreshConfig(plugins_interval=300)
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}  # manifest.refresh_interval = 60
+        mgr._plugin_sources = {"fake": "builtin"}
+        mgr._latest_data = {"fake": PanelData(status="ok")}
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["manifest"]["effective_refresh_interval"] == 300
+
+    def test_manifest_source_none_when_unrecorded(self):
+        """A plugin injected directly (bypassing registration) has no known source."""
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok")}
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["manifest"]["source"] is None
+
+    def test_not_loaded_stub_detail_has_none_panel_and_manifest(self):
+        config = _make_config(builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+
+        payload = mgr.get_plugin_or_stub_payload("broken", detail=True)
+
+        assert payload["loaded"] is False
+        assert payload["detail_panel"] is None
+        assert payload["manifest"] is None
+
+    def test_get_plugin_or_stub_payload_unknown_id_returns_none(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        assert mgr.get_plugin_or_stub_payload("nope", detail=True) is None
+
+    def test_get_plugin_or_stub_payload_prefers_loaded_plugin(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok", summary="Fake data")}
+
+        payload = mgr.get_plugin_or_stub_payload("fake", detail=True)
+
+        assert payload["loaded"] is True
+
+
+# =============================================================================
 # Frontend JS
 # =============================================================================
 

@@ -63,6 +63,41 @@ class TestPluginProtocol:
         plugin = Plugin()
         assert plugin.frontend_js() is None
 
+    def test_render_detail_returns_none_by_default(self):
+        """Base Plugin.render() is None, so the default render_detail() is too."""
+        plugin = Plugin()
+        assert plugin.render_detail(PanelData()) is None
+
+    def test_render_detail_defaults_to_render(self):
+        """A plugin overriding only render() gets that output from render_detail()."""
+
+        class RenderOnlyPlugin(Plugin):
+            manifest = PluginManifest(id="render_only", name="Render Only")
+
+            def render(self, data):
+                return [{"type": "text", "value": data.summary}]
+
+        plugin = RenderOnlyPlugin()
+        data = PanelData(summary="hello")
+        assert plugin.render_detail(data) == plugin.render(data)
+
+    def test_render_detail_override_is_independent_of_render(self):
+        """A plugin overriding render_detail() can return something different from render()."""
+
+        class OverridingPlugin(Plugin):
+            manifest = PluginManifest(id="overriding", name="Overriding")
+
+            def render(self, data):
+                return [{"type": "text", "value": "card"}]
+
+            def render_detail(self, data):
+                return [{"type": "text", "value": "full detail"}]
+
+        plugin = OverridingPlugin()
+        data = PanelData()
+        assert plugin.render(data) == [{"type": "text", "value": "card"}]
+        assert plugin.render_detail(data) == [{"type": "text", "value": "full detail"}]
+
     @pytest.mark.asyncio
     async def test_setup_teardown_are_noops(self):
         plugin = Plugin()

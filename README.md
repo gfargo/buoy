@@ -267,6 +267,21 @@ class WeatherPlugin(Plugin):
         return [panel.keyvalue([("Temp", "72°F"), ("Condition", "Sunny")])]
 ```
 
+The dashboard's detail view (`GET /api/plugins/{id}`) calls `render_detail()` instead, which
+defaults to `render()`. Override it when the card's `render()` truncates a list (e.g.
+`entries[:10]`, `truncate=True`) and the detail view should show the full thing — same spec, same
+escaping, just more of it:
+
+```python
+class NotificationsPlugin(Plugin):
+    ...
+    def render(self, data: PanelData) -> list[dict] | None:
+        return [panel.list_(data.detail["entries"][:10], truncate=True)]
+
+    def render_detail(self, data: PanelData) -> list[dict] | None:
+        return [panel.list_(data.detail["entries"], truncate=False)]
+```
+
 **Distributable plugins** can also be shipped as a pip-installable package. Register your `Plugin`
 subclass (or a module containing one) under the `buoy.plugins` entry-point group:
 

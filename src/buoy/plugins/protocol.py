@@ -93,6 +93,19 @@ class Plugin:
         """
         return None
 
+    def render_detail(self, data: PanelData) -> list[dict[str, Any]] | None:
+        """Panel spec for the expanded detail view. Defaults to render().
+
+        Same spec, same renderer (``static/js/panel.js``), same escaping as
+        ``render()`` — override this only when the detail view should show
+        more than the card. ``render()`` keeps its card caps (e.g.
+        ``entries[:10]``, ``truncate=True``); ``render_detail()`` is where
+        the full list goes. Because this is served on an unauthenticated,
+        read-only endpoint at the same trust level as ``render()``, it must
+        not surface anything ``render()`` wouldn't.
+        """
+        return self.render(data)
+
     def frontend_js(self) -> str | None:
         """Deprecated escape hatch: return JS that renders this plugin's panel.
 
