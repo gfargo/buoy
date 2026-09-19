@@ -661,12 +661,23 @@ class DownloadClientsPlugin(Plugin):
 
         disk_rows = [r for r in rows if r.get("free_bytes") is not None]
         if disk_rows:
+            disk_warn_gb = float(self.config.get("disk_warn_gb", 50))
+            disk_critical_gb = float(self.config.get("disk_critical_gb", 10))
+
+            def _disk_status(free_bytes: int) -> str | None:
+                free_gb = free_bytes / (1024**3)
+                if free_gb <= disk_critical_gb:
+                    return "error"
+                if free_gb <= disk_warn_gb:
+                    return "warn"
+                return None
+
             blocks.append(
                 panel.badges(
                     [
                         panel.badge(
                             f"{r['name']}: {_fmt_bytes(r['free_bytes'])} free",
-                            status=r["status"] if r["status"] in ("warn", "error") else None,
+                            status=_disk_status(r["free_bytes"]),
                         )
                         for r in disk_rows
                     ]

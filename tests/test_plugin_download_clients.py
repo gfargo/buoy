@@ -682,3 +682,31 @@ class TestRenderAndDemo:
         plugin = DownloadClientsPlugin()
         blocks = plugin.render(PanelData(status="disabled", summary="", detail={}))
         assert blocks == [{"type": "text", "value": "No downloads", "status": "dim"}]
+
+    def test_disk_badge_status_derived_from_free_bytes_not_paused_status(self):
+        """Paused-but-plenty-of-space client must not render an amber disk badge."""
+        plugin = DownloadClientsPlugin()
+        # SABnzbd sets row status="warn" when paused, regardless of disk space.
+        # With 200 GB free (above the 50 GB warn threshold) the badge must be None.
+        row = {
+            "name": "sab",
+            "type": "sabnzbd",
+            "status": "warn",  # paused — unrelated to disk
+            "error": "",
+            "active": 0,
+            "queued": 3,
+            "dl_bytes_s": 0,
+            "ul_bytes_s": 0,
+            "ratio": None,
+            "free_bytes": 200 * 1024**3,  # 200 GB — plenty
+            "items": [],
+        }
+        data = plugin._make_panel([row])
+        blocks = plugin.render(data)
+
+        disk_badges = next(b for b in blocks if b["type"] == "badges")
+        sab_badge = disk_badges["items"][0]
+        assert sab_badge["status"] is None, (
+            "disk badge should have no status when free space is above warn threshold, "
+            "even if the client row is paused (warn)"
+        )
