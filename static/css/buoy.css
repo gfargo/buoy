@@ -344,7 +344,8 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; background: 
 
 /* ── Plugin detail dialog ────────────────────────────── */
 
-.plugin-dialog { display: flex; flex-direction: column; width: min(94vw, 880px); margin: auto; padding: 0; color: var(--text); background: var(--surface); border: 1px solid var(--cyan-dim); border-radius: 8px; max-height: 86vh; overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,0.55); }
+.plugin-dialog { flex-direction: column; width: min(94vw, 880px); margin: auto; padding: 0; color: var(--text); background: var(--surface); border: 1px solid var(--cyan-dim); border-radius: 8px; max-height: 86vh; overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,0.55); }
+.plugin-dialog[open] { display: flex; }
 .plugin-dialog::backdrop { background: rgba(0,0,0,0.72); backdrop-filter: blur(2px); }
 .plugin-dialog-head { flex: none; position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 1.25rem; }
 .plugin-dialog-icon { font-size: 1rem; }
