@@ -9,6 +9,7 @@ import { initDetail } from './detail.js';
 import { refreshServices } from './services.js';
 import { refreshFleet } from './fleet.js';
 import { refreshPlugins, initPluginDetail, openPluginDetailFromHash } from './plugins.js';
+import { refreshHealth, initHealthDetail } from './health.js';
 import { connectWebSocket, isWebSocketOpen } from './ws.js';
 import { apiUrl, staticUrl } from './paths.js';
 
@@ -298,8 +299,12 @@ async function init() {
   initGauges();
   initDetail();
   initPluginDetail();
+  initHealthDetail();
 
-  // Initial data fetch
+  // Initial data fetch. Health is fetched before services so a Docker-socket
+  // outage is already known when services.js decides what to say about an
+  // empty local-services panel.
+  await refreshHealth();
   await refreshStats();
   await refreshServices(config);
   await refreshFleet(config);
@@ -316,6 +321,7 @@ async function init() {
   setInterval(() => refreshServices(config), config.refresh.services_interval * 1000);
   setInterval(() => refreshFleet(config), config.refresh.fleet_interval * 1000);
   setInterval(refreshPlugins, (config.refresh.plugins_interval || 60) * 1000);
+  setInterval(refreshHealth, config.refresh.services_interval * 1000);
 
   // WebSocket (optional, for real-time push)
   if (config.features.websocket) {

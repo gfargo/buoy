@@ -114,6 +114,13 @@ class TestDemoDockerCollector:
         )
 
     @pytest.mark.asyncio
+    async def test_is_available_always_true(self):
+        config = _make_config()
+        coll = DemoDockerCollector(config)
+        assert await coll.is_available() is True
+        assert await coll.is_available(force=True) is True
+
+    @pytest.mark.asyncio
     async def test_get_logs(self):
         config = _make_config()
         coll = DemoDockerCollector(config)
@@ -460,6 +467,22 @@ class TestDockerIsAvailable:
         assert first is True
         assert second is True
         coll._run.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_force_resets_the_cache_and_reprobes(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        coll = DockerCollector(_make_config())
+        coll._run = AsyncMock(side_effect=[(1, "", "docker not found"), (0, "abc123", "")])
+
+        first = await coll.is_available()
+        second = await coll.is_available(force=True)
+
+        assert first is False
+        assert second is True
+        assert coll._run.await_count == 2
 
 
 class TestDockerFetchContainers:
