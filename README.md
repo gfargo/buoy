@@ -214,7 +214,7 @@ Buoy ships with built-in plugins (disabled by default):
 | UptimeKuma | `uptime_kuma` | Service health badges | `url` |
 | Loki | `loki` | Recent error log entries | `url` |
 | Plane | `plane` | Sprint/cycle progress | `api_key`, `url` |
-| Prometheus | `prometheus_exporter` | `/metrics` endpoint | (none) |
+| Prometheus | `prometheus_exporter` | `/metrics` endpoint — see [Grafana dashboard + rules](docs/grafana/README.md) | (none) |
 | SnapRAID | `snapraid` | Parity sync age & disk health | `status_file` |
 | Jellyfin | `jellyfin` | Active streams, libraries, transcoding | `url`, `api_key` |
 | *arr Stack | `arr_stack` | Queue depth, wanted/missing, indexer & system health | at least one `<service>_url` + `<service>_api_key` |
@@ -352,6 +352,7 @@ ruff check src/ tests/
 - [Kubernetes](docs/deployment/kubernetes.md) — plain manifests and a Helm chart
 - [Ansible](docs/deployment/ansible.md) — automated native install
 - [Privilege / Metrics Matrix](docs/deployment/privilege-matrix.md) — what each privilege level gains or costs
+- [Grafana Dashboard + Rules](docs/grafana/README.md) — dashboard JSON and Prometheus recording/alert rules for the exporter
 - [Changelog](CHANGELOG.md) — release history
 - [Contributing](CONTRIBUTING.md) — dev setup, PR process
 
