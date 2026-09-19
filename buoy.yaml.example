@@ -125,6 +125,7 @@ services:
   #     icon: "\U0001F3AC"    # 🎬
   #     desc: "Media Server"
   #     port: 8096
+  #     group: media          # overrides the discovered compose-project group
 
   # Non-Docker services and bookmarks (NAS, router, printer, VM, bare-metal
   # app, or just a link) — always shown, not affected by `hidden`/`overrides`.
@@ -136,10 +137,38 @@ services:
   #     desc: "Synology DS920+"
   #     url: https://nas.example.ts.net
   #     health_check: true          # poll `url`; or set an explicit full URL instead
+  #     group: storage               # groups it alongside a "storage" stack
   #   - name: Router
   #     icon: "\U0001F4E1"   # 📡
   #     url: https://192.168.1.1
   #     verify_ssl: false           # self-signed appliance cert
+
+  # Group "This Node" cards into stacks by a container label — defaults to
+  # the label Docker Compose sets on every container it manages. Set to a
+  # custom label, or "" to disable label-based grouping.
+  group_label: com.docker.compose.project
+
+  # Order named groups; unlisted groups sort alphabetically after these,
+  # and ungrouped entries always sort last.
+  group_order: []
+  # Example:
+  # group_order:
+  #   - media
+  #   - monitoring
+
+  # Order entries within their group; unlisted entries keep discovery order.
+  order: []
+  # Example:
+  # order:
+  #   - grafana
+  #   - prometheus
+
+  # Lift entries into a leading "Pinned" group, in this order. Keys match
+  # the same way `hidden`/`overrides` do.
+  pinned: []
+  # Example:
+  # pinned:
+  #   - grafana
 
 # ── Theme ──────────────────────────────────────────────────
 theme:

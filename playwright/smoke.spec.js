@@ -21,6 +21,30 @@ test('dashboard loads with no console/page errors and renders gauges', async ({ 
   expect(consoleErrors).toEqual([]);
 });
 
+test('demo mode groups local services into Compose-project stacks (FEAT-11)', async ({ page }) => {
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+
+  await page.goto('/');
+
+  const groupLabels = page.locator('#services-local .svc-group-label');
+  await expect(groupLabels.first()).toBeVisible();
+  const labelTexts = await groupLabels.allTextContents();
+  expect(labelTexts.length).toBeGreaterThan(0);
+  // The demo data includes ungrouped containers alongside named stacks; that
+  // run must not render a blank header (FEAT-11 regression).
+  for (const text of labelTexts) {
+    expect(text.trim()).not.toEqual('');
+  }
+
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
 test('demo mode stubs plugins instead of erroring (BUG-40)', async ({ page, request }) => {
   const res = await request.get('/api/plugins');
   expect(res.ok()).toBeTruthy();
