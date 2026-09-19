@@ -10,7 +10,7 @@ import { refreshServices } from './services.js';
 import { refreshFleet } from './fleet.js';
 import { refreshPlugins } from './plugins.js';
 import { connectWebSocket, isWebSocketOpen } from './ws.js';
-import { apiUrl, staticUrl } from './paths.js';
+import { apiUrl, staticUrl, rootUrl, basePath } from './paths.js';
 
 let config = null;
 
@@ -34,9 +34,37 @@ async function refreshStats() {
   try {
     const r = await fetch(apiUrl('stats'));
     if (!r.ok) return;
+    setOfflineBanner(r.headers.has('X-Buoy-Cached-At'));
     const data = await r.json();
     updateGauges(data);
   } catch (e) { console.error('[buoy] stats error:', e); }
+}
+
+function _ensureOfflineBannerEl() {
+  let el = document.getElementById('offline-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'offline-banner';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.textContent = 'Offline — showing last known values';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function setOfflineBanner(offline) {
+  _ensureOfflineBannerEl().classList.toggle('visible', offline);
+}
+
+function initServiceWorker(cfg) {
+  if (cfg.features.pwa === false || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker
+    .register(rootUrl('sw.js'), { scope: `${basePath()}/` })
+    .catch(() => { /* non-secure origin, browser policy, etc. — fail silent */ });
+
+  window.addEventListener('offline', () => setOfflineBanner(true));
+  window.addEventListener('online', () => setOfflineBanner(false));
 }
 
 async function fetchDeployInfo() {
@@ -251,6 +279,7 @@ function applyCustomTheme(custom) {
 async function init() {
   config = await fetchConfig();
   initAuth(config.auth);
+  initServiceWorker(config);
 
   // Apply theme: resolve preset via persisted choice / config / OS preference,
   // then swap the stylesheet if it differs from the default terminal.css that

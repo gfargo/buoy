@@ -105,6 +105,7 @@ class FeaturesConfig:
     night_mode: str = "auto"  # auto | always | never
     keyboard_shortcuts: bool = True
     image_updates: bool = False  # Docker image update checker (off by default)
+    pwa: bool = True  # Installable PWA (manifest + offline service worker)
 
 
 @dataclass
@@ -216,6 +217,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_WEBSOCKET": ("features", "websocket"),
         "BUOY_FEATURES_HISTORY": ("features", "history"),
         "BUOY_FEATURES_IMAGE_UPDATES": ("features", "image_updates"),
+        "BUOY_FEATURES_PWA": ("features", "pwa"),
         "BUOY_REFRESH_STATS_INTERVAL": ("refresh", "stats_interval"),
         "BUOY_REFRESH_SERVICES_INTERVAL": ("refresh", "services_interval"),
         "BUOY_REFRESH_FLEET_INTERVAL": ("refresh", "fleet_interval"),
@@ -248,7 +250,15 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             # above) falls back to the YAML/default. There's no sensible int for "",
             # so we surface the same ConfigError as any other unparsable value.
             raw[section][key] = _coerce_int(value, env_key)
-        elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates", "verify_ssl"):
+        elif key in (
+            "enabled",
+            "websocket",
+            "history",
+            "demo_mode",
+            "image_updates",
+            "verify_ssl",
+            "pwa",
+        ):
             raw[section][key] = value.lower() in ("true", "1", "yes")
         elif key == "allowed_origins":
             raw[section][key] = [origin.strip() for origin in value.split(",") if origin.strip()]
@@ -388,6 +398,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         night_mode=features_raw.get("night_mode", "auto"),
         keyboard_shortcuts=bool(features_raw.get("keyboard_shortcuts", True)),
         image_updates=bool(features_raw.get("image_updates", False)),
+        pwa=bool(features_raw.get("pwa", True)),
     )
 
     refresh = RefreshConfig(

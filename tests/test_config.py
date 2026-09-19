@@ -38,6 +38,7 @@ class TestConfigDefaults:
         assert config.features.demo_mode is False
         assert config.features.night_mode == "auto"
         assert config.features.image_updates is False
+        assert config.features.pwa is True
 
     def test_default_refresh(self):
         config = _build_config({})
@@ -246,6 +247,12 @@ class TestEnvOverrides:
         raw = {}
         result = _apply_env_overrides(raw)
         assert result["refresh"]["image_updates_interval"] == 3600
+
+    def test_pwa_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_FEATURES_PWA", "false")
+        raw = {}
+        result = _apply_env_overrides(raw)
+        assert result["features"]["pwa"] is False
 
     def test_allowed_origins_env_comma_split(self, monkeypatch):
         monkeypatch.setenv(

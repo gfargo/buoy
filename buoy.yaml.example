@@ -154,6 +154,7 @@ features:
   night_mode: auto           # auto (10pm-6am) | always | never
   keyboard_shortcuts: true   # 1-4 for gauges, Escape to close
   image_updates: false       # Docker image update checker (badges on container cards)
+  pwa: true                  # Installable PWA + offline service worker (needs HTTPS or localhost)
 
 # ── Refresh Intervals (seconds) ───────────────────────────
 refresh:
