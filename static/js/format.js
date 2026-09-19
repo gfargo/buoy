@@ -28,10 +28,40 @@ export function formatUptime(h, m) {
  *   formatRate(2048)       -> { value: '2.0', unit: 'KB/s' }
  *   formatRate(5242880)    -> { value: '5.0', unit: 'MB/s' }
  */
+const RATE_UNITS = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+
+function rateUnitIndex(v) {
+  if (v < 1024) return 0;
+  if (v < 1024 ** 2) return 1;
+  if (v < 1024 ** 3) return 2;
+  return 3;
+}
+
 export function formatRate(bytesPerSec) {
   const v = Math.max(0, bytesPerSec || 0);
-  if (v < 1024) return { value: v.toFixed(0), unit: 'B/s' };
-  if (v < 1024 ** 2) return { value: (v / 1024).toFixed(1), unit: 'KB/s' };
-  if (v < 1024 ** 3) return { value: (v / 1024 ** 2).toFixed(1), unit: 'MB/s' };
-  return { value: (v / 1024 ** 3).toFixed(1), unit: 'GB/s' };
+  const i = rateUnitIndex(v);
+  const scaled = v / 1024 ** i;
+  return { value: scaled.toFixed(i === 0 ? 0 : 1), unit: RATE_UNITS[i] };
+}
+
+/**
+ * Format a pair of rx/tx throughput values against a single shared unit —
+ * the unit the larger of the two would use on its own — so a gauge showing
+ * both never has to display two different units side by side (ambiguous
+ * about which value they belong to, and prone to overflowing the gauge's
+ * value column).
+ *
+ * Example: formatRatePair(2048, 5242880) -> { rxValue: '0.0', txValue: '5.0', unit: 'MB/s' }
+ */
+export function formatRatePair(rxBytesPerSec, txBytesPerSec) {
+  const rx = Math.max(0, rxBytesPerSec || 0);
+  const tx = Math.max(0, txBytesPerSec || 0);
+  const i = rateUnitIndex(Math.max(rx, tx));
+  const divisor = 1024 ** i;
+  const decimals = i === 0 ? 0 : 1;
+  return {
+    rxValue: (rx / divisor).toFixed(decimals),
+    txValue: (tx / divisor).toFixed(decimals),
+    unit: RATE_UNITS[i],
+  };
 }

@@ -144,6 +144,8 @@ header .uptime span { color: var(--green); }
 .gauge.no-detail { cursor: default; }
 .gauge.no-detail:hover { transform: none; }
 .gauge.no-detail .expand-hint { display: none; }
+/* Rx/tx pair is wider than a single-number gauge value; shrink to fit the column. */
+#net-gauge .value { font-size: 1.1rem; }
 
 /* Sparkline */
 .sparkline { margin-top: 0.5rem; height: 24px; }

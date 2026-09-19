@@ -3,13 +3,12 @@
  */
 
 import { escapeHtml } from './escape.js';
-import { formatUptime, formatRate } from './format.js';
+import { formatUptime, formatRatePair } from './format.js';
 
 const SPARK_MAX = 30;
 const tempHistory = [];
 const diskHistory = [];
 const netHistory = [];
-let netRollingMax = 1; // sane floor so an idle link doesn't flatline at max scale
 
 /**
  * Build the active-alerts banner HTML from /api/stats' `alerts` array
@@ -146,15 +145,17 @@ export function updateGauges(data) {
   // convention), so the gauge stays hidden instead of rendering "NaN B/s".
   if (data.net) {
     show('net-gauge');
-    const rx = formatRate(data.net.rx_bytes_per_sec);
-    const tx = formatRate(data.net.tx_bytes_per_sec);
-    setText('net', `↓ ${rx.value} ↑ ${tx.value}`);
-    setText('net-unit', rx.unit === tx.unit ? rx.unit : `${rx.unit}/${tx.unit}`);
+    const rate = formatRatePair(data.net.rx_bytes_per_sec, data.net.tx_bytes_per_sec);
+    setText('net', `↓ ${rate.rxValue} ↑ ${rate.txValue}`);
+    setText('net-unit', rate.unit);
 
     const total = (data.net.rx_bytes_per_sec || 0) + (data.net.tx_bytes_per_sec || 0);
     netHistory.push(total);
     if (netHistory.length > SPARK_MAX) netHistory.shift();
-    netRollingMax = Math.max(netRollingMax, ...netHistory);
+    // Rolling max over the visible window (not all-time) so a one-off burst
+    // doesn't permanently flatten later normal traffic; floor of 1 keeps an
+    // idle link from flatlining at max scale.
+    const netRollingMax = Math.max(1, ...netHistory);
     renderSparkline('net-sparkline', netHistory, 0, netRollingMax, 'var(--cyan)');
   }
 
