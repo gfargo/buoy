@@ -144,6 +144,8 @@ No manual version bumps or tags — just merge PRs with conventional commit mess
 - Use the GitHub issue templates
 - Include: buoy version, config (redacted), what you expected, what happened
 - For crashes: include the full traceback
+- The full set of repo labels (area, kind, and `priority: P0`-`P3`) is defined in
+  [`.github/labels.json`](.github/labels.json) and synced by `.github/workflows/labels.yml`
 
 ## License
 
