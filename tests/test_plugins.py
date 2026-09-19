@@ -63,6 +63,41 @@ class TestPluginProtocol:
         plugin = Plugin()
         assert plugin.frontend_js() is None
 
+    def test_render_detail_returns_none_by_default(self):
+        """Base Plugin.render() is None, so the default render_detail() is too."""
+        plugin = Plugin()
+        assert plugin.render_detail(PanelData()) is None
+
+    def test_render_detail_defaults_to_render(self):
+        """A plugin overriding only render() gets that output from render_detail()."""
+
+        class RenderOnlyPlugin(Plugin):
+            manifest = PluginManifest(id="render_only", name="Render Only")
+
+            def render(self, data):
+                return [{"type": "text", "value": data.summary}]
+
+        plugin = RenderOnlyPlugin()
+        data = PanelData(summary="hello")
+        assert plugin.render_detail(data) == plugin.render(data)
+
+    def test_render_detail_override_is_independent_of_render(self):
+        """A plugin overriding render_detail() can return something different from render()."""
+
+        class OverridingPlugin(Plugin):
+            manifest = PluginManifest(id="overriding", name="Overriding")
+
+            def render(self, data):
+                return [{"type": "text", "value": "card"}]
+
+            def render_detail(self, data):
+                return [{"type": "text", "value": "full detail"}]
+
+        plugin = OverridingPlugin()
+        data = PanelData()
+        assert plugin.render(data) == [{"type": "text", "value": "card"}]
+        assert plugin.render_detail(data) == [{"type": "text", "value": "full detail"}]
+
     @pytest.mark.asyncio
     async def test_setup_teardown_are_noops(self):
         plugin = Plugin()
@@ -478,6 +513,40 @@ class TestUptimeKumaPlugin:
         assert statuses["web"] == "ok"
         assert statuses["db"] == "error"
 
+    @pytest.mark.asyncio
+    async def test_render_detail_has_one_row_per_monitor_and_status_page_link(self):
+        plugin = self._make_plugin(url="http://uptime:3001")
+
+        response = json.dumps(
+            {
+                "heartbeatList": {
+                    "1": [{"status": 1, "msg": "200 - OK", "time": "2026-08-23 09:14:02"}],
+                    "2": [
+                        {"status": 0, "msg": "Connection refused", "time": "2026-08-23 09:14:05"}
+                    ],
+                }
+            }
+        ).encode()
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = lambda s: MagicMock(read=lambda: response)
+        mock_cm.__exit__ = lambda s, *a: None
+
+        with patch("urllib.request.urlopen", return_value=mock_cm):
+            result = await plugin.collect()
+
+        blocks = plugin.render_detail(result)
+        table = next(b for b in blocks if b["type"] == "table")
+        assert table["columns"] == ["Monitor", "Status", "Last heartbeat", "Message"]
+        assert len(table["rows"]) == 2
+
+        link_block = next(b for b in blocks if b["type"] == "keyvalue")
+        assert link_block["rows"][0]["href"] == "http://uptime:3001"
+
+    def test_render_detail_no_monitors_shows_text(self):
+        plugin = self._make_plugin()
+        blocks = plugin.render_detail(PanelData(status="ok", detail={"monitors": []}))
+        assert blocks == [{"type": "text", "value": "No monitors", "status": "dim"}]
+
 
 # =============================================================================
 # Plane plugin
@@ -727,6 +796,75 @@ class TestBackupStatusPlugin:
         assert result.detail["latest_file"] == "plane-2026-06-26_1400.sql.gz"
         assert result.detail["total_count"] == 2
 
+    @pytest.mark.asyncio
+    async def test_collect_caps_files_detail_at_twenty(self, tmp_path):
+        import os
+
+        for i in range(25):
+            f = tmp_path / f"plane-{i:03d}.sql.gz"
+            f.write_bytes(b"x" * 1024)
+            os.utime(f, (time.time() - i, time.time() - i))
+
+        plugin = self._make_plugin(backup_dir=str(tmp_path))
+        result = await plugin.collect()
+
+        assert result.detail["total_count"] == 25
+        assert len(result.detail["files"]) == 20
+
+    @pytest.mark.asyncio
+    async def test_render_returns_keyvalue_block(self, tmp_path):
+        backup = tmp_path / "plane-2026-06-26_1405.sql.gz"
+        backup.write_bytes(b"x" * 1024)
+
+        plugin = self._make_plugin(backup_dir=str(tmp_path))
+        result = await plugin.collect()
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "keyvalue"
+
+    @pytest.mark.asyncio
+    async def test_render_detail_adds_files_table(self, tmp_path):
+        backup = tmp_path / "plane-2026-06-26_1405.sql.gz"
+        backup.write_bytes(b"x" * 1024)
+
+        plugin = self._make_plugin(backup_dir=str(tmp_path))
+        result = await plugin.collect()
+
+        blocks = plugin.render_detail(result)
+        assert blocks[0]["type"] == "keyvalue"
+        table = next(b for b in blocks if b["type"] == "table")
+        assert table["columns"] == ["File", "Size", "Modified"]
+        assert len(table["rows"]) <= 20
+
+    @pytest.mark.asyncio
+    async def test_issues_surface_as_error_text(self, tmp_path):
+        backup = tmp_path / "plane-2026-06-26_1405.sql.gz"
+        backup.write_bytes(b"x" * 10)  # below min_size -> "too small" issue
+
+        plugin = self._make_plugin(backup_dir=str(tmp_path))
+        result = await plugin.collect()
+
+        blocks = plugin.render_detail(result)
+        error_texts = [b for b in blocks if b.get("type") == "text" and b.get("status") == "error"]
+        assert error_texts
+        assert "too small" in error_texts[0]["value"]
+
+    @pytest.mark.asyncio
+    async def test_dir_not_found_renders_non_empty(self):
+        plugin = self._make_plugin(backup_dir="/nonexistent/path")
+        result = await plugin.collect()
+
+        assert plugin.render(result)
+        assert plugin.render_detail(result)
+
+    @pytest.mark.asyncio
+    async def test_no_backups_found_renders_non_empty(self, tmp_path):
+        plugin = self._make_plugin(backup_dir=str(tmp_path))
+        result = await plugin.collect()
+
+        assert plugin.render(result)
+        assert plugin.render_detail(result)
+
 
 # =============================================================================
 # Cron Health plugin
@@ -810,6 +948,74 @@ class TestCronHealthPlugin:
         plugin = self._make_plugin()
         blocks = plugin.render(PanelData(status="ok", detail={"entries": []}))
         assert blocks == [{"type": "text", "value": "No cron activity in 24h", "status": "dim"}]
+
+    @pytest.mark.asyncio
+    async def test_long_command_not_truncated_by_read_cron_log(self):
+        plugin = self._make_plugin()
+        long_cmd = "x" * 200
+        journal_output = (f"Jun 26 14:05:01 compass CRON[1234]: (root) CMD ({long_cmd})\n").encode()
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(journal_output, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await plugin.collect()
+
+        assert result.detail["entries"][0]["cmd"] == long_cmd
+
+    def test_render_detail_returns_all_entries_while_render_caps_at_ten(self):
+        plugin = self._make_plugin()
+        entries = [
+            {"time": f"Aug 23 0{i}:00:01", "user": "root", "cmd": f"job-{i}"} for i in range(12)
+        ]
+        data = PanelData(status="ok", detail={"entries": entries})
+
+        card_blocks = plugin.render(data)
+        detail_blocks = plugin.render_detail(data)
+
+        assert len(card_blocks[0]["rows"]) == 10
+        assert len(detail_blocks[0]["rows"]) == 12
+        assert detail_blocks[0]["rows"][0][2]["wrap"] is True
+        assert card_blocks[0]["rows"][0][2]["truncate"] is True
+
+    @pytest.mark.asyncio
+    async def test_backup_log_path_unset_makes_no_subprocess_call_and_no_backup_log_block(self):
+        plugin = self._make_plugin()
+
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            mock_exec.side_effect = AssertionError("should not be called")
+            log = await plugin._read_backup_log()
+
+        assert log == []
+        mock_exec.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_backup_log_path_set_reads_via_argv_tail(self):
+        from buoy.plugins.builtin.cron_health import CronHealthPlugin
+
+        plugin = CronHealthPlugin()
+        plugin.configure({"backup_log_path": "/var/log/my-backup.log"})
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"line one\nline two\n", b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            log = await plugin._read_backup_log()
+
+        assert log == ["line one", "line two"]
+        args = mock_exec.call_args[0]
+        assert "/var/log/my-backup.log" in args
+        assert "bash" not in args and "-c" not in args
+
+    def test_render_detail_renders_backup_log_block(self):
+        plugin = self._make_plugin()
+        data = PanelData(
+            status="ok",
+            detail={"entries": [], "backup_log": ["backup ok"]},
+        )
+        blocks = plugin.render_detail(data)
+        assert {"type": "heading", "text": "Backup log"} in blocks
+        assert any(b["type"] == "log" and b["lines"] == ["backup ok"] for b in blocks)
 
 
 # =============================================================================
@@ -944,6 +1150,99 @@ class TestPrometheusExporterPlugin:
         output = PrometheusExporterPlugin.format_metrics(stats)
 
         assert "buoy_nvme" not in output
+
+    def test_format_metrics_with_gpu(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "compass",
+            "cpu": 10,
+            "mem_used": 2.0,
+            "mem_total": 8.0,
+            "temp": 39,
+            "disk_pct": 45,
+            "containers": 5,
+            "uptime_h": 10,
+            "uptime_m": 0,
+            "gpus": [
+                {
+                    "vendor": "nvidia",
+                    "index": 0,
+                    "name": 'RTX "3060"',
+                    "util_pct": 42,
+                    "mem_used_mb": 4096,
+                    "mem_total_mb": 12288,
+                    "temp": 61,
+                    "power_w": 95.5,
+                    "power_limit_w": 170,
+                }
+            ],
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert (
+            'buoy_gpu_utilization_percent{host="compass",gpu="0",name="RTX \\"3060\\""} 42'
+            in output
+        )
+        assert (
+            f'buoy_gpu_memory_used_bytes{{host="compass",gpu="0",name="RTX \\"3060\\""}} '
+            f"{4096 * 1048576}" in output
+        )
+        assert (
+            f'buoy_gpu_memory_total_bytes{{host="compass",gpu="0",name="RTX \\"3060\\""}} '
+            f"{12288 * 1048576}" in output
+        )
+        assert (
+            'buoy_gpu_temperature_celsius{host="compass",gpu="0",name="RTX \\"3060\\""} 61'
+            in output
+        )
+        assert 'buoy_gpu_power_watts{host="compass",gpu="0",name="RTX \\"3060\\""} 95.5' in output
+
+    def test_format_metrics_gpu_omits_null_fields(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "compass",
+            "disk_pct": 45,
+            "containers": 5,
+            "uptime_h": 10,
+            "uptime_m": 0,
+            "gpus": [
+                {
+                    "vendor": "intel",
+                    "index": 0,
+                    "name": "Intel GPU (card0)",
+                    "util_pct": None,
+                    "mem_used_mb": None,
+                    "mem_total_mb": None,
+                    "temp": None,
+                    "power_w": None,
+                    "power_limit_w": None,
+                }
+            ],
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert "buoy_gpu_utilization_percent{" not in output
+        assert "buoy_gpu_memory_used_bytes{" not in output
+        assert "buoy_gpu_temperature_celsius{" not in output
+        assert "buoy_gpu_power_watts{" not in output
+        assert "None" not in output
+
+    def test_format_metrics_without_gpu(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "watch",
+            "cpu": 5,
+            "disk_pct": 30,
+            "containers": 8,
+            "uptime_h": 200,
+            "uptime_m": 0,
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert "buoy_gpu" not in output
 
     def test_format_metrics_has_help_and_type(self):
         from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
@@ -1433,6 +1732,31 @@ class TestJournalErrorsPlugin:
     def test_render_no_entries_shows_text(self):
         plugin = self._make_plugin()
         blocks = plugin.render(PanelData(status="ok", detail={"entries": []}))
+        assert blocks == [{"type": "text", "value": "No journal errors in 24h", "status": "dim"}]
+
+    def test_render_detail_badge_counts_match_per_unit_tally(self):
+        plugin = self._make_plugin()
+        entries = [
+            {"time": "Jun 26 14:00:00", "unit": "docker", "message": "a"},
+            {"time": "Jun 26 14:01:00", "unit": "docker", "message": "b"},
+            {"time": "Jun 26 14:02:00", "unit": "sshd", "message": "c"},
+        ]
+        data = PanelData(status="error", detail={"entries": entries})
+
+        blocks = plugin.render_detail(data)
+
+        badges_block = next(b for b in blocks if b["type"] == "badges")
+        labels = {b["label"] for b in badges_block["items"]}
+        assert "docker (2)" in labels
+        assert "sshd (1)" in labels
+
+        table_block = next(b for b in blocks if b["type"] == "table")
+        assert table_block["rows"][0][1]["mono"] is True
+        assert table_block["rows"][0][2]["wrap"] is True
+
+    def test_render_detail_no_entries_shows_text(self):
+        plugin = self._make_plugin()
+        blocks = plugin.render_detail(PanelData(status="ok", detail={"entries": []}))
         assert blocks == [{"type": "text", "value": "No journal errors in 24h", "status": "dim"}]
 
 

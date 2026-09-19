@@ -170,6 +170,29 @@ class TestBuiltinDemoData:
         assert panel is None or isinstance(panel, list)
 
 
+# render_detail() defaults to Plugin.render() when not overridden. Two builtins
+# have no render() at all yet (render() returns None, so render_detail() does
+# too) — they're on the OSS-2717 "remaining builtins" checklist for a future PR.
+# Excluded explicitly rather than weakening the assertion to allow None/empty
+# for everyone, which would prove nothing about the plugins this issue covers.
+_NO_RENDER_YET = {"prometheus_exporter", "portainer"}
+
+
+class TestBuiltinRenderDetail:
+    @pytest.mark.parametrize(
+        "plugin_class",
+        [c for c in _ALL_BUILTIN_CLASSES if c.manifest.id not in _NO_RENDER_YET],
+        ids=lambda c: c.manifest.id,
+    )
+    def test_render_detail_of_demo_data_is_non_empty(self, plugin_class):
+        instance = plugin_class()
+        data = instance.demo_data()
+
+        detail_panel = instance.render_detail(data)
+        assert isinstance(detail_panel, list)
+        assert detail_panel
+
+
 # =============================================================================
 # Curated defaults / operator override
 # =============================================================================
