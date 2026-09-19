@@ -209,11 +209,14 @@ function renderContainersDetail() {
     html += `</div>`;
     html += `<div id="container-inspect-panel"></div>`;
 
-    // Fire off history fetches after the DOM settles
+    // Fire off history fetches after the DOM settles (skip when the server
+    // has told us history is disabled — the endpoint 404s in that case).
     setTimeout(() => {
-      document.querySelectorAll('.ctr-uptime[data-ctr]').forEach(el => {
-        loadContainerHistory(el.dataset.ctr, el);
-      });
+      if (buoyConfig?.features?.history !== false) {
+        document.querySelectorAll('.ctr-uptime[data-ctr]').forEach(el => {
+          loadContainerHistory(el.dataset.ctr, el);
+        });
+      }
       document.querySelectorAll('.ctr[data-ctr-name]').forEach(el => {
         el.addEventListener('click', () => inspectContainer(el.dataset.ctrName));
       });
