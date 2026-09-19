@@ -27,3 +27,12 @@ jobs:
             description=$(jq -r '.description' <<<"$label")
             gh label create "$name" --color "$color" --description "$description" --force
           done
+
+          # Prune labels that are no longer declared in labels.json, so the
+          # taxonomy stays a strict mirror of the source of truth instead of
+          # only ever growing.
+          gh label list --json name --limit 200 | jq -r '.[].name' | while read -r existing; do
+            if ! jq -e --arg n "$existing" 'any(.[]; .name == $n)' .github/labels.json >/dev/null; then
+              gh label delete "$existing" --yes
+            fi
+          done
