@@ -58,7 +58,8 @@ buoy/
 # Run all tests
 pytest
 
-# With coverage
+# With coverage (the floor is enforced from pyproject.toml's
+# [tool.coverage.report] fail_under, so this fails locally the same way CI does)
 pytest --cov=buoy --cov-report=term-missing
 
 # Lint
