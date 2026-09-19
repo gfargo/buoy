@@ -136,6 +136,36 @@ class TestGrafanaAlertsPlugin:
         assert result.detail["total"] == 1
 
     @pytest.mark.asyncio
+    async def test_include_silenced_sets_silenced_query_param(self):
+        plugin = self._make_plugin(
+            {"type": "alertmanager", "url": "http://am:9093", "include_silenced": True}
+        )
+        captured = {}
+
+        def fake_urlopen(req, timeout=8, context=None):
+            captured["req"] = req
+            return _mock_urlopen([])
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            await plugin.collect()
+
+        assert "silenced=true" in captured["req"].full_url
+
+    @pytest.mark.asyncio
+    async def test_exclude_silenced_sets_silenced_query_param_false(self):
+        plugin = self._make_plugin()
+        captured = {}
+
+        def fake_urlopen(req, timeout=8, context=None):
+            captured["req"] = req
+            return _mock_urlopen([])
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            await plugin.collect()
+
+        assert "silenced=false" in captured["req"].full_url
+
+    @pytest.mark.asyncio
     async def test_missing_severity_label_buckets_as_unknown_and_warns(self):
         plugin = self._make_plugin()
         payload = [_make_alert("NoSeverity")]

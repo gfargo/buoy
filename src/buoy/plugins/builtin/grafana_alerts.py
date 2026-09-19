@@ -67,11 +67,13 @@ class GrafanaAlertsPlugin(Plugin):
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
 
+        silenced_param = "true" if include_silenced else "false"
         if alert_type == "alertmanager":
-            path = "/api/v2/alerts?active=true&silenced=false&inhibited=false"
+            path = f"/api/v2/alerts?active=true&silenced={silenced_param}&inhibited=false"
         elif alert_type == "grafana":
             path = (
-                "/api/alertmanager/grafana/api/v2/alerts?active=true&silenced=false&inhibited=false"
+                "/api/alertmanager/grafana/api/v2/alerts"
+                f"?active=true&silenced={silenced_param}&inhibited=false"
             )
         else:
             return PanelData(status="error", summary=f"Unknown type: {alert_type!r}")
