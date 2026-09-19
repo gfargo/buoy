@@ -188,7 +188,7 @@ async function cacheFirstShell(request) {
   const cached = await cache.match(request);
   if (cached) return cached;
   const response = await fetch(request);
-  await cache.put(request, response.clone());
+  if (response.ok) await cache.put(request, response.clone());
   return response;
 }
 
@@ -196,7 +196,7 @@ async function networkFirstData(request) {
   const cache = await caches.open(DATA_CACHE);
   try {
     const response = await fetch(request);
-    await cache.put(request, response.clone());
+    if (response.ok) await cache.put(request, response.clone());
     return response;
   } catch (err) {
     const cached = await cache.match(request);
@@ -211,7 +211,14 @@ async function networkFirstData(request) {
   }
 }
 
-// Exported for tests/js/sw.test.mjs (Node's ESM loader tolerates the
-// `self`-referencing code above as long as it isn't executed there; these
-// exports only matter when imported outside a ServiceWorkerGlobalScope).
-export { shouldCacheApiPath, isShellPath, CACHEABLE_API_PATHS };
+// Registered as a classic script (see buoy.js), so this file must not
+// contain a top-level `import`/`export` — that's a SyntaxError under the
+// classic-script grammar and silently kills registration everywhere (the
+// rejection is swallowed by the empty .catch() in buoy.js). Expose the pure
+// helpers on `self` instead; tests/js/sw.test.mjs loads this file's source
+// and evaluates it in a sandboxed `self` to read them back off.
+if (typeof self !== 'undefined') {
+  self.shouldCacheApiPath = shouldCacheApiPath;
+  self.isShellPath = isShellPath;
+  self.CACHEABLE_API_PATHS = CACHEABLE_API_PATHS;
+}

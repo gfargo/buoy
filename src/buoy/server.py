@@ -893,6 +893,11 @@ async def index(request: Request) -> Response:
         '<meta name="buoy-base-path" content="">',
         f'<meta name="buoy-base-path" content="{html_module.escape(base, quote=True)}">',
     )
+    theme_color = _THEME_BG_COLORS.get(state.config.theme.preset, _THEME_BG_COLORS["terminal"])
+    html = html.replace(
+        '<meta name="theme-color" content="#0a0c0f">',
+        f'<meta name="theme-color" content="{html_module.escape(theme_color, quote=True)}">',
+    )
     if not state.config.features.pwa:
         html = re.sub(r'\s*<link rel="manifest"[^>]*>\n?', "", html)
     return Response(
