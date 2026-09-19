@@ -237,9 +237,14 @@ test('pluginConfigHtml marks an unset value distinctly instead of leaving it bla
 });
 
 test('pluginRefreshHtml renders a non-destructive refresh button', () => {
-  const html = pluginRefreshHtml();
+  const html = pluginRefreshHtml({ disabled: false });
   assert.match(html, /class="plugin-refresh-btn"/);
   assert.ok(!html.includes('confirm'));
+});
+
+test('pluginRefreshHtml omits the button for a plugin disabled by config', () => {
+  const html = pluginRefreshHtml({ disabled: true });
+  assert.equal(html, '');
 });
 
 test('grid keydown listener skips nested links, same as the click listener', async () => {

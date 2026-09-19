@@ -266,13 +266,17 @@ export function pluginConfigHtml(plugin) {
  * confirm step — one click fires the request. Delegated click handling in
  * initPluginDetail() reads the plugin id from dialog.dataset.pluginId,
  * since #plugin-detail-body's innerHTML is replaced on every render.
+ * Omitted for plugins disabled by config validation, since POST /collect
+ * always 400s for them and the config-errors list above already explains
+ * why — a button that can only fail isn't useful.
  */
-export function pluginRefreshHtml() {
+export function pluginRefreshHtml(plugin) {
+  if (plugin.disabled) return '';
   return '<div class="plugin-refresh"><button type="button" class="plugin-refresh-btn">&#8635; refresh now</button></div>';
 }
 
 function pluginDetailFullBodyHtml(plugin) {
-  return pluginDetailBodyHtml(plugin) + pluginHealthHtml(plugin) + pluginConfigHtml(plugin) + pluginRefreshHtml();
+  return pluginDetailBodyHtml(plugin) + pluginHealthHtml(plugin) + pluginConfigHtml(plugin) + pluginRefreshHtml(plugin);
 }
 
 function pluginDialogEls() {
