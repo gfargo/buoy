@@ -222,6 +222,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Backups | `backup_status` | Backup health & freshness | (none) |
 | Cron | `cron_health` | Recent cron job runs | (none) |
 | DNS Filter | `dns_filter` | Pi-hole / AdGuard Home filtering stats | `type`, `url` |
+| Grafana / Alertmanager | `grafana_alerts` | Firing alerts by severity | `type`, `url` (+ `token` for Grafana) |
 | Photos | `immich` | Immich photo library stats | `url`, `api_key` |
 | Journal | `journal_errors` | Priority-error journal entries | (none) |
 | Proxmox | `proxmox` | Proxmox VE node + guest status | `url`, `token_id`, `token_secret`, `node` |
