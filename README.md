@@ -236,6 +236,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Trigger.dev | `trigger_dev` | Task run status | `url`, `api_key`, `project_ref` |
 | WireGuard | `wireguard` | WireGuard tunnel peer status | (none) |
 | Zigbee2MQTT | `zigbee2mqtt` | Coordinator status + per-device link quality | `host` (needs `pip install "buoy[zigbee2mqtt]"`) |
+| Databases | `databases` | Connections, replication lag, slow queries, memory/evictions | `targets` (needs `pip install "buoy[databases]"`) |
 
 **Custom plugins** are Python files dropped into the `/plugins` volume:
 

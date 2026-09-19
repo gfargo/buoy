@@ -420,6 +420,38 @@ plugins:
       enabled: false
       units: []   # unit names to check; empty = auto-detect
 
+    # Postgres/MySQL/Redis connections, replication lag, slow queries, memory/evictions.
+    # Requires the `databases` extra: pip install "buoy[databases]".
+    #
+    # Least-privilege grants per engine:
+    #   Postgres: GRANT pg_monitor TO buoy;
+    #   MySQL:    GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'buoy'@'%';
+    #   Redis:    ACL SETUSER buoy on >password ~* &* -@all +info +ping
+    databases:
+      enabled: false
+      connections_warn_pct: 80      # amber at or above this % of max connections
+      connections_critical_pct: 95  # red at or above this % of max connections
+      replication_lag_warn_s: 30    # amber at or above this many seconds behind
+      replication_lag_critical_s: 300  # red at or above this many seconds behind
+      slow_query_seconds: 5         # queries running longer than this count as slow (Postgres)
+      timeout_s: 5                  # per-target connect/query timeout
+      targets: []
+      # Example:
+      # targets:
+      #   - name: app-db
+      #     engine: postgres        # postgres | mysql | redis
+      #     host: 127.0.0.1
+      #     port: 5432
+      #     user: buoy
+      #     password_env: PG_APP_PW   # env var holding the password (or use `password:` directly)
+      #     database: app
+      #     tls: false
+      #   - name: cache
+      #     engine: redis
+      #     host: 127.0.0.1
+      #     port: 6379
+      #     password_env: REDIS_APP_PW
+
   # Config for drop-in plugins loaded from `directory` above, keyed by manifest id.
   # Unlike builtin.*, these are opt-out: just drop the .py file in and it loads,
   # even with no entry here. Set `enabled: false` to disable one without removing
