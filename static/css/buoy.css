@@ -250,6 +250,12 @@ header .uptime span { color: var(--green); }
 .nvme-stat .label { font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
 .nvme-stat .val { font-size: 1rem; font-weight: 500; color: var(--cyan); margin-top: 0.2rem; }
 
+/* ── GPU Detail Panel ────────────────────────────────── */
+
+.gpu-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+.gpu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+.gpu-note { font-size: 0.6rem; color: var(--text-dim); margin-top: 0.5rem; }
+
 /* ── Section Labels ──────────────────────────────────── */
 
 .section-label { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); margin-bottom: 0.75rem; padding-left: 0.25rem; }

@@ -945,6 +945,99 @@ class TestPrometheusExporterPlugin:
 
         assert "buoy_nvme" not in output
 
+    def test_format_metrics_with_gpu(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "compass",
+            "cpu": 10,
+            "mem_used": 2.0,
+            "mem_total": 8.0,
+            "temp": 39,
+            "disk_pct": 45,
+            "containers": 5,
+            "uptime_h": 10,
+            "uptime_m": 0,
+            "gpus": [
+                {
+                    "vendor": "nvidia",
+                    "index": 0,
+                    "name": 'RTX "3060"',
+                    "util_pct": 42,
+                    "mem_used_mb": 4096,
+                    "mem_total_mb": 12288,
+                    "temp": 61,
+                    "power_w": 95.5,
+                    "power_limit_w": 170,
+                }
+            ],
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert (
+            'buoy_gpu_utilization_percent{host="compass",gpu="0",name="RTX \\"3060\\""} 42'
+            in output
+        )
+        assert (
+            f'buoy_gpu_memory_used_bytes{{host="compass",gpu="0",name="RTX \\"3060\\""}} '
+            f"{4096 * 1048576}" in output
+        )
+        assert (
+            f'buoy_gpu_memory_total_bytes{{host="compass",gpu="0",name="RTX \\"3060\\""}} '
+            f"{12288 * 1048576}" in output
+        )
+        assert (
+            'buoy_gpu_temperature_celsius{host="compass",gpu="0",name="RTX \\"3060\\""} 61'
+            in output
+        )
+        assert 'buoy_gpu_power_watts{host="compass",gpu="0",name="RTX \\"3060\\""} 95.5' in output
+
+    def test_format_metrics_gpu_omits_null_fields(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "compass",
+            "disk_pct": 45,
+            "containers": 5,
+            "uptime_h": 10,
+            "uptime_m": 0,
+            "gpus": [
+                {
+                    "vendor": "intel",
+                    "index": 0,
+                    "name": "Intel GPU (card0)",
+                    "util_pct": None,
+                    "mem_used_mb": None,
+                    "mem_total_mb": None,
+                    "temp": None,
+                    "power_w": None,
+                    "power_limit_w": None,
+                }
+            ],
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert "buoy_gpu_utilization_percent{" not in output
+        assert "buoy_gpu_memory_used_bytes{" not in output
+        assert "buoy_gpu_temperature_celsius{" not in output
+        assert "buoy_gpu_power_watts{" not in output
+        assert "None" not in output
+
+    def test_format_metrics_without_gpu(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "watch",
+            "cpu": 5,
+            "disk_pct": 30,
+            "containers": 8,
+            "uptime_h": 200,
+            "uptime_m": 0,
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert "buoy_gpu" not in output
+
     def test_format_metrics_has_help_and_type(self):
         from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
 

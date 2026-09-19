@@ -60,6 +60,17 @@
       <div class="value"><span id="nvme-temp">--</span><span class="unit">&deg;C</span></div>
       <div class="bar"><div class="bar-fill" id="nvme-temp-bar" style="width:0%"></div></div>
     </div>
+    <div class="gauge" id="gpu-util-gauge" data-detail="gpu" role="button" tabindex="0" style="display:none" aria-label="GPU utilization">
+      <div class="label">GPU</div>
+      <div class="value"><span id="gpu-util">--</span><span class="unit">%</span></div>
+      <div class="bar"><div class="bar-fill" id="gpu-util-bar" style="width:0%"></div></div>
+      <span class="expand-hint" aria-hidden="true">&#9662; detail</span>
+    </div>
+    <div class="gauge no-detail" id="gpu-temp-gauge" style="display:none" aria-label="GPU temperature">
+      <div class="label">GPU Temp</div>
+      <div class="value"><span id="gpu-temp">--</span><span class="unit">&deg;C</span></div>
+      <div class="bar"><div class="bar-fill" id="gpu-temp-bar" style="width:0%"></div></div>
+    </div>
   </section>
 
   <div class="detail-panel" id="detail-panel" aria-live="polite">

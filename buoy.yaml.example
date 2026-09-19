@@ -152,8 +152,9 @@ features:
   history: false             # SQLite ring buffer for 24h trends (Phase 5)
   demo_mode: false           # Serve mock data (no Docker/host access needed)
   night_mode: auto           # auto (10pm-6am) | always | never
-  keyboard_shortcuts: true   # 1-4 for gauges, Escape to close
+  keyboard_shortcuts: true   # 1-5 for gauges, Escape to close
   image_updates: false       # Docker image update checker (badges on container cards)
+  gpu: true                  # GPU collector (NVIDIA/AMD/Intel) — auto-detects, no-ops without a GPU
 
 # ── Refresh Intervals (seconds) ───────────────────────────
 refresh:

@@ -229,15 +229,20 @@ async def api_stats(request: Request) -> JSONResponse:
     system_coll = state.collectors.get("system")
     docker_coll = state.collectors.get("docker")
     disk_coll = state.collectors.get("disk")
+    gpu_coll = state.collectors.get("gpu")
 
     is_tailscale = _is_tailscale(request, state.config)
 
-    # Gather all stats concurrently
+    # Gather all stats concurrently. gpu is appended last (not inserted
+    # before top_services) so top_services' positional index (3) stays
+    # stable — this is a plain list, and inserting in the middle would
+    # silently shift every index after it.
     results = await asyncio.gather(
         system_coll.collect() if system_coll else _empty_system(state.config),
         docker_coll.collect_summary() if docker_coll else _empty_docker(),
         disk_coll.collect_summary() if disk_coll else _empty_disk(),
         top_services(state.config, is_tailscale, collector=docker_coll),
+        gpu_coll.collect_summary() if gpu_coll else _empty_gpu(),
         return_exceptions=True,
     )
 
@@ -245,6 +250,7 @@ async def api_stats(request: Request) -> JSONResponse:
     docker_data = results[1] if not isinstance(results[1], Exception) else {}
     disk_data = results[2] if not isinstance(results[2], Exception) else {}
     services = results[3] if not isinstance(results[3], Exception) else []
+    gpu_data = results[4] if not isinstance(results[4], Exception) else {}
 
     # Decorate each container entry with update status from cache (pure dict lookup)
     if state.image_update_cache and "containers_list" in docker_data:
@@ -255,7 +261,14 @@ async def api_stats(request: Request) -> JSONResponse:
 
     alerts = [a.to_dict() for a in state.alert_engine.active_alerts] if state.alert_engine else []
     return JSONResponse(
-        {**system_data, **docker_data, **disk_data, "top_services": services, "alerts": alerts}
+        {
+            **system_data,
+            **docker_data,
+            **disk_data,
+            **gpu_data,
+            "top_services": services,
+            "alerts": alerts,
+        }
     )
 
 
@@ -265,21 +278,25 @@ async def api_stats_detail(request: Request) -> JSONResponse:
 
     system_coll = state.collectors.get("system")
     disk_coll = state.collectors.get("disk")
+    gpu_coll = state.collectors.get("gpu")
 
     results = await asyncio.gather(
         system_coll.collect_detail() if system_coll else _empty_detail(),
         disk_coll.collect_detail() if disk_coll else _empty_disk_detail(),
+        gpu_coll.collect_detail() if gpu_coll else _empty_gpu_detail(),
         return_exceptions=True,
     )
 
     system_detail = results[0] if not isinstance(results[0], Exception) else {}
     disk_detail = results[1] if not isinstance(results[1], Exception) else {}
+    gpu_detail = results[2] if not isinstance(results[2], Exception) else {}
 
     return JSONResponse(
         {
             "cpu": system_detail.get("cpu", {}),
             "memory": system_detail.get("memory", {}),
             "disk": disk_detail,
+            "gpu": gpu_detail,
         }
     )
 
@@ -446,18 +463,21 @@ async def api_metrics(request: Request) -> Response:
     system_coll = state.collectors.get("system")
     docker_coll = state.collectors.get("docker")
     disk_coll = state.collectors.get("disk")
+    gpu_coll = state.collectors.get("gpu")
 
     results = await asyncio.gather(
         system_coll.collect() if system_coll else _empty_system(state.config),
         docker_coll.collect_summary() if docker_coll else _empty_docker(),
         disk_coll.collect_summary() if disk_coll else _empty_disk(),
+        gpu_coll.collect_summary() if gpu_coll else _empty_gpu(),
         return_exceptions=True,
     )
 
     system_data = results[0] if not isinstance(results[0], Exception) else {}
     docker_data = results[1] if not isinstance(results[1], Exception) else {}
     disk_data = results[2] if not isinstance(results[2], Exception) else {}
-    combined = {**system_data, **docker_data, **disk_data}
+    gpu_data = results[3] if not isinstance(results[3], Exception) else {}
+    combined = {**system_data, **docker_data, **disk_data, **gpu_data}
 
     body = PrometheusExporterPlugin.format_metrics(combined)
     return Response(body, media_type="text/plain; version=0.0.4; charset=utf-8")
@@ -576,19 +596,22 @@ async def _stats_loop(state: BuoyAppState):
             system_coll = state.collectors.get("system")
             docker_coll = state.collectors.get("docker")
             disk_coll = state.collectors.get("disk")
+            gpu_coll = state.collectors.get("gpu")
 
             results = await asyncio.gather(
                 system_coll.collect() if system_coll else _empty_system(state.config),
                 docker_coll.collect_summary() if docker_coll else _empty_docker(),
                 disk_coll.collect_summary() if disk_coll else _empty_disk(),
+                gpu_coll.collect_summary() if gpu_coll else _empty_gpu(),
                 return_exceptions=True,
             )
 
             system_data = results[0] if not isinstance(results[0], Exception) else {}
             docker_data = results[1] if not isinstance(results[1], Exception) else {}
             disk_data = results[2] if not isinstance(results[2], Exception) else {}
+            gpu_data = results[3] if not isinstance(results[3], Exception) else {}
 
-            combined = {**system_data, **docker_data, **disk_data}
+            combined = {**system_data, **docker_data, **disk_data, **gpu_data}
 
             # Decorate containers with update status from cache (pure dict lookup)
             if state.image_update_cache and "containers_list" in combined:
@@ -680,11 +703,18 @@ async def on_startup(state: BuoyAppState):
         raise RuntimeError("cannot start app while previous shutdown cleanup is incomplete")
 
     if state.config.features.demo_mode:
-        from buoy.demo import DemoDiskCollector, DemoDockerCollector, DemoSystemCollector
+        from buoy.demo import (
+            DemoDiskCollector,
+            DemoDockerCollector,
+            DemoGpuCollector,
+            DemoSystemCollector,
+        )
 
         state.collectors["system"] = DemoSystemCollector(state.config)
         state.collectors["docker"] = DemoDockerCollector(state.config)
         state.collectors["disk"] = DemoDiskCollector(state.config)
+        if state.config.features.gpu:
+            state.collectors["gpu"] = DemoGpuCollector(state.config)
     else:
         from buoy.collectors.disk import DiskCollector
         from buoy.collectors.docker import DockerCollector
@@ -695,6 +725,10 @@ async def on_startup(state: BuoyAppState):
         state.collectors["docker"] = DockerCollector(state.config)
         state.collectors["disk"] = DiskCollector(state.config)
         state.collectors["network"] = NetworkCollector(state.config)
+        if state.config.features.gpu:
+            from buoy.collectors.gpu import GpuCollector
+
+            state.collectors["gpu"] = GpuCollector(state.config)
 
     # Initialize metric history store (if enabled)
     if state.config.features.history:
@@ -867,6 +901,14 @@ async def _empty_detail():
 
 async def _empty_disk_detail():
     return {"mounts": [], "io_read_gb": 0, "io_write_gb": 0}
+
+
+async def _empty_gpu():
+    return {}
+
+
+async def _empty_gpu_detail():
+    return {"gpus": [], "processes": []}
 
 
 # ── Index route (serves static/index.html) ────────────────────────────────────
