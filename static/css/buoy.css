@@ -392,6 +392,40 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; background: 
   pointer-events: none;
 }
 
+/* ── Offline Banner ──────────────────────────────────── */
+
+#offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9997;
+  text-align: center;
+  font-size: 0.65rem;
+  font-family: inherit;
+  padding: 0.35rem 1rem;
+  background: var(--amber-dim);
+  color: var(--amber);
+  border-bottom: 1px solid var(--amber);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  opacity: 0;
+  transform: translateY(-100%);
+  pointer-events: none;
+}
+#offline-banner.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Installed (standalone) PWA has no browser chrome around the top edge,
+   so fixed banners need a little extra clearance to avoid crowding the
+   system status bar. */
+@media (display-mode: standalone) {
+  #ws-status, #offline-banner {
+    padding-top: calc(0.35rem + env(safe-area-inset-top, 0px));
+  }
+}
+
 /* ── Responsive ──────────────────────────────────────── */
 
 @media (max-width: 768px) {

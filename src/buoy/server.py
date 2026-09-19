@@ -108,6 +108,7 @@ async def api_config(request: Request) -> JSONResponse:
                 "night_mode": state.config.features.night_mode,
                 "keyboard_shortcuts": state.config.features.keyboard_shortcuts,
                 "image_updates": state.config.features.image_updates,
+                "pwa": state.config.features.pwa,
             },
             "refresh": {
                 "stats_interval": state.config.refresh.stats_interval,
@@ -884,14 +885,87 @@ async def index(request: Request) -> Response:
     base = state.config.network.base_path
     if base:
         html = html.replace('="/static/', f'="{html_module.escape(base, quote=True)}/static/')
+        html = html.replace(
+            '="/manifest.webmanifest"',
+            f'="{html_module.escape(base, quote=True)}/manifest.webmanifest"',
+        )
     html = html.replace(
         '<meta name="buoy-base-path" content="">',
         f'<meta name="buoy-base-path" content="{html_module.escape(base, quote=True)}">',
     )
+    if not state.config.features.pwa:
+        html = re.sub(r'\s*<link rel="manifest"[^>]*>\n?', "", html)
     return Response(
         content=html,
         media_type="text/html",
     )
+
+
+# ── PWA (manifest + service worker) ────────────────────────────────────────────
+
+# Background colors per theme preset, mirroring the `--bg` custom property
+# defined in static/css/themes/*.css. Duplicated here (not scraped from CSS
+# at request time) so manifest generation has no filesystem/parsing
+# dependency on the theme stylesheets — a missing/renamed theme file can
+# never break the manifest endpoint, only leave it on the terminal default.
+_THEME_BG_COLORS = {
+    "terminal": "#0a0c0f",
+    "light": "#f8f9fb",
+    "solarized": "#002b36",
+    "nord": "#2e3440",
+    "high-contrast": "#000000",
+}
+
+
+async def api_manifest(request: Request) -> JSONResponse:
+    """Web app manifest — installable PWA metadata."""
+    state: BuoyAppState = request.app.state.buoy
+    config = state.config
+    base = config.network.base_path
+    start_url = f"{base}/"
+    bg_color = _THEME_BG_COLORS.get(config.theme.preset, _THEME_BG_COLORS["terminal"])
+    node_name = config.node.name or "buoy"
+
+    def icon_url(filename: str) -> str:
+        return f"{base}/static/icons/{filename}"
+
+    manifest = {
+        "name": f"buoy · {node_name}",
+        "short_name": node_name[:12],
+        "description": "Tailnet dashboard — system vitals, services, and fleet status.",
+        "start_url": start_url,
+        "scope": start_url,
+        "id": start_url,
+        "display": "standalone",
+        "background_color": bg_color,
+        "theme_color": bg_color,
+        "icons": [
+            {"src": icon_url("icon-192.png"), "sizes": "192x192", "type": "image/png"},
+            {"src": icon_url("icon-512.png"), "sizes": "512x512", "type": "image/png"},
+            {
+                "src": icon_url("icon-maskable-512.png"),
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "maskable",
+            },
+        ],
+    }
+    return JSONResponse(manifest, media_type="application/manifest+json")
+
+
+async def sw_js(request: Request) -> Response:
+    """Service worker script — templated with this app's version/base path."""
+    state: BuoyAppState = request.app.state.buoy
+    static_dir = _resolve_static_dir()
+    sw_path = static_dir / "js" / "sw.js"
+    if not sw_path.exists():
+        return Response("sw.js not found", status_code=500)
+
+    body = sw_path.read_text()
+    body = body.replace("__BUOY_VERSION__", VERSION)
+    body = body.replace("__BUOY_BASE__", state.config.network.base_path)
+    body = body.replace("__BUOY_PWA_ENABLED__", "true" if state.config.features.pwa else "false")
+    return Response(content=body, media_type="application/javascript")
 
 
 # ── App Factory ────────────────────────────────────────────────────────────────
@@ -981,6 +1055,8 @@ def create_app(config: BuoyConfig) -> Starlette:
 
     routes = [
         Route("/", index),
+        Route("/manifest.webmanifest", api_manifest),
+        Route("/sw.js", sw_js),
         Route("/api/health", api_health),
         Route("/api/config", api_config),
         Route("/api/config/debug", api_config_debug),
