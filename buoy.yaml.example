@@ -449,6 +449,17 @@ plugins:
       enabled: false
       units: []   # unit names to check; empty = auto-detect
 
+    # Fail2ban / CrowdSec active bans, recent decisions, top offenders
+    # Requires privileged + pid: host deployment (see README) — shells out to
+    # fail2ban-client / cscli on the host via nsenter. Note: this panel
+    # exposes source IPs of banned/decisioned hosts.
+    ban_status:
+      enabled: false
+      type: fail2ban        # fail2ban | crowdsec
+      warn_threshold: 25    # amber at or above this many active bans
+      max_offenders: 5      # top offending IPs listed
+      max_decisions: 10     # CrowdSec only: recent decisions shown
+
     # Postgres/MySQL/Redis connections, replication lag, slow queries, memory/evictions.
     # Requires the `databases` extra: pip install "buoy[databases]".
     #
