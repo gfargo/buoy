@@ -14,6 +14,13 @@ _API_BASE = "https://api.cloudflare.com/client/v4"
 _PER_PAGE = 50
 
 
+def _scrub_token(text: str, token: str) -> str:
+    """Remove a configured API token from error text before it reaches the panel."""
+    if not token:
+        return text
+    return text.replace(token, "***")
+
+
 class CloudflareTunnelPlugin(Plugin):
     """Shows Cloudflare Tunnel connector health: status, connections, colos."""
 
@@ -47,9 +54,17 @@ class CloudflareTunnelPlugin(Plugin):
                 return PanelData(
                     status="error", summary="Auth failed", detail={"error": f"HTTP {e.code}"}
                 )
-            return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
+            return PanelData(
+                status="error",
+                summary="Unreachable",
+                detail={"error": _scrub_token(str(e), api_token)},
+            )
         except Exception as e:
-            return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
+            return PanelData(
+                status="error",
+                summary="Unreachable",
+                detail={"error": _scrub_token(str(e), api_token)},
+            )
 
     def _fetch(self, account_id: str, api_token: str) -> PanelData:
         url = f"{_API_BASE}/accounts/{account_id}/cfd_tunnel?is_deleted=false&per_page={_PER_PAGE}"
@@ -109,6 +124,8 @@ class CloudflareTunnelPlugin(Plugin):
         rows = []
         for t in tunnels:
             status = row_status_map.get(t.get("status"), "dim")
+            if status == "ok" and t.get("below_min"):
+                status = "warn"
             rows.append(
                 [
                     panel.cell(t.get("name", ""), status=status),
@@ -164,10 +181,12 @@ def _make_panel(tunnels: list[dict], min_connections: int, truncated: bool) -> P
         status = t.get("status")
         connections = t.get("connections", 0)
         total_connections += connections
+        below_min = connections < min_connections
+        t["below_min"] = below_min
 
         if status == "down":
             has_down = True
-        elif status in ("degraded", "inactive") or connections < min_connections:
+        elif status in ("degraded", "inactive") or below_min:
             has_warn = True
         else:
             healthy += 1

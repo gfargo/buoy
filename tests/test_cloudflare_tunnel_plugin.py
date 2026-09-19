@@ -246,8 +246,52 @@ class TestCloudflareTunnelPlugin:
         ):
             result = await plugin.collect()
 
-        # The plugin itself never embeds the token in error text
-        assert "cf_test" not in json.dumps({k: v for k, v in result.detail.items() if k != "error"})
+        # The token is scrubbed from exception text before it lands in detail["error"]
+        assert "cf_test" not in json.dumps(result.detail)
+        assert "***" in result.detail["error"]
+
+    @pytest.mark.asyncio
+    async def test_render_marks_below_min_row_as_warn(self):
+        plugin = self._make_plugin(
+            {"account_id": "acct_1", "api_token": "cf_test", "min_connections": 4}
+        )
+        payload = {
+            "result": [
+                _make_tunnel("a", "healthy", connections=[_make_connection(), _make_connection()]),
+            ],
+            "result_info": {"total_count": 1},
+        }
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(payload)):
+            result = await plugin.collect()
+
+        # Panel-level status is warn, and the offending row must show it too.
+        blocks = plugin.render(result)
+        rows = blocks[0]["rows"]
+        assert rows[0][0]["status"] == "warn"
+
+    @pytest.mark.asyncio
+    async def test_pending_reconnect_connections_excluded(self):
+        plugin = self._make_plugin()
+        payload = {
+            "result": [
+                _make_tunnel(
+                    "a",
+                    "healthy",
+                    connections=[
+                        _make_connection(colo="DFW", pending=False),
+                        _make_connection(colo="IAD", pending=True),
+                        _make_connection(colo="LAX", pending=True),
+                    ],
+                ),
+            ],
+            "result_info": {"total_count": 1},
+        }
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(payload)):
+            result = await plugin.collect()
+
+        tunnel = result.detail["tunnels"][0]
+        assert tunnel["connections"] == 1
+        assert tunnel["colos"] == ["DFW"]
 
     def test_demo_data_renders(self):
         from buoy.plugins.builtin.cloudflare_tunnel import CloudflareTunnelPlugin
