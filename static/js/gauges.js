@@ -42,6 +42,21 @@ export function formatMemUsage(memUsed, memTotal) {
   return `${memUsed}/${memTotal}`;
 }
 
+/**
+ * Format a hover-friendly summary of every detected GPU: "name (util%)"
+ * joined by commas. Pure + escaped so it's safe to use as an innerHTML
+ * source or a title attribute, and testable without a DOM.
+ */
+export function formatGpuSummary(gpus) {
+  if (!gpus || gpus.length === 0) return 'No GPU detected';
+  return gpus
+    .map((g) => {
+      const util = g.util_pct == null ? '--' : `${g.util_pct}%`;
+      return `${escapeHtml(g.name || g.vendor || 'GPU')} (${util})`;
+    })
+    .join(', ');
+}
+
 export function initGauges() {
   // Gauges are rendered server-side in index.html; this module updates values.
 }
@@ -141,6 +156,19 @@ export function updateGauges(data) {
     if (netHistory.length > SPARK_MAX) netHistory.shift();
     netRollingMax = Math.max(netRollingMax, ...netHistory);
     renderSparkline('net-sparkline', netHistory, 0, netRollingMax, 'var(--cyan)');
+  }
+
+  // GPU
+  if (data.gpus && data.gpus.length) {
+    show('gpu-util-gauge');
+    show('gpu-temp-gauge');
+    const primary = data.gpus[0];
+    setGauge('gpu-util', primary.util_pct, '%');
+    setBar('gpu-util-bar', primary.util_pct || 0, 80, 95);
+    setGauge('gpu-temp', primary.temp, '°C');
+    setBar('gpu-temp-bar', Math.min((primary.temp || 0) / 90 * 100, 100), 75, 85);
+    const utilGaugeEl = document.getElementById('gpu-util-gauge');
+    if (utilGaugeEl) utilGaugeEl.title = formatGpuSummary(data.gpus);
   }
 
   // Tailscale badge

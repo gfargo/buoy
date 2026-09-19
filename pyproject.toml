@@ -76,3 +76,10 @@ ignore = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["buoy"]
+
+[tool.coverage.report]
+fail_under = 89
+show_missing = true

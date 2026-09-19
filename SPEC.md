@@ -345,7 +345,7 @@ class GitHubPlugin(Plugin):
 ```
 
 > [!NOTE]
-> **As shipped**, `frontend_js()` is a deprecated escape hatch, not the recommended custom-rendering path — see §4.4. All built-in plugins implement `render()` instead, returning a declarative panel spec (`buoy.plugins.panel`: `text`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`) that trusted frontend code (`static/js/panel.js`) turns into HTML, escaping every value itself. This closes the XSS surface `frontend_js()` had (a plugin's raw JS/HTML string, `eval`'d via `new Function()`) and is what makes a strict CSP for the dashboard possible. `frontend_js()` still works for third-party plugins that need it.
+> **As shipped**, `frontend_js()` is a deprecated escape hatch, not the recommended custom-rendering path — see §4.4. All built-in plugins implement `render()` instead, returning a declarative panel spec (`buoy.plugins.panel`: `text`, `heading`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`, `log`) that trusted frontend code (`static/js/panel.js`) turns into HTML, escaping every value itself. This closes the XSS surface `frontend_js()` had (a plugin's raw JS/HTML string, `eval`'d via `new Function()`) and is what makes a strict CSP for the dashboard possible. `frontend_js()` still works for third-party plugins that need it.
 
 ### 4.2 Plugin Lifecycle
 
@@ -391,7 +391,7 @@ Plugins can either:
 This keeps the barrier low (no JS needed for simple plugins) while allowing rich custom UIs.
 
 > [!NOTE]
-> **As shipped**, a third option sits between these two and is the recommended path: **declarative panel renderer** — the plugin implements `render(data) -> list[dict] | None` and returns blocks built from `buoy.plugins.panel` helpers. `PluginManager.collect_all_now()` includes the rendered spec as a `panel` field on the existing `/api/plugins` payload (no new endpoint). `static/js/panel.js` is the only code that turns plugin data into HTML, escaping every value (`escapeHtml`/`safeUrl`) so a plugin can't inject markup — this is what closed the `frontend_js()`/`new Function()` XSS surface for all 19 built-ins that used to ship custom JS. `frontend_js()` remains supported as a fallback for plugins that still need it (checked when `panel` is absent), but is deprecated.
+> **As shipped**, a third option sits between these two and is the recommended path: **declarative panel renderer** — the plugin implements `render(data) -> list[dict] | None` and returns blocks built from `buoy.plugins.panel` helpers. `PluginManager.collect_all_now()` includes the rendered spec as a `panel` field on the existing `/api/plugins` payload (no new endpoint). `static/js/panel.js` is the only code that turns plugin data into HTML, escaping every value (`escapeHtml`/`safeUrl`) so a plugin can't inject markup — this is what closed the `frontend_js()`/`new Function()` XSS surface for all 19 built-ins that used to ship custom JS. `frontend_js()` remains supported as a fallback for plugins that still need it (checked when `panel` is absent), but is deprecated. A plugin can additionally implement `render_detail(data) -> list[dict] | None` (defaults to `render()`) to render more for the expanded detail view than fits on the card — same renderer, same escaping. `GET /api/plugins/{id}` returns this as `detail_panel`, alongside a `manifest` block (`description`, `version`, `refresh_interval`, `effective_refresh_interval`, `source`); `render()`'s output (`panel`) keeps its card caps and stays the only panel field on the `/api/plugins` list payload.
 
 ---
 

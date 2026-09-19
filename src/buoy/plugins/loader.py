@@ -158,6 +158,8 @@ class PluginManager:
         # setup() later failed. Lets _configured_not_loaded show a real name
         # instead of reusing the config key.
         self._builtin_names: dict[str, str] = {}
+        # id -> "builtin" | "entrypoint" | "dir", recorded at registration time.
+        self._plugin_sources: dict[str, str] = {}
 
     @property
     def plugins(self) -> dict[str, Plugin]:
@@ -214,6 +216,7 @@ class PluginManager:
                 except Exception:
                     logger.debug("%s rollback teardown failed", plugin_id, exc_info=True)
                 del self._plugins[plugin_id]
+                self._plugin_sources.pop(plugin_id, None)
 
         # 5. Start collection loops (skip those disabled by config validation)
         for plugin_id, plugin in self._plugins.items():
@@ -271,6 +274,100 @@ class PluginManager:
             except Exception:
                 logger.debug("%s teardown failed", plugin_id, exc_info=True)
 
+    def get_plugin_payload(self, plugin_id: str, *, detail: bool = False) -> dict[str, Any] | None:
+        """Return the panel payload for one registered plugin, or None if unknown.
+
+        Shared by ``collect_all_now()`` (list view, ``detail=False``) and the
+        ``GET /api/plugins/{id}`` route (``detail=True``). With ``detail=True``,
+        adds ``detail_panel`` (from ``render_detail()``, falling back to
+        ``panel`` and logging on exception, mirroring the ``render()``
+        handling below) and ``manifest``. Keeping these keys out of the
+        non-detail payload is what keeps the 60s poll payload small.
+        """
+        plugin = self._plugins.get(plugin_id)
+        if plugin is None:
+            return None
+        data = self._latest_data.get(plugin_id)
+        if data is None:
+            data = PanelData(status="pending", summary="Collecting…")
+        try:
+            panel = plugin.render(data)
+        except Exception as e:
+            logger.warning("%s render() failed: %s", plugin_id, e, exc_info=True)
+            panel = None
+        health = self._health.get(plugin_id, {})
+        payload = {
+            "id": plugin_id,
+            "name": plugin.manifest.name,
+            "icon": plugin.manifest.icon,
+            "status": data.status,
+            "summary": data.summary,
+            "detail": data.detail,
+            "panel": panel,
+            "loaded": True,
+            "last_collect_at": health.get("last_collect_at"),
+            "last_error": health.get("last_error"),
+            "consecutive_failures": health.get("consecutive_failures", 0),
+        }
+        if detail:
+            try:
+                detail_panel = plugin.render_detail(data)
+            except Exception as e:
+                logger.warning("%s render_detail() failed: %s", plugin_id, e, exc_info=True)
+                detail_panel = panel
+            payload["detail_panel"] = detail_panel
+            payload["manifest"] = {
+                "description": plugin.manifest.description,
+                "version": plugin.manifest.version,
+                "refresh_interval": plugin.manifest.refresh_interval,
+                "effective_refresh_interval": self._resolve_interval(plugin),
+                "source": self._plugin_sources.get(plugin_id),
+            }
+        return payload
+
+    def _not_loaded_stub(
+        self, plugin_id: str, name: str, *, detail: bool = False
+    ) -> dict[str, Any]:
+        """Return the ``loaded: False`` stub for a configured-but-not-loaded builtin.
+
+        No plugin instance exists in this case, so detail mode gets ``None``
+        for ``detail_panel``/``manifest`` rather than guessed values.
+        """
+        stub = {
+            "id": plugin_id,
+            "name": name,
+            "icon": "🔌",
+            "status": "error",
+            "summary": "Failed to load",
+            "detail": {},
+            "panel": None,
+            "loaded": False,
+            "last_collect_at": None,
+            "last_error": None,
+            "consecutive_failures": 0,
+        }
+        if detail:
+            stub["detail_panel"] = None
+            stub["manifest"] = None
+        return stub
+
+    def get_plugin_or_stub_payload(
+        self, plugin_id: str, *, detail: bool = False
+    ) -> dict[str, Any] | None:
+        """Return a plugin's payload, its not-loaded stub, or None if unknown.
+
+        Used by the ``GET /api/plugins/{id}`` route, which needs the same
+        "loaded vs. configured-but-not-loaded vs. unknown" resolution that
+        ``collect_all_now()`` applies across all plugins, but for one id.
+        """
+        payload = self.get_plugin_payload(plugin_id, detail=detail)
+        if payload is not None:
+            return payload
+        for stub_id, name in self._configured_not_loaded():
+            if stub_id == plugin_id:
+                return self._not_loaded_stub(stub_id, name, detail=detail)
+        return None
+
     async def collect_all_now(self) -> dict[str, dict]:
         """Return current panel data for every registered plugin.
 
@@ -284,44 +381,11 @@ class PluginManager:
         vanishing.
         """
         result = {}
-        for plugin_id, plugin in self._plugins.items():
-            data = self._latest_data.get(plugin_id)
-            if data is None:
-                data = PanelData(status="pending", summary="Collecting…")
-            try:
-                panel = plugin.render(data)
-            except Exception as e:
-                logger.warning("%s render() failed: %s", plugin_id, e, exc_info=True)
-                panel = None
-            health = self._health.get(plugin_id, {})
-            result[plugin_id] = {
-                "id": plugin_id,
-                "name": plugin.manifest.name,
-                "icon": plugin.manifest.icon,
-                "status": data.status,
-                "summary": data.summary,
-                "detail": data.detail,
-                "panel": panel,
-                "loaded": True,
-                "last_collect_at": health.get("last_collect_at"),
-                "last_error": health.get("last_error"),
-                "consecutive_failures": health.get("consecutive_failures", 0),
-            }
+        for plugin_id in self._plugins:
+            result[plugin_id] = self.get_plugin_payload(plugin_id)
 
         for plugin_id, name in self._configured_not_loaded():
-            result[plugin_id] = {
-                "id": plugin_id,
-                "name": name,
-                "icon": "🔌",
-                "status": "error",
-                "summary": "Failed to load",
-                "detail": {},
-                "panel": None,
-                "loaded": False,
-                "last_collect_at": None,
-                "last_error": None,
-                "consecutive_failures": 0,
-            }
+            result[plugin_id] = self._not_loaded_stub(plugin_id, name)
         return result
 
     def _configured_not_loaded(self) -> list[tuple[str, str]]:
@@ -388,7 +452,7 @@ class PluginManager:
         """
         for plugin_class in self._iter_entrypoint_classes():
             try:
-                self._register_config_gated_plugin(plugin_class, source="entry point")
+                self._register_config_gated_plugin(plugin_class, source="entrypoint")
             except Exception as e:
                 logger.warning(
                     "Failed to register entry point plugin '%s': %s",
@@ -419,7 +483,7 @@ class PluginManager:
                 # plugin has accepted its configuration. A failed override must
                 # leave the previously registered plugin intact and active.
                 instance.configure(settings)
-                self._warn_on_collision(plugin_id, source="user directory")
+                self._warn_on_collision(plugin_id, source="dir")
                 if errors and self._demo:
                     logger.debug(
                         "%s: ignoring config errors in demo mode: %s",
@@ -439,6 +503,7 @@ class PluginManager:
                     self._disabled_ids.discard(plugin_id)
                     self._latest_data.pop(plugin_id, None)
                 self._plugins[plugin_id] = instance
+                self._plugin_sources[plugin_id] = "dir"
             except Exception as e:
                 logger.warning(
                     "Failed to register user plugin '%s': %s",
@@ -447,18 +512,22 @@ class PluginManager:
                     exc_info=True,
                 )
 
+    _SOURCE_LABELS = {"builtin": "builtin", "entrypoint": "entry point", "dir": "user directory"}
+
     def _warn_on_collision(self, plugin_id: str, source: str) -> None:
         """Log when a plugin id from *source* overwrites an already-registered one.
 
         Precedence is defined by load order in ``start()``: builtin < entry
         point < user directory — later sources win, and this makes the
-        override visible instead of silently swapping plugins.
+        override visible instead of silently swapping plugins. *source* is
+        one of the canonical tokens (``builtin``/``entrypoint``/``dir``);
+        mapped to a human label here so the log wording doesn't change.
         """
         if plugin_id in self._plugins:
             logger.info(
                 "'%s' from %s overrides a previously loaded plugin with the same id",
                 plugin_id,
-                source,
+                self._SOURCE_LABELS.get(source, source),
             )
 
     def _register_config_gated_plugin(self, plugin_class: type[Plugin], source: str) -> bool:
@@ -506,6 +575,7 @@ class PluginManager:
             self._latest_data.pop(plugin_id, None)
         instance.configure(settings)
         self._plugins[plugin_id] = instance
+        self._plugin_sources[plugin_id] = source
         return True
 
     @staticmethod
