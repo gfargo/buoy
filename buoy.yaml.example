@@ -363,6 +363,8 @@ plugins:
     # Requires privileged + pid: host deployment (see README) for host cron log access
     cron_health:
       enabled: false
+      max_entries: 20          # max journald entries to fetch (also caps the detail view)
+      backup_log_path: ""      # host-absolute path to tail into the detail view's "Backup log"; "" = off
 
     # Priority-error journal entries (reads host journald via nsenter)
     # Requires privileged + pid: host deployment (see README)
