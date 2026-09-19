@@ -80,3 +80,19 @@ test('plugin card markup is clickable, not the old cursor:default styling', asyn
   assert.match(source, /role="button"/);
   assert.match(source, /data-plugin-id/);
 });
+
+test('grid keydown listener skips nested links, same as the click listener', async () => {
+  const source = await readFile(new URL('../../static/js/plugins.js', import.meta.url), 'utf8');
+
+  const keydownStart = source.indexOf("grid.addEventListener('keydown'");
+  assert.notEqual(keydownStart, -1, 'expected a keydown listener on the grid');
+  const keydownEnd = source.indexOf('});', keydownStart);
+  const keydownBody = source.slice(keydownStart, keydownEnd);
+
+  // Without this guard, tabbing to a panel-rendered <a> (e.g. a PR list item)
+  // and pressing Enter opens the detail dialog instead of following the link.
+  const linkGuardIndex = keydownBody.indexOf("closest('a')");
+  const keyCheckIndex = keydownBody.search(/e\.key !== 'Enter'/);
+  assert.ok(linkGuardIndex !== -1, 'keydown listener must skip clicks on <a> targets');
+  assert.ok(linkGuardIndex < keyCheckIndex, 'link guard must run before the Enter/Space check');
+});

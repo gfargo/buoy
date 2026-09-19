@@ -245,6 +245,9 @@ export function initPluginDetail() {
     if (card) openPluginDetail(card.dataset.pluginId);
   });
   grid.addEventListener('keydown', (e) => {
+    // Same rationale as the click listener above: don't hijack Enter on a
+    // nested panel link (e.g. a PR list item) before it can navigate.
+    if (e.target.closest('a')) return;
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const card = e.target.closest('.svc[data-plugin-id]');
     if (card) { e.preventDefault(); openPluginDetail(card.dataset.pluginId); }
