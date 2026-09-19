@@ -108,6 +108,7 @@ async def api_config(request: Request) -> JSONResponse:
                 "night_mode": state.config.features.night_mode,
                 "keyboard_shortcuts": state.config.features.keyboard_shortcuts,
                 "image_updates": state.config.features.image_updates,
+                "container_stats": state.config.features.container_stats,
             },
             "refresh": {
                 "stats_interval": state.config.refresh.stats_interval,
@@ -115,6 +116,7 @@ async def api_config(request: Request) -> JSONResponse:
                 "fleet_interval": state.config.refresh.fleet_interval,
                 "plugins_interval": state.config.refresh.plugins_interval,
                 "image_updates_interval": state.config.refresh.image_updates_interval,
+                "container_stats_interval": state.config.refresh.container_stats_interval,
             },
         }
     )
@@ -612,9 +614,22 @@ async def _stats_loop(state: BuoyAppState):
             if state.config.features.websocket:
                 await broadcast_stats(state, combined)
 
-            # Store in history (if enabled)
+            # Store in history (if enabled). containers_list is trimmed to just
+            # names before persisting — storage.query() only ever extracts
+            # scalars from a recorded "stats" row (the per-container
+            # state/health/cpu/mem fields would otherwise multiply the
+            # per-tick row size and, unpruned, add tens of MB/day of history
+            # for no reader).
             if state.metric_store:
-                await asyncio.to_thread(state.metric_store.record, "stats", combined)
+                history_data = combined
+                if "containers_list" in combined:
+                    history_data = {
+                        **combined,
+                        "containers_list": [
+                            {"name": c["name"]} for c in combined["containers_list"]
+                        ],
+                    }
+                await asyncio.to_thread(state.metric_store.record, "stats", history_data)
                 # Sample container states every ~30s (every 6th cycle at 5s interval)
                 if docker_coll and cycle % 6 == 0:
                     try:
