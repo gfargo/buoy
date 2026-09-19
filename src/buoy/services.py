@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
+_PINNED_GROUP = "Pinned"
+
 
 def _hidden_matcher(pattern: str):
     """Build a predicate matching `pattern` against a discovered container.
@@ -33,6 +35,16 @@ def _hidden_matcher(pattern: str):
     return lambda ctr: ctr.get("service") == pattern or ctr["name"] == pattern
 
 
+def _service_key(ctr: dict) -> str:
+    """The key a Docker container is matched under: its Compose service label
+    (e.g. "redis" for `plane-plane-redis-1`) if Compose set one, else its
+    full container name. Shared by `_resolve_override`, `pinned`, and `order`
+    so all four config surfaces (`hidden`, `overrides`, `pinned`, `order`)
+    key containers identically.
+    """
+    return ctr.get("service") or ctr["name"]
+
+
 def _resolve_override(overrides: dict, ctr: dict):
     """Look up a service override for `ctr`, keyed the same way `hidden` matches.
 
@@ -45,6 +57,51 @@ def _resolve_override(overrides: dict, ctr: dict):
     if service and service in overrides:
         return overrides[service]
     return overrides.get(ctr["name"])
+
+
+def _resolve_group(override, ctr: dict) -> str:
+    """Resolve a Docker-discovered service's group: an explicit override wins,
+    else the container's discovered project label, else ungrouped."""
+    if override and override.group:
+        return override.group
+    return ctr.get("project") or ""
+
+
+def _sort_services(entries: list[dict], config: BuoyConfig) -> list[dict]:
+    """Order `entries` (each already carrying `key`, `group`, `pinned`) into
+    final display order: pinned first (in `services.pinned` order), then by
+    group (per `services.group_order`, else alphabetical, ungrouped last),
+    then within a group by `services.order`, else discovery order.
+
+    A single stable sort with a composite key — rather than multiple passes
+    or a dict-based regroup — so entries with equal rank keep their relative
+    discovery order instead of being scrambled.
+    """
+    pinned_rank = {key: i for i, key in enumerate(config.services.pinned)}
+    group_rank = {name: i for i, name in enumerate(config.services.group_order)}
+    within_rank = {key: i for i, key in enumerate(config.services.order)}
+    unranked_group = len(group_rank)
+    unranked_within = len(within_rank)
+
+    def sort_key(item: tuple[int, dict]):
+        index, entry = item
+        group = entry["group"]
+        if entry["pinned"]:
+            return (-1, "", pinned_rank.get(entry["key"], len(pinned_rank)), index)
+        return (
+            group_rank.get(group, unranked_group if group else unranked_group + 1),
+            group.casefold(),
+            within_rank.get(entry["key"], unranked_within),
+            index,
+        )
+
+    ordered = sorted(enumerate(entries), key=sort_key)
+    result = []
+    for _, entry in ordered:
+        entry = dict(entry)
+        entry.pop("key", None)
+        result.append(entry)
+    return result
 
 
 async def discover_services(
@@ -74,6 +131,7 @@ async def discover_services(
     overrides = config.services.overrides
     hostname = config.node.name
     tailnet = config.network.tailnet_domain
+    pinned_keys = set(config.services.pinned)
 
     # Build local services from discovered containers
     local_services = []
@@ -102,6 +160,10 @@ async def discover_services(
         else:
             url = ""
 
+        key = _service_key(ctr)
+        pinned = key in pinned_keys
+        group = _PINNED_GROUP if pinned else _resolve_group(override, ctr)
+
         local_services.append(
             {
                 "name": display_name,
@@ -110,6 +172,9 @@ async def discover_services(
                 "url": url,
                 "source": "docker",
                 "status": None,
+                "group": group,
+                "pinned": pinned,
+                "key": key,
             }
         )
 
@@ -117,6 +182,10 @@ async def discover_services(
     # services.hidden/overrides, which only apply to Docker discovery.
     for entry in config.services.static:
         h = (health or {}).get(entry.name) or {}
+        key = entry.name
+        pinned = key in pinned_keys
+        group = _PINNED_GROUP if pinned else entry.group
+
         local_services.append(
             {
                 "name": entry.name,
@@ -126,8 +195,13 @@ async def discover_services(
                 "source": "static",
                 "status": h.get("status"),
                 "latency_ms": h.get("latency_ms"),
+                "group": group,
+                "pinned": pinned,
+                "key": key,
             }
         )
+
+    local_services = _sort_services(local_services, config)
 
     # Build network services from config peers
     network_services = []

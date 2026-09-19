@@ -343,6 +343,74 @@ class TestServicesStatic:
         assert caplog.records == []
 
 
+class TestServicesGrouping:
+    """Tests for services.group_label / group_order / order / pinned, and
+    per-entry `group` on overrides and static entries (FEAT-11)."""
+
+    def test_defaults(self):
+        config = _build_config({})
+        assert config.services.group_label == "com.docker.compose.project"
+        assert config.services.group_order == []
+        assert config.services.order == []
+        assert config.services.pinned == []
+
+    def test_group_label_override(self):
+        raw = {"services": {"group_label": "my.custom.stack"}}
+        config = _build_config(raw)
+        assert config.services.group_label == "my.custom.stack"
+
+    def test_group_label_empty_disables_grouping(self):
+        raw = {"services": {"group_label": ""}}
+        config = _build_config(raw)
+        assert config.services.group_label == ""
+
+    def test_group_order_parsed(self):
+        raw = {"services": {"group_order": ["media", "monitoring"]}}
+        config = _build_config(raw)
+        assert config.services.group_order == ["media", "monitoring"]
+
+    def test_order_parsed(self):
+        raw = {"services": {"order": ["grafana", "prometheus"]}}
+        config = _build_config(raw)
+        assert config.services.order == ["grafana", "prometheus"]
+
+    def test_pinned_parsed(self):
+        raw = {"services": {"pinned": ["grafana"]}}
+        config = _build_config(raw)
+        assert config.services.pinned == ["grafana"]
+
+    def test_non_list_group_order_warns_and_degrades_to_empty(self, caplog):
+        raw = {"services": {"group_order": "media"}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert config.services.group_order == []
+        assert any("services.group_order" in r.message for r in caplog.records)
+
+    def test_non_list_order_warns_and_degrades_to_empty(self, caplog):
+        raw = {"services": {"order": {"grafana": 1}}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert config.services.order == []
+        assert any("services.order" in r.message for r in caplog.records)
+
+    def test_non_list_pinned_warns_and_degrades_to_empty(self, caplog):
+        raw = {"services": {"pinned": "grafana"}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert config.services.pinned == []
+        assert any("services.pinned" in r.message for r in caplog.records)
+
+    def test_override_group_parsed(self):
+        raw = {"services": {"overrides": {"grafana": {"group": "monitoring"}}}}
+        config = _build_config(raw)
+        assert config.services.overrides["grafana"].group == "monitoring"
+
+    def test_static_group_parsed(self):
+        raw = {"services": {"static": [{"name": "NAS", "group": "storage"}]}}
+        config = _build_config(raw)
+        assert config.services.static[0].group == "storage"
+
+
 class TestEnvOverrides:
     """Environment variables override YAML values."""
 

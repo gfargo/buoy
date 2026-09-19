@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderServiceCard } from '../../static/js/services.js';
+import { renderServiceCard, groupServices, renderGroupLabel } from '../../static/js/services.js';
 
 test('renderServiceCard escapes hostile name, desc, and url', () => {
   const html = renderServiceCard({
@@ -64,4 +64,52 @@ test('renderServiceCard marks urlless entries as unclickable', () => {
   const html = renderServiceCard({ name: 'worker', desc: '', icon: '', url: '', status: null });
   assert.ok(html.includes('data-no-url="1"'));
   assert.ok(html.includes('href="#"'));
+});
+
+test('groupServices splits consecutive runs of equal group and preserves order', () => {
+  const services = [
+    { name: 'grafana', group: 'monitoring' },
+    { name: 'prometheus', group: 'monitoring' },
+    { name: 'jellyfin', group: 'media' },
+    { name: 'bookmark', group: '' },
+  ];
+  const groups = groupServices(services);
+  assert.deepEqual(
+    groups.map(g => [g.group, g.items.map(i => i.name)]),
+    [
+      ['monitoring', ['grafana', 'prometheus']],
+      ['media', ['jellyfin']],
+      ['', ['bookmark']],
+    ],
+  );
+});
+
+test('groupServices treats a missing group field as ungrouped', () => {
+  const groups = groupServices([{ name: 'grafana' }]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].group, '');
+});
+
+test('groupServices does not merge two non-adjacent runs of the same group name', () => {
+  // The server is the sorting authority; groupServices only partitions
+  // consecutive runs, it never re-sorts or merges non-adjacent groups.
+  const services = [
+    { name: 'a', group: 'x' },
+    { name: 'b', group: 'y' },
+    { name: 'c', group: 'x' },
+  ];
+  const groups = groupServices(services);
+  assert.equal(groups.length, 3);
+});
+
+test('renderGroupLabel escapes a hostile group name', () => {
+  const html = renderGroupLabel('<img src=x onerror=alert(1)>');
+  assert.ok(!html.includes('<img'));
+  assert.ok(html.includes('&lt;img'));
+});
+
+test('a single unnamed group produces no header in refreshServices-style rendering', () => {
+  const groups = groupServices([{ name: 'grafana', group: '' }]);
+  const label = groups[0].group !== '' || groups.length > 1 ? renderGroupLabel(groups[0].group) : '';
+  assert.equal(label, '');
 });
