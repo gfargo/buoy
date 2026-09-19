@@ -13,6 +13,7 @@ from buoy.plugins.builtin.databases import (
     _rate,
     _redis_metrics,
     _status_for,
+    _worst,
 )
 
 
@@ -184,8 +185,21 @@ class TestRedisMetrics:
         m = _redis_metrics(info, 10.0, 40.0, 100.0)
         assert m["is_replica"] is True
         assert m["replica_link_status"] == "down"
+        assert m["replication_broken"] is True
         assert m["memory_pct"] == 50.0
         assert m["evicted_keys_per_min"] == pytest.approx((20.0 - 10.0) * 60 / 60)
+
+    def test_replica_link_up_not_broken(self):
+        info = {
+            "connected_clients": "3",
+            "used_memory": "500",
+            "maxmemory": "1000",
+            "evicted_keys": "0",
+            "role": "slave",
+            "master_link_status": "up",
+        }
+        m = _redis_metrics(info, None, None, 100.0)
+        assert m["replication_broken"] is False
 
 
 class TestProbeRedis:
@@ -212,11 +226,54 @@ class TestProbeRedis:
             "buoy.plugins.builtin.databases._load_redis",
             return_value=fake_redis_module,
         ):
-            metrics = await plugin._probe_redis({"name": "cache", "engine": "redis", "host": "h1"})
+            metrics = await plugin._probe_redis(
+                {"name": "cache", "engine": "redis", "host": "h1"}, 5.0
+            )
 
         assert metrics["connected_clients"] == 7
         assert metrics["memory_pct"] == 50.0
         fake_client.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_configured_timeout_reaches_driver_call(self):
+        plugin = _make_plugin(targets=[{"name": "cache", "engine": "redis", "host": "h1"}])
+        fake_client = AsyncMock()
+        fake_client.info = AsyncMock(return_value={"role": "master"})
+        fake_redis_module = MagicMock()
+        fake_redis_module.Redis = MagicMock(return_value=fake_client)
+
+        with patch(
+            "buoy.plugins.builtin.databases._load_redis",
+            return_value=fake_redis_module,
+        ):
+            await plugin._probe_redis({"name": "cache", "engine": "redis", "host": "h1"}, 17.0)
+
+        _, kwargs = fake_redis_module.Redis.call_args
+        assert kwargs["socket_timeout"] == 17.0
+        assert kwargs["socket_connect_timeout"] == 17.0
+
+
+class TestWorst:
+    def test_warn_outranks_unavailable(self):
+        assert _worst(["unavailable", "warn"]) == "warn"
+
+    def test_error_outranks_everything(self):
+        assert _worst(["unavailable", "warn", "error"]) == "error"
+
+    def test_unavailable_alone(self):
+        assert _worst(["ok", "unavailable"]) == "unavailable"
+
+
+class TestCounterKey:
+    def test_same_name_different_engine_does_not_collide(self):
+        mysql_key = DatabasesPlugin._counter_key({"engine": "mysql", "name": "db1"})
+        redis_key = DatabasesPlugin._counter_key({"engine": "redis", "name": "db1"})
+        assert mysql_key != redis_key
+
+    def test_unnamed_targets_distinguished_by_host_and_port(self):
+        a = DatabasesPlugin._counter_key({"engine": "redis", "host": "h1", "port": 6379})
+        b = DatabasesPlugin._counter_key({"engine": "redis", "host": "h2", "port": 6379})
+        assert a != b
 
 
 class TestStatusFor:
@@ -362,6 +419,34 @@ class TestCollect:
         assert "unknown engine" in result.detail["databases"][0]["error"]
 
     @pytest.mark.asyncio
+    async def test_unavailable_target_does_not_mask_warn_on_another(self):
+        plugin = _make_plugin(
+            targets=[
+                {"name": "warn-db", "engine": "postgres", "host": "h1"},
+                {"name": "no-driver-db", "engine": "mysql", "host": "h2"},
+            ],
+        )
+        warn_metrics = {
+            "connections": 90,
+            "max_connections": 100,
+            "connections_pct": 90.0,
+            "replication_lag_s": None,
+            "replication_broken": False,
+        }
+        with (
+            patch.object(plugin, "_probe_postgres", AsyncMock(return_value=warn_metrics)),
+            patch(
+                "buoy.plugins.builtin.databases._load_aiomysql",
+                side_effect=ImportError("no module"),
+            ),
+        ):
+            result = await plugin.collect()
+
+        assert result.status == "warn"
+        assert "2 needs attention" in result.summary
+        assert "no-driver-db unavailable" in result.summary
+
+    @pytest.mark.asyncio
     async def test_secret_never_leaks_into_summary_or_detail(self):
         plugin = _make_plugin(
             targets=[
@@ -399,3 +484,38 @@ class TestRenderAndDemo:
         plugin = DatabasesPlugin()
         blocks = plugin.render(PanelData(status="disabled", summary="", detail={}))
         assert blocks == [{"type": "text", "value": "No databases configured", "status": "dim"}]
+
+    def test_redis_connected_clients_shown_in_conns_column(self):
+        plugin = DatabasesPlugin()
+        data = plugin.demo_data()
+        redis_row = next(r for r in data.detail["databases"] if r["engine"] == "redis")
+        assert redis_row["metrics"]["connected_clients"] == 36
+
+        blocks = plugin.render(data)
+        table_row = next(
+            row
+            for row, r in zip(blocks[0]["rows"], data.detail["databases"], strict=True)
+            if r["engine"] == "redis"
+        )
+        assert table_row[2]["value"] == "36"
+
+    def test_redis_broken_replica_link_renders_as_error(self):
+        from buoy.plugins.protocol import PanelData
+
+        plugin = DatabasesPlugin()
+        row = {
+            "name": "cache-replica",
+            "engine": "redis",
+            "status": "error",
+            "error": "",
+            "metrics": {
+                "connected_clients": 3,
+                "is_replica": True,
+                "replica_link_status": "down",
+                "replication_broken": True,
+            },
+        }
+        blocks = plugin.render(PanelData(status="error", summary="", detail={"databases": [row]}))
+        lag_cell = blocks[0]["rows"][0][3]
+        assert lag_cell["value"] == "link down"
+        assert lag_cell["status"] == "error"

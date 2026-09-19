@@ -166,6 +166,7 @@ def _redis_metrics(
         "memory_pct": (used_memory / maxmemory * 100) if maxmemory else None,
         "is_replica": is_replica,
         "replica_link_status": link_status,
+        "replication_broken": is_replica and link_status == "down",
         "evicted_keys_total": evicted_total,
         "evicted_keys_per_min": evicted_per_min,
     }
@@ -205,12 +206,17 @@ def _status_for(
 
 
 def _worst(statuses: list[str]) -> str:
+    """Aggregate per-target statuses, worst wins.
+
+    `warn`/`error` outrank `unavailable`: a target we simply couldn't probe
+    (missing driver) must not mask a real alert on another target.
+    """
     if "error" in statuses:
         return "error"
-    if "unavailable" in statuses:
-        return "unavailable"
     if "warn" in statuses:
         return "warn"
+    if "unavailable" in statuses:
+        return "unavailable"
     return "ok"
 
 
@@ -240,8 +246,21 @@ class DatabasesPlugin(Plugin):
 
     def __init__(self) -> None:
         super().__init__()
-        # Previous cumulative-counter samples per target name, for _rate().
+        # Previous cumulative-counter samples per target, for _rate().
         self._prev_counters: dict[str, tuple[float, float]] = {}
+
+    @staticmethod
+    def _counter_key(target: dict[str, Any]) -> str:
+        """Unique key for `_prev_counters`.
+
+        `name` is optional and engines are probed with a shared dict, so
+        keying on name alone lets an unnamed target (or a same-named
+        MySQL/Redis pair) collide and corrupt each other's rate history.
+        """
+        engine = target.get("engine", "")
+        name = target.get("name") or target.get("host", "")
+        port = target.get("port", "")
+        return f"{engine}:{name}:{port}"
 
     async def collect(self) -> PanelData:
         targets = self.config.get("targets") or []
@@ -276,10 +295,13 @@ class DatabasesPlugin(Plugin):
         if len(rows) == 1:
             summary = self._single_summary(rows[0])
         else:
-            needing_attention = sum(1 for r in rows if r["status"] in ("warn", "error"))
+            needing_attention = [r for r in rows if r["status"] in ("warn", "error", "unavailable")]
             summary = f"{len(rows)} databases"
             if needing_attention:
-                summary += f" · {needing_attention} needs attention"
+                summary += f" · {len(needing_attention)} needs attention"
+                unavailable = [r["name"] for r in needing_attention if r["status"] == "unavailable"]
+                if unavailable:
+                    summary += f" ({', '.join(unavailable)} unavailable)"
 
         return PanelData(status=overall, summary=summary, detail={"databases": rows})
 
@@ -294,6 +316,11 @@ class DatabasesPlugin(Plugin):
         max_conns = m.get("max_connections")
         if conns is not None and max_conns:
             return f"{name} · {conns}/{max_conns} conns"
+        if conns is not None:
+            return f"{name} · {conns} conns"
+        clients = m.get("connected_clients")
+        if clients is not None:
+            return f"{name} · {clients} clients"
         return name
 
     @staticmethod
@@ -334,7 +361,7 @@ class DatabasesPlugin(Plugin):
         }[engine]
 
         try:
-            metrics = await asyncio.wait_for(probe(target), timeout=timeout_s)
+            metrics = await asyncio.wait_for(probe(target, timeout_s), timeout=timeout_s)
         except _DriverUnavailableError as e:
             return {
                 "name": name,
@@ -377,7 +404,7 @@ class DatabasesPlugin(Plugin):
             return os.environ.get(password_env, "")
         return target.get("password", "")
 
-    async def _probe_postgres(self, target: dict[str, Any]) -> dict[str, Any]:
+    async def _probe_postgres(self, target: dict[str, Any], timeout_s: float) -> dict[str, Any]:
         try:
             asyncpg = _load_asyncpg()
         except ImportError as e:
@@ -390,7 +417,7 @@ class DatabasesPlugin(Plugin):
             password=self._resolve_password(target),
             database=target.get("database", "postgres"),
             ssl="require" if target.get("tls") else None,
-            timeout=5,
+            timeout=timeout_s,
         )
         try:
             row = await conn.fetchrow(
@@ -414,7 +441,7 @@ class DatabasesPlugin(Plugin):
         finally:
             await conn.close()
 
-    async def _probe_mysql(self, target: dict[str, Any]) -> dict[str, Any]:
+    async def _probe_mysql(self, target: dict[str, Any], timeout_s: float) -> dict[str, Any]:
         try:
             aiomysql = _load_aiomysql()
         except ImportError as e:
@@ -433,7 +460,7 @@ class DatabasesPlugin(Plugin):
             password=self._resolve_password(target),
             db=target.get("database"),
             ssl=tls_ctx,
-            connect_timeout=5,
+            connect_timeout=timeout_s,
         )
         try:
             async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -453,15 +480,16 @@ class DatabasesPlugin(Plugin):
                         continue
 
             now = time.monotonic()
-            prev = self._prev_counters.get(target.get("name", ""))
+            key = self._counter_key(target)
+            prev = self._prev_counters.get(key)
             prev_value, prev_ts = prev if prev else (None, None)
             metrics = _mysql_metrics(status, max_connections, replica_row, prev_value, prev_ts, now)
-            self._prev_counters[target.get("name", "")] = (metrics["slow_queries_total"], now)
+            self._prev_counters[key] = (metrics["slow_queries_total"], now)
             return metrics
         finally:
             conn.close()
 
-    async def _probe_redis(self, target: dict[str, Any]) -> dict[str, Any]:
+    async def _probe_redis(self, target: dict[str, Any], timeout_s: float) -> dict[str, Any]:
         try:
             redis = _load_redis()
         except ImportError as e:
@@ -478,17 +506,18 @@ class DatabasesPlugin(Plugin):
             password=self._resolve_password(target) or None,
             db=db_index,
             ssl=bool(target.get("tls")),
-            socket_timeout=5,
-            socket_connect_timeout=5,
+            socket_timeout=timeout_s,
+            socket_connect_timeout=timeout_s,
         )
         try:
             info = await client.info()
 
             now = time.monotonic()
-            prev = self._prev_counters.get(target.get("name", ""))
+            key = self._counter_key(target)
+            prev = self._prev_counters.get(key)
             prev_value, prev_ts = prev if prev else (None, None)
             metrics = _redis_metrics(info, prev_value, prev_ts, now)
-            self._prev_counters[target.get("name", "")] = (metrics["evicted_keys_total"], now)
+            self._prev_counters[key] = (metrics["evicted_keys_total"], now)
             return metrics
         finally:
             await client.aclose()
@@ -563,14 +592,16 @@ class DatabasesPlugin(Plugin):
             if m.get("connections") is not None:
                 max_c = m.get("max_connections")
                 conns = f"{m['connections']}/{max_c}" if max_c else str(m["connections"])
+            elif m.get("connected_clients") is not None:
+                conns = str(m["connected_clients"])
 
             lag = "—"
-            if m.get("replication_broken"):
+            if m.get("replica_link_status") == "down":
+                lag = "link down"
+            elif m.get("replication_broken"):
                 lag = "broken"
             elif m.get("replication_lag_s") is not None:
                 lag = f"{m['replication_lag_s']:.0f}s"
-            elif m.get("replica_link_status") == "down":
-                lag = "link down"
 
             notes = r.get("error") or ""
             if not notes:
@@ -587,8 +618,8 @@ class DatabasesPlugin(Plugin):
                 [
                     panel.cell(r.get("name", "")),
                     panel.cell(r.get("engine", "")),
-                    panel.cell(conns, status=r.get("status") if conns_pct else None),
-                    panel.cell(lag, status="error" if lag == "broken" else None),
+                    panel.cell(conns, status=r.get("status") if conns_pct is not None else None),
+                    panel.cell(lag, status="error" if lag in ("broken", "link down") else None),
                     panel.cell(notes or "—", status=r.get("status")),
                 ]
             )
