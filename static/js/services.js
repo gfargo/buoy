@@ -77,7 +77,7 @@ export async function refreshServices(config) {
     const groups = groupServices(services);
     localEl.innerHTML = groups
       .map(({ group, items }) => {
-        const label = group !== '' || groups.length > 1 ? renderGroupLabel(group) : '';
+        const label = group !== '' ? renderGroupLabel(group) : '';
         return label + items.map(renderServiceCard).join('');
       })
       .join('');

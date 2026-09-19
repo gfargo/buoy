@@ -33,7 +33,13 @@ test('demo mode groups local services into Compose-project stacks (FEAT-11)', as
 
   const groupLabels = page.locator('#services-local .svc-group-label');
   await expect(groupLabels.first()).toBeVisible();
-  expect(await groupLabels.count()).toBeGreaterThan(0);
+  const labelTexts = await groupLabels.allTextContents();
+  expect(labelTexts.length).toBeGreaterThan(0);
+  // The demo data includes ungrouped containers alongside named stacks; that
+  // run must not render a blank header (FEAT-11 regression).
+  for (const text of labelTexts) {
+    expect(text.trim()).not.toEqual('');
+  }
 
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);

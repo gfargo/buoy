@@ -110,6 +110,19 @@ test('renderGroupLabel escapes a hostile group name', () => {
 
 test('a single unnamed group produces no header in refreshServices-style rendering', () => {
   const groups = groupServices([{ name: 'grafana', group: '' }]);
-  const label = groups[0].group !== '' || groups.length > 1 ? renderGroupLabel(groups[0].group) : '';
+  const label = groups[0].group !== '' ? renderGroupLabel(groups[0].group) : '';
   assert.equal(label, '');
+});
+
+test('an ungrouped run alongside named groups produces no header for that run', () => {
+  // Regression: a Compose host with named stacks plus a standalone container
+  // must not render a blank <h3> for the ungrouped run.
+  const services = [
+    { name: 'grafana', group: 'monitoring' },
+    { name: 'jellyfin', group: 'media' },
+    { name: 'standalone', group: '' },
+  ];
+  const groups = groupServices(services);
+  const labels = groups.map(({ group }) => (group !== '' ? renderGroupLabel(group) : ''));
+  assert.equal(labels[labels.length - 1], '');
 });
