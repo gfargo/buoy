@@ -131,6 +131,7 @@ async def test_render_produces_table_with_conn_and_online_status():
         "status": "ok",
         "truncate": False,
         "mono": False,
+        "wrap": False,
     }
     assert rows_by_peer["relay-peer"][2]["status"] == "error"
 
