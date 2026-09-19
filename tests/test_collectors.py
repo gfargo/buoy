@@ -406,6 +406,30 @@ class TestDockerStreamLogs:
         assert len(item["line"]) <= 10 + len("…[truncated]")
 
     @pytest.mark.asyncio
+    async def test_truncates_multibyte_utf8_by_byte_budget_not_char_count(self):
+        """`max_line_bytes` is documented (and named) as a byte budget — a
+        line of multi-byte UTF-8 chars must be capped by encoded byte length,
+        not `len()` of the decoded string, or it silently exceeds the cap."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        # Each "é" is 2 bytes in UTF-8 — 20 of them is 40 bytes but len() == 20.
+        long_line = ("é" * 20 + "\n").encode("utf-8")
+        proc = self._make_proc(stdout_lines=[long_line])
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10, max_line_bytes=10)
+            item = await gen.__anext__()
+            await gen.aclose()
+
+        assert item["line"].endswith("…[truncated]")
+        kept = item["line"].removesuffix("…[truncated]")
+        assert len(kept.encode("utf-8")) <= 10
+
+    @pytest.mark.asyncio
     async def test_kills_and_reaps_process_on_early_close(self):
         from unittest.mock import AsyncMock, patch
 
@@ -824,9 +848,7 @@ class TestDiskCollectorNvme:
 
         with (
             patch.object(coll, "_root_disk_percent", new=AsyncMock(return_value=42)),
-            patch(
-                "buoy.collectors.disk.scan_nvme_devices", new=AsyncMock(return_value=[])
-            ),
+            patch("buoy.collectors.disk.scan_nvme_devices", new=AsyncMock(return_value=[])),
             patch(
                 "buoy.collectors.disk.run_smartctl",
                 new=AsyncMock(return_value=device_not_found_banner),

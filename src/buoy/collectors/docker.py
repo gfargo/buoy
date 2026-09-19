@@ -245,8 +245,15 @@ class DockerCollector:
                     if not raw:
                         break
                     line = raw.decode("utf-8", errors="replace").rstrip("\n")
-                    if len(line) > max_line_bytes:
-                        line = line[:max_line_bytes] + "…[truncated]"
+                    encoded = line.encode("utf-8")
+                    if len(encoded) > max_line_bytes:
+                        # Truncate on the encoded bytes (not decoded chars) so
+                        # multi-byte UTF-8 content honors the documented byte
+                        # budget; errors="ignore" drops a boundary-split char.
+                        line = (
+                            encoded[:max_line_bytes].decode("utf-8", errors="ignore")
+                            + "…[truncated]"
+                        )
                     await queue.put({"stream": label, "line": line})
             finally:
                 await queue.put(sentinel)

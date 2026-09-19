@@ -641,6 +641,17 @@ class _DropOldestQueue:
         dropped, self._dropped = self._dropped, 0
         return items, dropped
 
+    def drain_up_to(self, n: int) -> tuple[list[dict], int]:
+        """Like `drain()`, but leaves anything beyond `n` items queued —
+        used to pace output to `logs.stream_rate_limit` without discarding
+        the backlog (it stays subject to normal drop-oldest on overflow)."""
+        items = [self._items.popleft() for _ in range(min(n, len(self._items)))]
+        dropped, self._dropped = self._dropped, 0
+        return items, dropped
+
+    def has_pending(self) -> bool:
+        return bool(self._items)
+
 
 _LOG_STREAM_BATCH_INTERVAL = 0.1
 _LOG_STREAM_BATCH_MAX_LINES = 100
@@ -691,8 +702,10 @@ async def ws_container_logs(websocket: WebSocket):
 
     queue = _DropOldestQueue(_LOG_STREAM_QUEUE_MAX_LINES)
     stop = asyncio.Event()
+    producer_error: Exception | None = None
 
     async def _produce() -> None:
+        nonlocal producer_error
         try:
             async with contextlib.aclosing(
                 docker_coll.stream_logs(name, tail=tail, max_line_bytes=config.logs.max_line_bytes)
@@ -701,8 +714,9 @@ async def ws_container_logs(websocket: WebSocket):
                     if stop.is_set():
                         break
                     queue.push(item)
-        except Exception:
-            logger.debug("ws_container_logs: producer failed for %s", name, exc_info=True)
+        except Exception as exc:
+            producer_error = exc
+            logger.warning("ws_container_logs: producer failed for %s: %s", name, exc)
         finally:
             stop.set()
             queue.wake()
@@ -711,16 +725,34 @@ async def ws_container_logs(websocket: WebSocket):
     recv_task = asyncio.ensure_future(websocket.receive_text())
     reason = "closed"
 
+    # `stream_rate_limit` (lines/sec, <=0 disables it) is a soft cap enforced
+    # here by pacing how many items we drain per rolling 1s window — items
+    # beyond the budget stay queued (and remain subject to normal
+    # drop-oldest) rather than being discarded outright.
+    rate_limit = config.logs.stream_rate_limit
+    rate_window_start = time.monotonic()
+    rate_window_sent = 0
+
     try:
         await websocket.send_json({"type": "log_start", "container": name, "tail": tail})
         while True:
-            wait_task = asyncio.ensure_future(queue.wait_not_empty())
+            now = time.monotonic()
+            if now - rate_window_start >= 1.0:
+                rate_window_start = now
+                rate_window_sent = 0
+            budget = None if rate_limit <= 0 else max(0, rate_limit - rate_window_sent)
+
+            waitables = {recv_task}
+            wait_task = None
+            if budget != 0:
+                wait_task = asyncio.ensure_future(queue.wait_not_empty())
+                waitables.add(wait_task)
             done, _pending = await asyncio.wait(
-                {recv_task, wait_task},
+                waitables,
                 timeout=_LOG_STREAM_BATCH_INTERVAL,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if not wait_task.done():
+            if wait_task is not None and not wait_task.done():
                 wait_task.cancel()
 
             if recv_task in done:
@@ -729,7 +761,8 @@ async def ws_container_logs(websocket: WebSocket):
                 reason = "disconnected"
                 break
 
-            items, dropped = queue.drain()
+            items, dropped = queue.drain() if budget is None else queue.drain_up_to(budget)
+            rate_window_sent += len(items)
             for i in range(0, len(items), _LOG_STREAM_BATCH_MAX_LINES):
                 await websocket.send_json(
                     {"type": "log", "lines": items[i : i + _LOG_STREAM_BATCH_MAX_LINES]}
@@ -737,8 +770,8 @@ async def ws_container_logs(websocket: WebSocket):
             if dropped:
                 await websocket.send_json({"type": "log_dropped", "count": dropped})
 
-            if stop.is_set() and not items and not dropped:
-                reason = "container exited"
+            if stop.is_set() and not items and not dropped and not queue.has_pending():
+                reason = "stream error" if producer_error is not None else "container exited"
                 break
     except WebSocketDisconnect:
         reason = "disconnected"

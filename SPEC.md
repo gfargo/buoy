@@ -447,7 +447,7 @@ multiplexed through `/ws`) speaking its own protocol:
 { "type": "log_start", "container": "grafana", "tail": 100 }
 { "type": "log", "lines": [{ "stream": "stdout", "line": "2026-01-01T00:00:00Z ..." }] }
 { "type": "log_dropped", "count": 12 }   // client too slow — oldest lines were dropped
-{ "type": "log_end", "reason": "container exited" }   // or "disconnected" | "error" | "closed"
+{ "type": "log_end", "reason": "container exited" }   // or "disconnected" | "stream error" | "error" | "closed"
 
 // Client → Server: any frame (or a disconnect) ends the stream server-side.
 ```

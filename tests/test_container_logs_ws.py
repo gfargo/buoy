@@ -33,7 +33,7 @@ from buoy.server import create_app
 class _FakeDockerCollector:
     """Deterministic stand-in for DockerCollector.stream_logs, with cleanup tracking."""
 
-    def __init__(self, lines=None, hang_after=False):
+    def __init__(self, lines=None, hang_after=False, raise_after=None):
         self._lines = (
             lines
             if lines is not None
@@ -43,6 +43,7 @@ class _FakeDockerCollector:
             ]
         )
         self.hang_after = hang_after
+        self.raise_after = raise_after
         self.closed = False
         self.last_tail = None
 
@@ -51,6 +52,8 @@ class _FakeDockerCollector:
         try:
             for item in self._lines:
                 yield item
+            if self.raise_after is not None:
+                raise self.raise_after
             if self.hang_after:
                 await asyncio.sleep(3600)
         finally:
@@ -108,6 +111,24 @@ class TestHappyPath:
                 assert end_msg == {"type": "log_end", "reason": "container exited"}
 
         assert collector.closed is True
+
+    def test_producer_failure_is_reported_distinctly_from_a_clean_exit(self):
+        """A broken producer (docker daemon unreachable, binary missing, ...)
+        must not look like an ordinary `container exited` end-of-stream —
+        the client needs to be able to tell the two apart."""
+        app = create_app(_make_config())
+        collector = _FakeDockerCollector(
+            lines=[{"stream": "stdout", "line": "hello"}],
+            raise_after=RuntimeError("docker daemon unreachable"),
+        )
+        with TestClient(app) as client:
+            _install_fake_collector(client, collector)
+            with client.websocket_connect("/ws/logs/grafana") as ws:
+                ws.receive_json()  # log_start
+                ws.receive_json()  # log (hello)
+                end_msg = ws.receive_json()
+
+        assert end_msg == {"type": "log_end", "reason": "stream error"}
 
     def test_uses_configured_default_tail_when_unspecified(self):
         app = create_app(_make_config(default_tail=42))
@@ -323,7 +344,9 @@ class TestBackpressure:
         overflow_by = 500
         total_lines = _LOG_STREAM_QUEUE_MAX_LINES + overflow_by
         lines = [{"stream": "stdout", "line": f"line {i}"} for i in range(total_lines)]
-        app = create_app(_make_config())
+        # Isolate queue-overflow drop-oldest from `stream_rate_limit` (a
+        # separate pacing mechanism, covered by TestRateLimit below).
+        app = create_app(_make_config(stream_rate_limit=0))
         collector = _FakeDockerCollector(lines=lines)
 
         with TestClient(app) as client:
@@ -345,6 +368,42 @@ class TestBackpressure:
         # Drop-oldest: the surviving lines are the most recent ones.
         assert received[0]["line"] == f"line {overflow_by}"
         assert received[-1]["line"] == f"line {total_lines - 1}"
+
+
+class TestRateLimit:
+    """`logs.stream_rate_limit` paces delivery instead of dropping — it must
+    actually be enforced (nothing prevents the send loop from ignoring it)."""
+
+    def test_paces_delivery_without_dropping_anything(self):
+        import time
+
+        rate_limit = 3
+        total_lines = 7
+        lines = [{"stream": "stdout", "line": f"line {i}"} for i in range(total_lines)]
+        app = create_app(_make_config(stream_rate_limit=rate_limit))
+        collector = _FakeDockerCollector(lines=lines)
+
+        with TestClient(app) as client:
+            _install_fake_collector(client, collector)
+            start = time.monotonic()
+            with client.websocket_connect("/ws/logs/grafana") as ws:
+                ws.receive_json()  # log_start
+                received = []
+                dropped_total = 0
+                msg = ws.receive_json()
+                while msg["type"] != "log_end":
+                    if msg["type"] == "log":
+                        received.extend(msg["lines"])
+                    elif msg["type"] == "log_dropped":
+                        dropped_total += msg["count"]
+                    msg = ws.receive_json()
+            elapsed = time.monotonic() - start
+
+        assert dropped_total == 0
+        assert [item["line"] for item in received] == [line["line"] for line in lines]
+        # 7 lines at 3/sec needs at least two window rollovers — if the
+        # limit weren't enforced this would complete almost instantly.
+        assert elapsed >= 1.0
 
 
 class TestRestLogsTailParam:

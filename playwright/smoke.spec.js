@@ -70,8 +70,12 @@ test('live log viewer streams, follow-toggles, and filters (OSS-1551)', async ({
   expect(await lines.count()).toBe(pausedCount);
 
   // Filtering hides non-matching lines without removing them from the DOM.
+  // Demo lines share a common date-stamp prefix, so filter on the
+  // monotonically-increasing "demo log line N" marker instead — it's
+  // unique to the first line and won't match any other.
   const firstLineText = await lines.first().textContent();
-  await page.fill('.ctr-logs-filter', firstLineText.slice(0, 8));
+  const marker = firstLineText.match(/demo log line \d+/)[0];
+  await page.fill('.ctr-logs-filter', marker);
   await expect
     .poll(async () => page.locator('.ctr-log-line.hidden').count())
     .toBeGreaterThan(0);
