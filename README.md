@@ -96,6 +96,31 @@ patterns against the full container name instead (e.g. `"plane-*-worker-*"`).
 Compose-managed `plane-plane-grafana-1` container as well as a bare `grafana`
 container run outside Compose.
 
+**Static (non-Docker) services and bookmarks:**
+```yaml
+services:
+  static:
+    - name: NAS
+      icon: "💾"
+      desc: "Synology DS920+"
+      url: https://nas.example.ts.net
+      health_check: true       # or an explicit URL to poll instead of `url`
+    - name: Router
+      icon: "📡"
+      url: https://192.168.1.1
+      verify_ssl: false        # self-signed appliance cert
+```
+
+`services.static` entries appear alongside Docker-discovered services —
+useful for a NAS, router, printer, VM, or anything else that isn't a
+container on this host. Unlike Docker services, `services.hidden` and
+`services.overrides` don't apply to them. `health_check: true` polls `url`
+itself; a string instead polls that URL; omitting it (or `false`) renders the
+entry with no status dot. Checks run in the background on
+`refresh.health_check_interval` (default 60s) and never block a page load.
+`verify_ssl` overrides `network.verify_ssl` per entry — handy for
+self-signed certs on home appliances.
+
 Environment variables override any YAML value (prefix: `BUOY_`):
 ```bash
 BUOY_NODE_NAME=harbor

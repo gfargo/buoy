@@ -188,6 +188,15 @@ services:
       icon: "\U0001F5A8"
       desc: "3D Printer Management"
       port: 5050
+  # Non-Docker services and bookmarks — NAS, router, printer, VM, bare-metal
+  # app. Not affected by `hidden`/`overrides`, which only apply to Docker
+  # discovery.
+  static:
+    - name: NAS
+      icon: "\U0001F4BE"
+      desc: "Synology DS920+"
+      url: https://nas.tailb82ead.ts.net
+      health_check: true       # poll `url`; a string polls that URL instead
 
 theme:
   preset: terminal          # terminal | light | solarized | nord | high-contrast
@@ -219,6 +228,7 @@ refresh:
   services_interval: 30
   fleet_interval: 15
   plugins_interval: 60
+  health_check_interval: 60  # services.static health-check polling
 
 plugins:
   enabled: true
@@ -285,6 +295,10 @@ services:
       name: Grafana
       icon: "\U0001F4CA"
       port: 3000
+  static:
+    - name: NAS
+      url: https://nas.example.ts.net
+      health_check: true
 
 plugins:
   builtin:
@@ -405,7 +419,7 @@ This keeps the barrier low (no JS needed for simple plugins) while allowing rich
 | GET | `/api/config` | No | Public config subset (node name, theme, features, peer names) |
 | GET | `/api/stats` | No | System vitals (CPU, RAM, disk, temp, containers, uptime) |
 | GET | `/api/stats/detail` | No | Extended metrics (per-core, top processes, mount details) |
-| GET | `/api/services` | No | Discovered local services + network links |
+| GET | `/api/services` | No | Discovered local (Docker + `services.static`) services + network links |
 | GET | `/api/fleet` | No | Aggregated peer node stats |
 | GET | `/api/plugins` | No | All plugin panel data |
 | GET | `/api/plugins/{id}` | No | Single plugin data |

@@ -77,9 +77,20 @@ class ServiceOverride:
 
 
 @dataclass
+class StaticService:
+    name: str = ""
+    icon: str = ""
+    desc: str = ""
+    url: str = ""
+    health_check: str = ""  # "" = no check, else the URL to poll
+    verify_ssl: bool | None = None  # None = inherit network.verify_ssl
+
+
+@dataclass
 class ServicesConfig:
     hidden: list[str] = field(default_factory=list)
     overrides: dict[str, ServiceOverride] = field(default_factory=dict)
+    static: list[StaticService] = field(default_factory=list)
 
 
 @dataclass
@@ -115,6 +126,7 @@ class RefreshConfig:
     fleet_interval: int = 15
     plugins_interval: int = 60
     image_updates_interval: int = 21600  # 6 hours
+    health_check_interval: int = 60
 
 
 @dataclass
@@ -223,6 +235,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_REFRESH_FLEET_INTERVAL": ("refresh", "fleet_interval"),
         "BUOY_REFRESH_PLUGINS_INTERVAL": ("refresh", "plugins_interval"),
         "BUOY_REFRESH_IMAGE_UPDATES_INTERVAL": ("refresh", "image_updates_interval"),
+        "BUOY_REFRESH_HEALTH_CHECK_INTERVAL": ("refresh", "health_check_interval"),
         "BUOY_ALERTS_WEBHOOK_URL": ("alerts", "webhook_url"),
         "BUOY_LOG_LEVEL": ("logging", "level"),
     }
@@ -244,6 +257,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "fleet_interval",
             "plugins_interval",
             "image_updates_interval",
+            "health_check_interval",
         ):
             # An empty string (e.g. `BUOY_NETWORK_LISTEN_PORT=`) is treated as an
             # explicit invalid value, not "unset" — only a missing env var (checked
@@ -314,6 +328,48 @@ def _parse_overrides(raw_overrides: dict[str, dict]) -> dict[str, ServiceOverrid
     return overrides
 
 
+def _parse_static_services(raw_static: list) -> list[StaticService]:
+    """Parse ``services.static`` entries (non-Docker services and bookmarks).
+
+    An entry without a ``name`` is skipped with a warning rather than raising,
+    consistent with the "unknown/bad config warns, never crashes" rule
+    (SPEC §3.3) — a typo'd static entry shouldn't take down the whole node.
+    """
+    entries = []
+    for cfg in raw_static:
+        if not isinstance(cfg, dict):
+            logger.warning("services.static: expected a mapping, got %r — skipped", cfg)
+            continue
+
+        name = cfg.get("name", "")
+        if not name:
+            logger.warning("services.static: entry without a 'name' skipped: %r", cfg)
+            continue
+
+        raw_health = cfg.get("health_check")
+        if raw_health is True:
+            health_check = cfg.get("url", "")
+        elif isinstance(raw_health, str) and raw_health:
+            health_check = raw_health
+        else:
+            health_check = ""
+
+        raw_verify = cfg.get("verify_ssl")
+        verify_ssl = bool(raw_verify) if raw_verify is not None else None
+
+        entries.append(
+            StaticService(
+                name=name,
+                icon=cfg.get("icon", ""),
+                desc=cfg.get("desc") or cfg.get("description", ""),
+                url=cfg.get("url", ""),
+                health_check=health_check,
+                verify_ssl=verify_ssl,
+            )
+        )
+    return entries
+
+
 def _parse_plugins(
     raw_plugins: dict[str, dict], default_enabled: bool = False
 ) -> dict[str, PluginEntry]:
@@ -373,9 +429,17 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         verify_ssl=bool(network_raw.get("verify_ssl", True)),
     )
 
+    raw_static = services_raw.get("static", [])
+    if not isinstance(raw_static, list):
+        logger.warning(
+            "services.static: expected a list, got %s — ignoring", type(raw_static).__name__
+        )
+        raw_static = []
+
     services = ServicesConfig(
         hidden=services_raw.get("hidden", []),
         overrides=_parse_overrides(services_raw.get("overrides", {})),
+        static=_parse_static_services(raw_static),
     )
 
     theme = ThemeConfig(
@@ -412,6 +476,9 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         ),
         image_updates_interval=_coerce_int(
             refresh_raw.get("image_updates_interval", 21600), "refresh.image_updates_interval"
+        ),
+        health_check_interval=_coerce_int(
+            refresh_raw.get("health_check_interval", 60), "refresh.health_check_interval"
         ),
     )
 
