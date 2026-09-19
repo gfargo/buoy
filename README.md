@@ -14,7 +14,7 @@ A lightweight, per-node system dashboard for homelabs and small infrastructure.
 
 Deploy one container per host. Buoy auto-discovers your Docker services, shows system vitals, and connects to peer nodes for a fleet overview — your tailnet landing page.
 
-- **System vitals** — CPU, RAM, disk, temperature, NVMe health, GPU (NVIDIA/AMD/Intel), container count
+- **System vitals** — CPU, RAM, disk, temperature, NVMe health, GPU (NVIDIA/AMD/Intel), container count, network throughput
 - **Service discovery** — auto-finds running Docker containers; customize with display overrides
 - **Fleet overview** — poll peer Buoy instances for a multi-node dashboard
 - **Tailscale-aware** — links auto-switch between HTTPS tailnet URLs and localhost
