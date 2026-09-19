@@ -91,7 +91,7 @@ test('deep link #plugin=github opens the Github detail on load and clears on clo
   await expect(dialog).toBeVisible();
   await expect(page.locator('#plugin-detail-title')).toHaveText(/github/i);
 
-  await page.locator('.plugin-dialog-close').click();
+  await dialog.locator('.plugin-dialog-close').click();
   await expect(dialog).toBeHidden();
   await expect.poll(() => page.evaluate(() => location.hash)).toBe('');
 });
