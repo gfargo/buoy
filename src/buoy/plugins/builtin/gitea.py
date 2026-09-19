@@ -67,11 +67,28 @@ class GiteaPlugin(Plugin):
         with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT, context=ctx) as resp:
             return json.loads(resp.read())
 
+    def _get_json_with_total(self, url: str, headers: dict, ctx) -> tuple[dict | list, int | None]:
+        """Like _get_json, but also returns the true total from X-Total-Count.
+
+        Gitea/Forgejo's paginated list endpoints cap each page at `limit`
+        entries but report the real total in the `X-Total-Count` response
+        header — without it, a page's length is just the page size, not
+        the total count.
+        """
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT, context=ctx) as resp:
+            body = json.loads(resp.read())
+            total_header = resp.headers.get("X-Total-Count") if resp.headers else None
+        total = int(total_header) if total_header and total_header.isdigit() else None
+        return body, total
+
     def _collect_sync(
         self, base: str, headers: dict, ctx, repos: list[str], queue_warn_threshold: int
     ) -> PanelData:
         try:
-            repo_list = self._get_json(f"{base}/user/repos?limit={_MAX_REPOS}", headers, ctx)
+            repo_list, total_repos = self._get_json_with_total(
+                f"{base}/user/repos?limit={_MAX_REPOS}", headers, ctx
+            )
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
                 return PanelData(status="error", summary="Auth failed")
@@ -79,13 +96,13 @@ class GiteaPlugin(Plugin):
         except Exception as e:
             return PanelData(status="error", summary="Unreachable", detail={"error": str(e)})
 
-        repo_count = len(repo_list)
+        repo_count = total_repos if total_repos is not None else len(repo_list)
         pr_counter_sum = sum(r.get("open_pr_counter", 0) for r in repo_list)
 
         open_prs: list[dict] = []
         pr_count = pr_counter_sum
         try:
-            pr_search = self._get_json(
+            pr_search, total_prs = self._get_json_with_total(
                 f"{base}/repos/issues/search?type=pulls&state=open&limit=10", headers, ctx
             )
             issues = pr_search if isinstance(pr_search, list) else pr_search.get("data", [])
@@ -97,32 +114,34 @@ class GiteaPlugin(Plugin):
                         "url": issue.get("html_url", ""),
                     }
                 )
-            pr_count = len(issues)
+            pr_count = total_prs if total_prs is not None else len(issues)
         except urllib.error.HTTPError:
             pass  # older instance without the search endpoint — fall back to the counter
 
         queued = 0
         action_failures = 0
         failed_runs: list[dict] = []
-        actions_supported = True
+        actions_supported = False
         for full_name in repos[:_MAX_ACTION_REPOS]:
             try:
                 tasks = self._get_json(
                     f"{base}/repos/{full_name}/actions/tasks?limit=20", headers, ctx
                 )
             except urllib.error.HTTPError:
-                actions_supported = False
                 continue
             except Exception:
-                actions_supported = False
                 continue
 
+            if not isinstance(tasks, dict):
+                continue
+
+            actions_supported = True
             for run in tasks.get("workflow_runs", []):
                 status = run.get("status", "")
                 conclusion = run.get("conclusion", "")
                 if status in _QUEUED_STATUSES:
                     queued += 1
-                if conclusion == "failure":
+                if conclusion == "failure" or status == "failure":
                     action_failures += 1
                     failed_runs.append(
                         {

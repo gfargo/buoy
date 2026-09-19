@@ -8,9 +8,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
-def _cm(payload):
+def _cm(payload, headers=None):
     cm = MagicMock()
-    cm.__enter__ = lambda s: MagicMock(read=lambda: json.dumps(payload).encode())
+    resp = MagicMock(read=lambda: json.dumps(payload).encode())
+    resp.headers = headers if headers is not None else {}
+    cm.__enter__ = lambda s: resp
     cm.__exit__ = lambda s, *a: None
     return cm
 
@@ -19,7 +21,9 @@ def _dispatch(payloads):
     """Return a urlopen side_effect that routes by URL fragment.
 
     A payload that is an Exception instance is raised instead of returned,
-    so tests can simulate a 404/unreachable endpoint per-URL.
+    so tests can simulate a 404/unreachable endpoint per-URL. A payload may
+    also be a (body, headers) tuple to simulate response headers such as
+    X-Total-Count.
     """
 
     def _side_effect(req, *a, **kw):
@@ -28,7 +32,11 @@ def _dispatch(payloads):
             if fragment in url:
                 if isinstance(payload, Exception):
                     raise payload
-                return _cm(payload)
+                if isinstance(payload, tuple):
+                    body, headers = payload
+                else:
+                    body, headers = payload, None
+                return _cm(body, headers)
         raise AssertionError(f"unexpected URL {url}")
 
     return _side_effect
@@ -96,10 +104,29 @@ class TestGiteaPlugin:
         plugin = self._make_plugin(
             {"url": "https://git.example.com", "token": "tok", "repos": ["a/b"]}
         )
+        # Real Gitea/Forgejo ActionTask objects carry the terminal state in
+        # `status` only — there is no GitHub-style `conclusion` field.
+        failed_run = {"name": "ci", "status": "failure", "head_branch": "main"}
         payloads = {
             "/user/repos": [_repo("a/b")],
             "issues/search": [],
-            "actions/tasks": {"workflow_runs": [_run(status="failure", conclusion="failure")]},
+            "actions/tasks": {"workflow_runs": [failed_run]},
+        }
+        with patch("urllib.request.urlopen", side_effect=_dispatch(payloads)):
+            result = await plugin.collect()
+
+        assert result.status == "error"
+        assert result.detail["action_failures"] == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_action_run_errors_with_github_style_conclusion(self):
+        plugin = self._make_plugin(
+            {"url": "https://git.example.com", "token": "tok", "repos": ["a/b"]}
+        )
+        payloads = {
+            "/user/repos": [_repo("a/b")],
+            "issues/search": [],
+            "actions/tasks": {"workflow_runs": [_run(status="success", conclusion="failure")]},
         }
         with patch("urllib.request.urlopen", side_effect=_dispatch(payloads)):
             result = await plugin.collect()
@@ -148,6 +175,51 @@ class TestGiteaPlugin:
 
         assert result.status == "ok"
         assert result.detail["actions_supported"] is False
+
+    @pytest.mark.asyncio
+    async def test_actions_non_dict_response_degrades_gracefully(self):
+        plugin = self._make_plugin(
+            {"url": "https://git.example.com", "token": "tok", "repos": ["a/b"]}
+        )
+        payloads = {
+            "/user/repos": [_repo("a/b")],
+            "issues/search": [],
+            "actions/tasks": [],  # unexpected shape — not a dict
+        }
+        with patch("urllib.request.urlopen", side_effect=_dispatch(payloads)):
+            result = await plugin.collect()
+
+        assert result.status == "ok"
+        assert result.detail["repo_count"] == 1
+        assert result.detail["actions_supported"] is False
+
+    @pytest.mark.asyncio
+    async def test_actions_supported_false_when_no_repos_configured(self):
+        plugin = self._make_plugin({"url": "https://git.example.com", "token": "tok"})
+        payloads = {
+            "/user/repos": [_repo("a/b")],
+            "issues/search": [],
+        }
+        with patch("urllib.request.urlopen", side_effect=_dispatch(payloads)):
+            result = await plugin.collect()
+
+        assert result.detail["actions_supported"] is False
+
+    @pytest.mark.asyncio
+    async def test_repo_and_pr_counts_use_x_total_count_header(self):
+        plugin = self._make_plugin(
+            {"url": "https://git.example.com", "token": "tok", "repos": ["a/b"]}
+        )
+        payloads = {
+            "/user/repos": ([_repo("a/b")] * 50, {"X-Total-Count": "137"}),
+            "issues/search": ([_issue("fix bug", "a/b")] * 10, {"X-Total-Count": "42"}),
+            "actions/tasks": {"workflow_runs": []},
+        }
+        with patch("urllib.request.urlopen", side_effect=_dispatch(payloads)):
+            result = await plugin.collect()
+
+        assert result.detail["repo_count"] == 137
+        assert result.detail["pr_count"] == 42
 
     @pytest.mark.asyncio
     async def test_issue_search_404_falls_back_to_open_pr_counter(self):
