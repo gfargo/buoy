@@ -247,4 +247,5 @@ class TestCertExpiryRender:
             "status": "warn",
             "truncate": False,
             "mono": False,
+            "wrap": False,
         }

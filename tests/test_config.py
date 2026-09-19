@@ -98,6 +98,14 @@ class TestConfigFromYAML:
         assert config.services.overrides["grafana"].name == "Grafana"
         assert config.services.overrides["grafana"].port == 3000
 
+    def test_refresh_health_check_interval_default(self):
+        config = _build_config({})
+        assert config.refresh.health_check_interval == 60
+
+    def test_refresh_health_check_interval_override(self):
+        config = _build_config({"refresh": {"health_check_interval": 30}})
+        assert config.refresh.health_check_interval == 30
+
     def test_auth_enabled(self):
         raw = {"auth": {"enabled": True, "type": "token", "token": "secret123"}}
         config = _build_config(raw)
@@ -225,6 +233,139 @@ class TestConfigFromYAML:
     def test_logging_level_from_yaml(self):
         config = _build_config({"logging": {"level": "DEBUG"}})
         assert config.logging.level == "DEBUG"
+
+
+class TestServicesStatic:
+    """Tests for services.static (non-Docker service entries / bookmarks)."""
+
+    def test_defaults_empty(self):
+        config = _build_config({})
+        assert config.services.static == []
+
+    def test_parsed(self):
+        raw = {
+            "services": {
+                "static": [
+                    {
+                        "name": "NAS",
+                        "icon": "💾",
+                        "desc": "Synology",
+                        "url": "https://nas.local",
+                    }
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert len(config.services.static) == 1
+        entry = config.services.static[0]
+        assert entry.name == "NAS"
+        assert entry.icon == "💾"
+        assert entry.desc == "Synology"
+        assert entry.url == "https://nas.local"
+        assert entry.health_check == ""
+        assert entry.verify_ssl is None
+
+    def test_description_alias(self):
+        raw = {"services": {"static": [{"name": "NAS", "description": "Synology"}]}}
+        config = _build_config(raw)
+        assert config.services.static[0].desc == "Synology"
+
+    def test_desc_wins_over_description_alias(self):
+        raw = {"services": {"static": [{"name": "NAS", "desc": "primary", "description": "alias"}]}}
+        config = _build_config(raw)
+        assert config.services.static[0].desc == "primary"
+
+    def test_skips_entry_without_name(self, caplog):
+        raw = {"services": {"static": [{"url": "https://nas.local"}, {"name": "Router"}]}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert len(config.services.static) == 1
+        assert config.services.static[0].name == "Router"
+        assert any("services.static" in r.message for r in caplog.records)
+
+    def test_health_check_true_uses_url(self):
+        raw = {
+            "services": {
+                "static": [{"name": "NAS", "url": "https://nas.local", "health_check": True}]
+            }
+        }
+        config = _build_config(raw)
+        assert config.services.static[0].health_check == "https://nas.local"
+
+    def test_health_check_explicit_url(self):
+        raw = {
+            "services": {
+                "static": [
+                    {
+                        "name": "NAS",
+                        "url": "https://nas.local",
+                        "health_check": "https://nas.local/health",
+                    }
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert config.services.static[0].health_check == "https://nas.local/health"
+
+    def test_health_check_absent_or_false_means_no_check(self):
+        raw = {
+            "services": {
+                "static": [
+                    {"name": "A", "url": "https://a.local"},
+                    {"name": "B", "url": "https://b.local", "health_check": False},
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert config.services.static[0].health_check == ""
+        assert config.services.static[1].health_check == ""
+
+    def test_verify_ssl_none_when_absent(self):
+        raw = {"services": {"static": [{"name": "NAS", "url": "https://nas.local"}]}}
+        config = _build_config(raw)
+        assert config.services.static[0].verify_ssl is None
+
+    def test_verify_ssl_explicit_false(self):
+        raw = {
+            "services": {
+                "static": [{"name": "NAS", "url": "https://nas.local", "verify_ssl": False}]
+            }
+        }
+        config = _build_config(raw)
+        assert config.services.static[0].verify_ssl is False
+
+    def test_non_list_static_warns_and_degrades_to_empty(self, caplog):
+        raw = {"services": {"static": {"name": "NAS"}}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert config.services.static == []
+        assert any("services.static" in r.message for r in caplog.records)
+
+    def test_non_dict_static_entry_skipped_with_warning(self, caplog):
+        raw = {"services": {"static": ["https://nas.local", {"name": "Router"}]}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert len(config.services.static) == 1
+        assert config.services.static[0].name == "Router"
+        assert any("services.static" in r.message for r in caplog.records)
+
+    def test_services_static_produces_no_unknown_key_warning(self, caplog):
+        raw = {
+            "services": {
+                "static": [
+                    {
+                        "name": "NAS",
+                        "icon": "💾",
+                        "url": "https://nas.local",
+                        "health_check": True,
+                        "verify_ssl": False,
+                    }
+                ]
+            }
+        }
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys(raw)
+        assert caplog.records == []
 
 
 class TestEnvOverrides:

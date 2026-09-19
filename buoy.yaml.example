@@ -126,6 +126,21 @@ services:
   #     desc: "Media Server"
   #     port: 8096
 
+  # Non-Docker services and bookmarks (NAS, router, printer, VM, bare-metal
+  # app, or just a link) — always shown, not affected by `hidden`/`overrides`.
+  static: []
+  # Example:
+  # static:
+  #   - name: NAS
+  #     icon: "\U0001F4BE"   # 💾
+  #     desc: "Synology DS920+"
+  #     url: https://nas.example.ts.net
+  #     health_check: true          # poll `url`; or set an explicit full URL instead
+  #   - name: Router
+  #     icon: "\U0001F4E1"   # 📡
+  #     url: https://192.168.1.1
+  #     verify_ssl: false           # self-signed appliance cert
+
 # ── Theme ──────────────────────────────────────────────────
 theme:
   preset: terminal           # terminal (dark) | light | solarized | nord | high-contrast
@@ -152,10 +167,11 @@ features:
   history: false             # SQLite ring buffer for 24h trends (Phase 5)
   demo_mode: false           # Serve mock data (no Docker/host access needed)
   night_mode: auto           # auto (10pm-6am) | always | never
-  keyboard_shortcuts: true   # 1-4 for gauges, Escape to close
+  keyboard_shortcuts: true   # 1-5 for gauges, Escape to close
   image_updates: false       # Docker image update checker (badges on container cards)
   log_streaming: true        # Live WebSocket container log streaming (falls back to a
                               # one-shot fetch when off or the socket fails)
+  gpu: true                  # GPU collector (NVIDIA/AMD/Intel) — auto-detects, no-ops without a GPU
 
 # ── Live Log Streaming ─────────────────────────────────────
 # Tuning for the /ws/logs/{name} WebSocket (docker logs --follow). Also
@@ -174,6 +190,7 @@ refresh:
   fleet_interval: 15         # Peer node polling
   plugins_interval: 60       # Global minimum interval for server-side plugin collection (plugins may poll less often per their own manifest)
   image_updates_interval: 21600  # Image update check interval (6 hours)
+  health_check_interval: 60  # services.static health-check polling interval
 
 # ── Alerts ─────────────────────────────────────────────────
 # Optional: POST a JSON payload to a webhook when a threshold alert fires.
@@ -196,6 +213,7 @@ alerts:
 #   BUOY_PLUGIN_GITHUB_TOKEN         → plugins.builtin.github.token
 #   BUOY_PLUGIN_TRIGGER_DEV_API_KEY  → plugins.builtin.trigger_dev.api_key
 #   BUOY_PLUGIN_PROXMOX_TOKEN_SECRET → plugins.builtin.proxmox.token_secret
+#   BUOY_PLUGIN_GRAFANA_ALERTS_TOKEN → plugins.builtin.grafana_alerts.token
 # The same convention applies to drop-in plugins under plugins.user.<id> (see below).
 # Env present always wins over the YAML value.
 #
@@ -218,6 +236,15 @@ plugins:
       enabled: false
       token: ""              # Or BUOY_PLUGIN_GITHUB_TOKEN (or legacy BUOY_GITHUB_TOKEN)
 
+    # Gitea / Forgejo repos, open PRs, Actions queue & failures
+    gitea:
+      enabled: false
+      url: ""                  # e.g., https://git.example.com (include a subpath if used)
+      token: ""                # Or BUOY_PLUGIN_GITEA_TOKEN — needs read:repository
+      repos: []                # "owner/name" entries to poll for Actions (max 3)
+      verify_ssl: true         # Set false for self-signed certs (insecure)
+      queue_warn_threshold: 5  # Queued Actions jobs before status → warn
+
     # UptimeKuma service health badges
     uptime_kuma:
       enabled: false
@@ -236,10 +263,13 @@ plugins:
       workspace: ""
       project: ""
 
-    # Actual Budget monthly summary (pending)
+    # Actual Budget monthly summary
+    # Requires: actual-http-api sidecar (https://github.com/jhonderson/actual-http-api)
     actual_budget:
       enabled: false
-      url: ""
+      url: ""                # e.g., http://actual-http-api:5007
+      api_key: ""            # API key set on the HTTP adapter (not the Actual password)
+      budget_sync_id: ""     # Actual budget file sync ID
 
     # SnapRAID parity status
     snapraid:
@@ -264,6 +294,22 @@ plugins:
       enabled: false
       url: ""                # e.g., http://localhost:8096
       api_key: ""            # Jellyfin API key (Dashboard → API Keys)
+
+    # *arr stack — queue depth, wanted/missing, and health warnings.
+    # Configure only the services you run; each needs Settings → General → API Key.
+    arr_stack:
+      enabled: false
+      sonarr_url: ""           # e.g., http://localhost:8989
+      sonarr_api_key: ""       # Or BUOY_PLUGIN_ARR_STACK_SONARR_API_KEY
+      radarr_url: ""           # e.g., http://localhost:7878
+      radarr_api_key: ""
+      prowlarr_url: ""         # e.g., http://localhost:9696
+      prowlarr_api_key: ""
+      bazarr_url: ""           # e.g., http://localhost:6767
+      bazarr_api_key: ""
+      queue_warn_threshold: 20     # queued items before status → warn
+      missing_warn_threshold: 50   # wanted/missing items before status → warn
+      verify_ssl: true             # set false for self-signed certs (insecure)
 
     # Home Assistant entity/automation counts, unavailable entities, updates
     home_assistant:
@@ -327,6 +373,62 @@ plugins:
                                # AdGuard: Basic-auth password
       verify_ssl: true         # Set false for self-signed certs (insecure)
 
+    # Reverse proxy router/route count, 5xx rate, and per-host cert status
+    # type: traefik → GET {url}/api/overview + {url}/api/http/routers
+    #   Needs --api.insecure=true, or an exposed & authenticated API router
+    # type: caddy   → GET {url}/config/apps/http/servers (admin API)
+    #   Optionally reads {url}/reverse_proxy/upstreams for upstream health
+    # type: npm     → Nginx Proxy Manager; logs in via username/password,
+    #   then GET {url}/api/nginx/proxy-hosts?expand=certificate (port 81)
+    # Capability matrix (missing signals are omitted, not errors):
+    #   - Per-host cert *expiry* is only available from NPM.
+    #   - 5xx rate needs `metrics_url` (Traefik/Caddy Prometheus metrics).
+    reverse_proxy:
+      enabled: false
+      type: traefik            # traefik | caddy | npm
+      url: ""                  # e.g. http://traefik:8080, http://caddy:2019, http://npm:81
+      username: ""             # NPM only: login identity
+      password: ""             # NPM only: login secret (or BUOY_PLUGIN_REVERSE_PROXY_PASSWORD)
+      api_key: ""              # Optional bearer token if the admin API sits behind auth
+      metrics_url: ""          # Optional Traefik/Caddy Prometheus /metrics endpoint
+      verify_ssl: true         # Set false for self-signed certs (insecure)
+      warn_days: 30            # Cert expiry warning threshold (NPM only)
+      critical_days: 7         # Cert expiry error threshold (NPM only)
+      error_rate_warn: 5.0     # 5xx rate (%) that triggers a warning
+
+    # Download client queues, speeds, ratio, and free disk space
+    download_clients:
+      enabled: false
+      timeout_s: 8             # per-client request timeout
+      verify_ssl: true
+      disk_warn_gb: 50         # amber at or below this much free space
+      disk_critical_gb: 10     # red at or below this much free space
+      max_rows: 10             # queue rows shown on the card
+      clients: []
+      # clients:
+      #   - name: qbit
+      #     type: qbittorrent   # qbittorrent | transmission | sabnzbd | nzbget
+      #     url: http://qbittorrent:8080
+      #     username: admin
+      #     password_env: QBIT_PW   # env var holding the password (or `password:` directly)
+      #   - name: sab
+      #     type: sabnzbd
+      #     url: http://sabnzbd:8080
+      #     api_key_env: SAB_API_KEY
+
+    # Grafana / Alertmanager firing alerts by severity
+    # type: alertmanager → {url}/api/v2/alerts
+    # type: grafana      → {url}/api/alertmanager/grafana/api/v2/alerts (needs token)
+    grafana_alerts:
+      enabled: false
+      type: alertmanager     # alertmanager | grafana
+      url: ""                # e.g. http://alertmanager:9093 or https://grafana.example.com
+      token: ""              # Grafana service-account token (or BUOY_PLUGIN_GRAFANA_ALERTS_TOKEN)
+      username: ""           # optional HTTP basic auth
+      password: ""
+      include_silenced: false
+      verify_ssl: true
+
     # Trigger.dev task run status (recent runs, 24h failures, queue depth)
     trigger_dev:
       enabled: false
@@ -334,6 +436,17 @@ plugins:
       api_key: ""                      # Secret key (tr_prod_…, tr_dev_…)
       project_ref: ""                  # Project reference (e.g. "proj_abc123")
       queue_warn_threshold: 50         # Queued+executing runs before status → error
+
+    # Cloudflare Tunnel connector health + active connections
+    # Requires an API token with "Account > Cloudflare Tunnel > Read" scope
+    # Rate limits: one request per refresh_interval per node — if several
+    # nodes share the same token, keep this interval generous.
+    cloudflare_tunnel:
+      enabled: false
+      account_id: ""                   # Cloudflare account ID
+      api_token: ""                    # Or BUOY_PLUGIN_CLOUDFLARE_TUNNEL_API_TOKEN env var
+      tunnels: []                      # Optional name/id filter; empty = all tunnels
+      min_connections: 0               # Warn if a tunnel's active connections drop below this (0 = off)
 
     # SMART disk health (SATA + NVMe) — requires privileged + pid: host
     smart_disk:
@@ -361,6 +474,8 @@ plugins:
     # Requires privileged + pid: host deployment (see README) for host cron log access
     cron_health:
       enabled: false
+      max_entries: 20          # max journald entries to fetch (also caps the detail view)
+      backup_log_path: ""      # host-absolute path to tail into the detail view's "Backup log"; "" = off
 
     # Priority-error journal entries (reads host journald via nsenter)
     # Requires privileged + pid: host deployment (see README)
@@ -384,6 +499,49 @@ plugins:
     systemd_health:
       enabled: false
       units: []   # unit names to check; empty = auto-detect
+
+    # Fail2ban / CrowdSec active bans, recent decisions, top offenders
+    # Requires privileged + pid: host deployment (see README) — shells out to
+    # fail2ban-client / cscli on the host via nsenter. Note: this panel
+    # exposes source IPs of banned/decisioned hosts.
+    ban_status:
+      enabled: false
+      type: fail2ban        # fail2ban | crowdsec
+      warn_threshold: 25    # amber at or above this many active bans
+      max_offenders: 5      # top offending IPs listed
+      max_decisions: 10     # CrowdSec only: recent decisions shown
+
+    # Postgres/MySQL/Redis connections, replication lag, slow queries, memory/evictions.
+    # Requires the `databases` extra: pip install "buoy[databases]".
+    #
+    # Least-privilege grants per engine:
+    #   Postgres: GRANT pg_monitor TO buoy;
+    #   MySQL:    GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'buoy'@'%';
+    #   Redis:    ACL SETUSER buoy on >password ~* &* -@all +info +ping
+    databases:
+      enabled: false
+      connections_warn_pct: 80      # amber at or above this % of max connections
+      connections_critical_pct: 95  # red at or above this % of max connections
+      replication_lag_warn_s: 30    # amber at or above this many seconds behind
+      replication_lag_critical_s: 300  # red at or above this many seconds behind
+      slow_query_seconds: 5         # queries running longer than this count as slow (Postgres)
+      timeout_s: 5                  # per-target connect/query timeout
+      targets: []
+      # Example:
+      # targets:
+      #   - name: app-db
+      #     engine: postgres        # postgres | mysql | redis
+      #     host: 127.0.0.1
+      #     port: 5432
+      #     user: buoy
+      #     password_env: PG_APP_PW   # env var holding the password (or use `password:` directly)
+      #     database: app
+      #     tls: false
+      #   - name: cache
+      #     engine: redis
+      #     host: 127.0.0.1
+      #     port: 6379
+      #     password_env: REDIS_APP_PW
 
   # Config for drop-in plugins loaded from `directory` above, keyed by manifest id.
   # Unlike builtin.*, these are opt-out: just drop the .py file in and it loads,

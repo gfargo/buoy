@@ -24,8 +24,12 @@ see [Tier 0](#tier-0--native--systemd) below.
 | `privileged: true` + `pid: host` (or running natively on the host) | `nsenter -t 1 -m` to reach the host's mount namespace for the full mount list — natively this is moot, since the process is already in the host mount namespace | Falls back to reading `/proc/mounts` directly and filtering to real (non-virtual) filesystems: on a native install this still yields the full host mount list (no privilege needed to read `/proc`); inside an unprivileged, non-`pid:host` container it only sees that container's own mounts | `src/buoy/collectors/disk.py` (`_nsenter_mounts`, `_local_mounts`) |
 | `CAP_SYS_ADMIN` + device access (via `privileged: true`, or explicitly granted — see [Tier 0](#tier-0--native--systemd)) | `smartctl`'s NVMe admin-passthrough ioctl on `/dev/nvme0n1` for SMART data | NVMe SMART section is omitted entirely (`nvme` key absent from `/api/stats`) — the kernel requires `CAP_SYS_ADMIN` for this specific ioctl regardless of file permissions or container boundary, so this is lost even on an otherwise-unprivileged **native** install | `src/buoy/collectors/disk.py` (`_nvme_smart`) |
 | Host `/sys` visibility (implied by `privileged`, or native) | CPU temperature reading from `/sys/class/thermal/thermal_zone0/temp` | Temperature reports as `0` | `src/buoy/collectors/system.py` (`_read_temperature`) |
+| NVIDIA Container Toolkit (`--gpus all` / `runtime: nvidia`) exposing `nvidia-smi` in the container, or a native install with the NVIDIA driver | GPU utilisation, VRAM, temperature, power, and per-process usage | `gpus` key absent from `/api/stats`; `nvidia-smi` missing degrades to no GPU found, same as a host with no GPU at all | `src/buoy/collectors/gpu.py` (`_probe_nvidia`) |
+| `/dev/dri` + host `/sys` visibility (present by default; explicit device mount recommended) | AMD GPU utilisation, VRAM, temperature, power via `amdgpu` sysfs | AMD GPU omitted from `gpus`; sysfs read failures degrade silently, no exception | `src/buoy/collectors/gpu.py` (`_probe_amd`) |
+| `/dev/dri` + host `/sys` visibility | Intel GPU identity + clock frequency via `i915`/`xe` sysfs | Intel GPU omitted from `gpus` | `src/buoy/collectors/gpu.py` (`_probe_intel`) |
+| `intel_gpu_top` binary + `CAP_PERFMON` (neither present in the published image) | Intel GPU utilisation percentage | `util_pct` stays `null` with a `util_note` explaining why — this is expected on the stock image, not a bug | `src/buoy/collectors/gpu.py` (`_intel_gpu_top_utilization`) |
 | Linux host / container (vs. macOS/Windows) | CPU %, memory, uptime, device model from `/proc` | All of `cpu`, `mem_used`, `mem_total`, `uptime_*` report as `0`/`0.0`; `model` falls back to `platform.system() + platform.machine()` | `src/buoy/collectors/system.py` (`_fallback_stats`) |
-| `privileged` + `pid: host` (nsenter into host PID 1) | Plugins that read host-only state: `tailscale` (peer status), `wireguard` (tunnel stats), `smart_disk` (SATA/NVMe health), `cron_health` (cron logs), `journal_errors` (journald), `systemd_health` (unit status) | Those plugins can't reach host state from inside an unprivileged/non-`pid:host` container and report unavailable/empty | `buoy.yaml.example` (each plugin's comment notes this requirement) |
+| `privileged` + `pid: host` (nsenter into host PID 1) | Plugins that read host-only state: `tailscale` (peer status), `wireguard` (tunnel stats), `smart_disk` (SATA/NVMe health), `cron_health` (cron logs), `journal_errors` (journald), `systemd_health` (unit status), `ban_status` (Fail2ban/CrowdSec bans) | Those plugins can't reach host state from inside an unprivileged/non-`pid:host` container and report unavailable/empty | `buoy.yaml.example` (each plugin's comment notes this requirement) |
 
 ## Recommended tiers
 
@@ -106,7 +110,7 @@ typical single-`overlay`-root container, that's just the container's own
 root, not the host's real mounts). You lose: temperature, the host's real
 mount list, NVMe SMART, host top-processes, and every host-introspection
 plugin (`tailscale`, `wireguard`, `smart_disk`, `cron_health`,
-`journal_errors`, `systemd_health`).
+`journal_errors`, `systemd_health`, `ban_status`).
 
 #### Tier 3b — Non-root, no Docker socket (verified)
 

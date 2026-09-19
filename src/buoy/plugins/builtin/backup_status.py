@@ -5,7 +5,16 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
+
+
+def _fmt_size(size_bytes: int) -> str:
+    if size_bytes > 1048576:
+        return f"{size_bytes / 1048576:.1f} MB"
+    if size_bytes > 1024:
+        return f"{size_bytes // 1024} KB"
+    return f"{size_bytes} B"
 
 
 class BackupStatusPlugin(Plugin):
@@ -60,16 +69,23 @@ class BackupStatusPlugin(Plugin):
             healthy = False
             issues.append(f"too old ({age_hours:.0f}h)")
 
-        # Format size
-        if size_bytes > 1048576:
-            size_str = f"{size_bytes / 1048576:.1f} MB"
-        elif size_bytes > 1024:
-            size_str = f"{size_bytes // 1024} KB"
-        else:
-            size_str = f"{size_bytes} B"
-
+        size_str = _fmt_size(size_bytes)
         status = "ok" if healthy else "error"
         summary = f"{age_hours:.0f}h ago, {size_str}" if healthy else "; ".join(issues)
+
+        recent_files = []
+        for f in files[:20]:
+            try:
+                f_stat = f.stat()
+            except OSError:
+                continue
+            recent_files.append(
+                {
+                    "name": f.name,
+                    "size": _fmt_size(f_stat.st_size),
+                    "mtime": time.strftime("%Y-%m-%d %H:%M", time.localtime(f_stat.st_mtime)),
+                }
+            )
 
         return PanelData(
             status=status,
@@ -81,19 +97,79 @@ class BackupStatusPlugin(Plugin):
                 "total_count": len(files),
                 "healthy": healthy,
                 "issues": issues,
+                "files": recent_files,
             },
         )
 
     def demo_data(self) -> PanelData:
+        files = [
+            {
+                "name": f"demo-node-2026-08-{23 - i:02d}.sql.gz",
+                "size": f"{428.3 - i * 3.1:.1f} MB",
+                "mtime": f"2026-08-{23 - i:02d} 03:00",
+            }
+            for i in range(14)
+        ]
         return PanelData(
             status="ok",
             summary="6h ago, 428.3 MB",
             detail={
-                "latest_file": "demo-node-2026-08-23.sql.gz",
-                "size": "428.3 MB",
+                "latest_file": files[0]["name"],
+                "size": files[0]["size"],
                 "age_hours": 6.0,
-                "total_count": 14,
+                "total_count": len(files),
                 "healthy": True,
                 "issues": [],
+                "files": files,
             },
         )
+
+    def render(self, data: PanelData) -> list[dict] | None:
+        blocks = self._keyvalue_blocks(data)
+        if blocks is None:
+            return [panel.text(data.summary or "Unavailable", status="dim")]
+        return blocks
+
+    def render_detail(self, data: PanelData) -> list[dict] | None:
+        blocks = self._keyvalue_blocks(data)
+        if blocks is None:
+            return [panel.text(data.summary or "Unavailable", status="dim")]
+
+        files = data.detail.get("files") or []
+        if files:
+            rows = [
+                [
+                    panel.cell(f.get("name", ""), mono=True),
+                    panel.cell(f.get("size", "")),
+                    panel.cell(f.get("mtime", "")),
+                ]
+                for f in files
+            ]
+            blocks.append(panel.table(["File", "Size", "Modified"], rows))
+        return blocks
+
+    def _keyvalue_blocks(self, data: PanelData) -> list[dict] | None:
+        """Shared keyvalue + issues rendering for render() and render_detail().
+
+        Returns None when detail lacks a latest_file (the dir-not-found / no-backups
+        early-return paths from collect()), so callers fall back to a text block.
+        """
+        detail = data.detail
+        if "latest_file" not in detail:
+            return None
+
+        blocks: list[dict] = [
+            panel.keyvalue(
+                [
+                    ("Latest file", detail.get("latest_file", "")),
+                    ("Age", f"{detail.get('age_hours', 0):.1f}h"),
+                    ("Size", detail.get("size", "")),
+                    ("Count", str(detail.get("total_count", 0))),
+                    ("Healthy", "yes" if detail.get("healthy") else "no"),
+                ]
+            )
+        ]
+        issues = detail.get("issues") or []
+        for issue in issues:
+            blocks.append(panel.text(issue, status="error"))
+        return blocks

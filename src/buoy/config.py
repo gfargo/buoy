@@ -77,9 +77,20 @@ class ServiceOverride:
 
 
 @dataclass
+class StaticService:
+    name: str = ""
+    icon: str = ""
+    desc: str = ""
+    url: str = ""
+    health_check: str = ""  # "" = no check, else the URL to poll
+    verify_ssl: bool | None = None  # None = inherit network.verify_ssl
+
+
+@dataclass
 class ServicesConfig:
     hidden: list[str] = field(default_factory=list)
     overrides: dict[str, ServiceOverride] = field(default_factory=dict)
+    static: list[StaticService] = field(default_factory=list)
 
 
 @dataclass
@@ -106,6 +117,7 @@ class FeaturesConfig:
     keyboard_shortcuts: bool = True
     image_updates: bool = False  # Docker image update checker (off by default)
     log_streaming: bool = True  # Live WebSocket container log streaming
+    gpu: bool = True  # GPU collector (NVIDIA/AMD/Intel); auto-detects, no-ops without a GPU
 
 
 @dataclass
@@ -124,6 +136,7 @@ class RefreshConfig:
     fleet_interval: int = 15
     plugins_interval: int = 60
     image_updates_interval: int = 21600  # 6 hours
+    health_check_interval: int = 60
 
 
 @dataclass
@@ -230,11 +243,13 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_LOG_STREAMING": ("features", "log_streaming"),
         "BUOY_LOGS_DEFAULT_TAIL": ("logs", "default_tail"),
         "BUOY_LOGS_MAX_TAIL": ("logs", "max_tail"),
+        "BUOY_FEATURES_GPU": ("features", "gpu"),
         "BUOY_REFRESH_STATS_INTERVAL": ("refresh", "stats_interval"),
         "BUOY_REFRESH_SERVICES_INTERVAL": ("refresh", "services_interval"),
         "BUOY_REFRESH_FLEET_INTERVAL": ("refresh", "fleet_interval"),
         "BUOY_REFRESH_PLUGINS_INTERVAL": ("refresh", "plugins_interval"),
         "BUOY_REFRESH_IMAGE_UPDATES_INTERVAL": ("refresh", "image_updates_interval"),
+        "BUOY_REFRESH_HEALTH_CHECK_INTERVAL": ("refresh", "health_check_interval"),
         "BUOY_ALERTS_WEBHOOK_URL": ("alerts", "webhook_url"),
         "BUOY_LOG_LEVEL": ("logging", "level"),
     }
@@ -258,6 +273,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "image_updates_interval",
             "default_tail",
             "max_tail",
+            "health_check_interval",
         ):
             # An empty string (e.g. `BUOY_NETWORK_LISTEN_PORT=`) is treated as an
             # explicit invalid value, not "unset" — only a missing env var (checked
@@ -272,6 +288,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "image_updates",
             "log_streaming",
             "verify_ssl",
+            "gpu",
         ):
             raw[section][key] = value.lower() in ("true", "1", "yes")
         elif key == "allowed_origins":
@@ -326,6 +343,48 @@ def _parse_overrides(raw_overrides: dict[str, dict]) -> dict[str, ServiceOverrid
             path=cfg.get("path", ""),
         )
     return overrides
+
+
+def _parse_static_services(raw_static: list) -> list[StaticService]:
+    """Parse ``services.static`` entries (non-Docker services and bookmarks).
+
+    An entry without a ``name`` is skipped with a warning rather than raising,
+    consistent with the "unknown/bad config warns, never crashes" rule
+    (SPEC §3.3) — a typo'd static entry shouldn't take down the whole node.
+    """
+    entries = []
+    for cfg in raw_static:
+        if not isinstance(cfg, dict):
+            logger.warning("services.static: expected a mapping, got %r — skipped", cfg)
+            continue
+
+        name = cfg.get("name", "")
+        if not name:
+            logger.warning("services.static: entry without a 'name' skipped: %r", cfg)
+            continue
+
+        raw_health = cfg.get("health_check")
+        if raw_health is True:
+            health_check = cfg.get("url", "")
+        elif isinstance(raw_health, str) and raw_health:
+            health_check = raw_health
+        else:
+            health_check = ""
+
+        raw_verify = cfg.get("verify_ssl")
+        verify_ssl = bool(raw_verify) if raw_verify is not None else None
+
+        entries.append(
+            StaticService(
+                name=name,
+                icon=cfg.get("icon", ""),
+                desc=cfg.get("desc") or cfg.get("description", ""),
+                url=cfg.get("url", ""),
+                health_check=health_check,
+                verify_ssl=verify_ssl,
+            )
+        )
+    return entries
 
 
 def _parse_plugins(
@@ -388,9 +447,17 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         verify_ssl=bool(network_raw.get("verify_ssl", True)),
     )
 
+    raw_static = services_raw.get("static", [])
+    if not isinstance(raw_static, list):
+        logger.warning(
+            "services.static: expected a list, got %s — ignoring", type(raw_static).__name__
+        )
+        raw_static = []
+
     services = ServicesConfig(
         hidden=services_raw.get("hidden", []),
         overrides=_parse_overrides(services_raw.get("overrides", {})),
+        static=_parse_static_services(raw_static),
     )
 
     theme = ThemeConfig(
@@ -414,6 +481,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         keyboard_shortcuts=bool(features_raw.get("keyboard_shortcuts", True)),
         image_updates=bool(features_raw.get("image_updates", False)),
         log_streaming=bool(features_raw.get("log_streaming", True)),
+        gpu=bool(features_raw.get("gpu", True)),
     )
 
     refresh = RefreshConfig(
@@ -427,6 +495,9 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         ),
         image_updates_interval=_coerce_int(
             refresh_raw.get("image_updates_interval", 21600), "refresh.image_updates_interval"
+        ),
+        health_check_interval=_coerce_int(
+            refresh_raw.get("health_check_interval", 60), "refresh.health_check_interval"
         ),
     )
 

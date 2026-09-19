@@ -188,6 +188,15 @@ services:
       icon: "\U0001F5A8"
       desc: "3D Printer Management"
       port: 5050
+  # Non-Docker services and bookmarks — NAS, router, printer, VM, bare-metal
+  # app. Not affected by `hidden`/`overrides`, which only apply to Docker
+  # discovery.
+  static:
+    - name: NAS
+      icon: "\U0001F4BE"
+      desc: "Synology DS920+"
+      url: https://nas.tailb82ead.ts.net
+      health_check: true       # poll `url`; a string polls that URL instead
 
 theme:
   preset: terminal          # terminal | light | solarized | nord | high-contrast
@@ -219,6 +228,7 @@ refresh:
   services_interval: 30
   fleet_interval: 15
   plugins_interval: 60
+  health_check_interval: 60  # services.static health-check polling
 
 plugins:
   enabled: true
@@ -285,6 +295,10 @@ services:
       name: Grafana
       icon: "\U0001F4CA"
       port: 3000
+  static:
+    - name: NAS
+      url: https://nas.example.ts.net
+      health_check: true
 
 plugins:
   builtin:
@@ -345,7 +359,7 @@ class GitHubPlugin(Plugin):
 ```
 
 > [!NOTE]
-> **As shipped**, `frontend_js()` is a deprecated escape hatch, not the recommended custom-rendering path — see §4.4. All built-in plugins implement `render()` instead, returning a declarative panel spec (`buoy.plugins.panel`: `text`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`) that trusted frontend code (`static/js/panel.js`) turns into HTML, escaping every value itself. This closes the XSS surface `frontend_js()` had (a plugin's raw JS/HTML string, `eval`'d via `new Function()`) and is what makes a strict CSP for the dashboard possible. `frontend_js()` still works for third-party plugins that need it.
+> **As shipped**, `frontend_js()` is a deprecated escape hatch, not the recommended custom-rendering path — see §4.4. All built-in plugins implement `render()` instead, returning a declarative panel spec (`buoy.plugins.panel`: `text`, `heading`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`, `log`) that trusted frontend code (`static/js/panel.js`) turns into HTML, escaping every value itself. This closes the XSS surface `frontend_js()` had (a plugin's raw JS/HTML string, `eval`'d via `new Function()`) and is what makes a strict CSP for the dashboard possible. `frontend_js()` still works for third-party plugins that need it.
 
 ### 4.2 Plugin Lifecycle
 
@@ -366,7 +380,7 @@ install a plugin package.
 
 ### 4.3 Built-in Plugins (ship with hub)
 
-> Historical planning subset. As shipped, Buoy includes 22 built-in plugins (see `src/buoy/plugins/builtin/`) — the table below was the initial planning list and doesn't reflect the current set. `docker_updates` was planned but never implemented; several others (`dns_filter`, `jellyfin`, `journal_errors`, `portainer`, `proxmox`, `smart_disk`, `snapraid`, `speedtest`, `tailscale`, `trigger_dev`, and more) shipped later and aren't listed here. The plugin protocol (§4.1) remains accurate.
+> Historical planning subset. As shipped, Buoy includes 25 built-in plugins (see `src/buoy/plugins/builtin/`) — the table below was the initial planning list and doesn't reflect the current set. `docker_updates` was planned but never implemented; several others (`dns_filter`, `jellyfin`, `journal_errors`, `portainer`, `proxmox`, `smart_disk`, `snapraid`, `speedtest`, `tailscale`, `trigger_dev`, and more) shipped later and aren't listed here. The plugin protocol (§4.1) remains accurate.
 
 | Plugin | What it does | Config needed |
 |--------|-------------|---------------|
@@ -391,7 +405,7 @@ Plugins can either:
 This keeps the barrier low (no JS needed for simple plugins) while allowing rich custom UIs.
 
 > [!NOTE]
-> **As shipped**, a third option sits between these two and is the recommended path: **declarative panel renderer** — the plugin implements `render(data) -> list[dict] | None` and returns blocks built from `buoy.plugins.panel` helpers. `PluginManager.collect_all_now()` includes the rendered spec as a `panel` field on the existing `/api/plugins` payload (no new endpoint). `static/js/panel.js` is the only code that turns plugin data into HTML, escaping every value (`escapeHtml`/`safeUrl`) so a plugin can't inject markup — this is what closed the `frontend_js()`/`new Function()` XSS surface for all 19 built-ins that used to ship custom JS. `frontend_js()` remains supported as a fallback for plugins that still need it (checked when `panel` is absent), but is deprecated.
+> **As shipped**, a third option sits between these two and is the recommended path: **declarative panel renderer** — the plugin implements `render(data) -> list[dict] | None` and returns blocks built from `buoy.plugins.panel` helpers. `PluginManager.collect_all_now()` includes the rendered spec as a `panel` field on the existing `/api/plugins` payload (no new endpoint). `static/js/panel.js` is the only code that turns plugin data into HTML, escaping every value (`escapeHtml`/`safeUrl`) so a plugin can't inject markup — this is what closed the `frontend_js()`/`new Function()` XSS surface for all 19 built-ins that used to ship custom JS. `frontend_js()` remains supported as a fallback for plugins that still need it (checked when `panel` is absent), but is deprecated. A plugin can additionally implement `render_detail(data) -> list[dict] | None` (defaults to `render()`) to render more for the expanded detail view than fits on the card — same renderer, same escaping. `GET /api/plugins/{id}` returns this as `detail_panel`, alongside a `manifest` block (`description`, `version`, `refresh_interval`, `effective_refresh_interval`, `source`); `render()`'s output (`panel`) keeps its card caps and stays the only panel field on the `/api/plugins` list payload.
 
 ---
 
@@ -405,7 +419,7 @@ This keeps the barrier low (no JS needed for simple plugins) while allowing rich
 | GET | `/api/config` | No | Public config subset (node name, theme, features, peer names) |
 | GET | `/api/stats` | No | System vitals (CPU, RAM, disk, temp, containers, uptime) |
 | GET | `/api/stats/detail` | No | Extended metrics (per-core, top processes, mount details) |
-| GET | `/api/services` | No | Discovered local services + network links |
+| GET | `/api/services` | No | Discovered local (Docker + `services.static`) services + network links |
 | GET | `/api/fleet` | No | Aggregated peer node stats |
 | GET | `/api/plugins` | No | All plugin panel data |
 | GET | `/api/plugins/{id}` | No | Single plugin data |

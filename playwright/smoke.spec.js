@@ -86,3 +86,85 @@ test('live log viewer streams, follow-toggles, and filters (OSS-1551)', async ({
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
+
+test('plugin card opens a detail dialog; Esc closes it and restores focus (BUG-330)', async ({ page }) => {
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+
+  await page.goto('/');
+
+  const firstCard = page.locator('#plugins-grid .svc').first();
+  await expect(firstCard).toBeVisible();
+  const cardId = await firstCard.getAttribute('data-plugin-id');
+
+  await firstCard.click();
+  const dialog = page.locator('#plugin-detail');
+  await expect(dialog).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(firstCard).toBeFocused();
+
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('plugin card opens its dialog via Enter and Space (BUG-330)', async ({ page }) => {
+  await page.goto('/');
+
+  const cards = page.locator('#plugins-grid .svc');
+  await expect(cards.first()).toBeVisible();
+  const dialog = page.locator('#plugin-detail');
+
+  await cards.nth(0).focus();
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+
+  await cards.nth(1).focus();
+  await page.keyboard.press(' ');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+});
+
+test('deep link #plugin=github opens the Github detail on load and clears on close (BUG-330)', async ({ page }) => {
+  await page.goto('/#plugin=github');
+
+  const dialog = page.locator('#plugin-detail');
+  await expect(dialog).toBeVisible();
+  await expect(page.locator('#plugin-detail-title')).toHaveText(/github/i);
+
+  await page.locator('.plugin-dialog-close').click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe('');
+});
+
+test('plugin detail dialog shows health/config and refresh-now works in demo mode (OSS-2718)', async ({ page }) => {
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+
+  await page.goto('/#plugin=github');
+
+  const dialog = page.locator('#plugin-detail');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('.plugin-health')).toBeVisible();
+  await expect(dialog.locator('.plugin-config')).toBeVisible();
+
+  const refreshBtn = dialog.locator('.plugin-refresh-btn');
+  await expect(refreshBtn).toBeVisible();
+  await refreshBtn.click();
+  await expect(refreshBtn).toHaveText(/refreshed|refreshing/i);
+
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});

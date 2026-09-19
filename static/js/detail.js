@@ -71,6 +71,7 @@ async function openDetail(type) {
       case 'cpu': content.innerHTML = renderCpuDetail(d); break;
       case 'memory': content.innerHTML = renderMemoryDetail(d); break;
       case 'disk': content.innerHTML = renderDiskDetail(d); break;
+      case 'gpu': content.innerHTML = renderGpuDetail(d); break;
       default: content.innerHTML = '';
     }
   } catch (e) {
@@ -140,6 +141,54 @@ function renderDiskDetail(d) {
       </div>`;
     });
   }
+  return html;
+}
+
+function renderGpuDetail(d) {
+  const gpuDetail = d.gpu || {};
+  const gpus = gpuDetail.gpus || [];
+  let html = `
+    <div class="detail-header">
+      <div class="detail-title">GPU</div>
+      <button class="detail-close">&#10005; close</button>
+    </div>`;
+
+  if (!gpus.length) {
+    html += `<div style="color:var(--text-dim);font-size:0.7rem">No GPU detected</div>`;
+    return html;
+  }
+
+  gpus.forEach((g) => {
+    const util = g.util_pct == null ? '--' : `${g.util_pct}%`;
+    const mem = g.mem_used_mb == null && g.mem_total_mb == null
+      ? '--'
+      : `${g.mem_used_mb ?? '--'}/${g.mem_total_mb ?? '--'} MB`;
+    const temp = g.temp == null ? '--' : `${g.temp}&deg;C`;
+    const power = g.power_w == null ? '--' : `${g.power_w}/${g.power_limit_w ?? '--'} W`;
+
+    html += `<div class="gpu-panel">
+      <div class="section-sub">${escapeHtml(g.name || g.vendor)}</div>
+      <div class="detail-grid gpu-grid">
+        <div class="detail-stat"><div class="ds-label">Utilization</div><div class="ds-value">${util}</div></div>
+        <div class="detail-stat"><div class="ds-label">Memory</div><div class="ds-value">${mem}</div></div>
+        <div class="detail-stat"><div class="ds-label">Temperature</div><div class="ds-value">${temp}</div></div>
+        <div class="detail-stat"><div class="ds-label">Power</div><div class="ds-value">${power}</div></div>
+      </div>`;
+    if (g.util_note) {
+      html += `<div class="gpu-note">${escapeHtml(g.util_note)}</div>`;
+    }
+    html += `</div>`;
+  });
+
+  if (gpuDetail.processes?.length) {
+    html += `<div class="section-sub">Processes</div>
+    <table class="process-table"><thead><tr><th>PID</th><th>Name</th><th>Memory</th></tr></thead><tbody>`;
+    gpuDetail.processes.forEach((p) => {
+      html += `<tr><td>${escapeHtml(p.pid)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.mem_mb)} MB</td></tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+
   return html;
 }
 
