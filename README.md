@@ -227,6 +227,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Cloudflare Tunnel | `cloudflare_tunnel` | Connector health, active connections | `account_id`, `api_token` |
 | Cron | `cron_health` | Recent cron job runs | (none) |
 | DNS Filter | `dns_filter` | Pi-hole / AdGuard Home filtering stats | `type`, `url` |
+| Downloads | `download_clients` | qBittorrent / Transmission / SABnzbd / NZBGet queue, speeds, disk | `clients` |
 | Grafana / Alertmanager | `grafana_alerts` | Firing alerts by severity | `type`, `url` (+ `token` for Grafana) |
 | Photos | `immich` | Immich photo library stats | `url`, `api_key` |
 | Journal | `journal_errors` | Priority-error journal entries | (none) |
