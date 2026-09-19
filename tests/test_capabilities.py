@@ -213,9 +213,18 @@ class TestGpuProbe:
         assert result["status"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_unavailable_gpu_reports_unavailable(self):
+    async def test_no_gpu_present_reports_not_applicable(self):
+        """features.gpu defaults on and no-ops without a GPU — absence must
+        not read as degraded on an ordinary GPU-less host."""
         result = await capabilities._probe_gpu(_StubGpuCollector(False))
-        assert result["status"] == "unavailable"
+        assert result["status"] == "not_applicable"
+
+    @pytest.mark.asyncio
+    async def test_not_yet_probed_reports_not_applicable(self):
+        """_available is None until the collector's first stats-endpoint
+        probe; this must not read as degraded during the startup window."""
+        result = await capabilities._probe_gpu(_StubGpuCollector(None))
+        assert result["status"] == "not_applicable"
 
 
 class TestProbeIntegration:

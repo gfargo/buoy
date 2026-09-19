@@ -134,11 +134,20 @@ async def _probe_sys_thermal() -> dict[str, Any]:
 
 
 async def _probe_gpu(gpu_collector: Any) -> dict[str, Any] | None:
+    """Report GPU capability from the collector's cached detection state.
+
+    ``features.gpu`` defaults to on and is a no-op without a GPU, so most
+    hosts have a ``GpuCollector`` but no actual GPU — that must read as
+    ``not_applicable``, not a degradation. ``_available`` is ``None`` until
+    the collector's first stats-endpoint probe (this function never probes
+    itself), which is also not_applicable rather than a false "unavailable".
+    """
     if gpu_collector is None:
         return None
-    if getattr(gpu_collector, "_available", None):
+    available = getattr(gpu_collector, "_available", None)
+    if available is True:
         return {"status": "ok", "impact": ""}
-    return {"status": "unavailable", "impact": "GPU utilization/VRAM/temperature unavailable"}
+    return {"status": "not_applicable", "impact": ""}
 
 
 async def probe(
