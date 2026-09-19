@@ -412,8 +412,10 @@ class TestDockerCollectSummary:
             ]
         )
         coll._fetch_container_states = AsyncMock(return_value=[])
+        coll._fetch_container_stats = AsyncMock(return_value={})
 
         data = await coll.collect_summary()
+        await coll._stats_task
 
         assert data["containers"] == 2
         assert len(data["containers_list"]) == 2
@@ -433,8 +435,10 @@ class TestDockerCollectSummary:
         coll = DockerCollector(config)
         coll.list_containers = AsyncMock(return_value=[])
         coll._fetch_container_states = AsyncMock(return_value=[])
+        coll._fetch_container_stats = AsyncMock(return_value={})
 
         data = await coll.collect_summary()
+        await coll._stats_task
 
         assert data["containers"] == 0
         assert data["containers_list"] == []
