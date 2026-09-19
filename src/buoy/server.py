@@ -25,6 +25,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from buoy._version import VERSION
+from buoy.redaction import redact_secrets as _redact_secrets
 from buoy.subprocess_utils import communicate
 
 if TYPE_CHECKING:
@@ -427,6 +428,34 @@ async def api_plugin_detail(request: Request) -> JSONResponse:
     return JSONResponse(payload)
 
 
+async def api_plugin_collect(request: Request) -> JSONResponse:
+    state: BuoyAppState = request.app.state.buoy
+    """Run one out-of-band collect for a plugin and return its fresh detail payload.
+
+    Requires ``Content-Type: application/json`` for the same CORS-preflight
+    reason as ``api_container_restart``. Rate-limited always; auth-gated when
+    ``auth.enabled`` (see ``PROTECTED_PATH_PATTERNS`` in ``buoy.auth``).
+    """
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        return JSONResponse({"error": "Content-Type must be application/json"}, status_code=415)
+
+    if not state.plugin_manager:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    plugin_id = request.path_params["id"]
+    result = await state.plugin_manager.collect_once(plugin_id)
+    if result == "unknown":
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if result == "busy":
+        return JSONResponse({"error": "collect already in flight"}, status_code=409)
+    if result == "disabled":
+        return JSONResponse({"error": "plugin disabled by config"}, status_code=400)
+    if result == "demo":
+        return JSONResponse({"demo": True})
+    return JSONResponse(state.plugin_manager.get_plugin_or_stub_payload(plugin_id, detail=True))
+
+
 def _prometheus_enabled(config: BuoyConfig) -> bool:
     """Return True only when the prometheus_exporter builtin plugin is enabled.
 
@@ -807,25 +836,6 @@ async def lifespan(app: Starlette):
 
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 
-_SECRET_KEY_FRAGMENTS = {"token", "password", "secret", "key"}
-
-
-def _redact_secrets(obj):
-    """Recursively replace secret-bearing string values with a redaction marker.
-
-    Only string values are redacted (booleans/ints with "key" in the name are left alone).
-    """
-    if isinstance(obj, dict):
-        return {
-            k: "***REDACTED***"
-            if isinstance(v, str) and v and any(frag in k.lower() for frag in _SECRET_KEY_FRAGMENTS)
-            else _redact_secrets(v)
-            for k, v in obj.items()
-        }
-    if isinstance(obj, list):
-        return [_redact_secrets(item) for item in obj]
-    return obj
-
 
 def _resolve_static_dir() -> Path:
     """Resolve the static files directory.
@@ -1008,6 +1018,7 @@ def create_app(config: BuoyConfig) -> Starlette:
         # Must come after /api/plugins/js — Starlette matches routes in list
         # order, and {id} would otherwise swallow /js. A plugin whose id is
         # literally "js" is unreachable via this route; an acceptable trade.
+        Route("/api/plugins/{id}/collect", api_plugin_collect, methods=["POST"]),
         Route("/api/plugins/{id}", api_plugin_detail),
         Route("/api/history/{metric}", api_history),
         Route("/api/container/{name}/history", api_container_history),

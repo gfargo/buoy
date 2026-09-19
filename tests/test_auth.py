@@ -62,6 +62,22 @@ class TestProtectedPathDetection:
         mw = self._make_middleware()
         assert mw._is_protected("/api/fleet") is False
 
+    def test_plugin_collect_is_protected(self):
+        mw = self._make_middleware()
+        assert mw._is_protected("/api/plugins/github/collect") is True
+
+    def test_plugin_detail_not_protected(self):
+        mw = self._make_middleware()
+        assert mw._is_protected("/api/plugins/github") is False
+
+    def test_plugin_js_not_protected(self):
+        mw = self._make_middleware()
+        assert mw._is_protected("/api/plugins/js") is False
+
+    def test_plugin_list_not_protected(self):
+        mw = self._make_middleware()
+        assert mw._is_protected("/api/plugins") is False
+
 
 class TestTokenAuth:
     """Test Bearer token authentication."""
