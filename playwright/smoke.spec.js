@@ -38,6 +38,55 @@ test('demo mode stubs plugins instead of erroring (BUG-40)', async ({ page, requ
   expect(await pluginCards.count()).toBeGreaterThan(0);
 });
 
+test('live log viewer streams, follow-toggles, and filters (OSS-1551)', async ({ page }) => {
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+
+  await page.goto('/');
+  await page.click('.gauge[data-detail="containers"]');
+  await page.click('.ctr[data-ctr-name]');
+  await page.click('.ctr-btn-logs');
+
+  const viewer = page.locator('.ctr-logs');
+  await expect(viewer).toBeVisible();
+
+  const lines = page.locator('.ctr-log-line');
+  await expect(lines.first()).toBeVisible({ timeout: 5000 });
+  const initialCount = await lines.count();
+
+  // Demo mode emits ~1 synthetic line/sec — following should grow the buffer.
+  await expect
+    .poll(async () => lines.count(), { timeout: 5000 })
+    .toBeGreaterThan(initialCount);
+
+  // Toggling follow off stops growth.
+  await page.click('.ctr-logs-follow');
+  const pausedCount = await lines.count();
+  await page.waitForTimeout(2200);
+  expect(await lines.count()).toBe(pausedCount);
+
+  // Filtering hides non-matching lines without removing them from the DOM.
+  // Demo lines share a common date-stamp prefix, so filter on the
+  // monotonically-increasing "demo log line N" marker instead — it's
+  // unique to the first line and won't match any other.
+  const firstLineText = await lines.first().textContent();
+  const marker = firstLineText.match(/demo log line \d+/)[0];
+  await page.fill('.ctr-logs-filter', marker);
+  await expect
+    .poll(async () => page.locator('.ctr-log-line.hidden').count())
+    .toBeGreaterThan(0);
+
+  await page.click('.ctr-logs-close');
+  await expect(viewer).toHaveCount(0);
+
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
 test('plugin card opens a detail dialog; Esc closes it and restores focus (BUG-330)', async ({ page }) => {
   const pageErrors = [];
   const consoleErrors = [];

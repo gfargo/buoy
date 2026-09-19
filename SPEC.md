@@ -432,9 +432,11 @@ This keeps the barrier low (no JS needed for simple plugins) while allowing rich
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/container/{name}` | Container detail (inspect + resource usage) |
-| GET | `/api/container/{name}/logs` | Last N lines of container stdout/stderr |
+| GET | `/api/container/{name}/logs` | Last N lines of container stdout/stderr (`?tail=` clamped to `logs.max_tail`) |
+| GET | `/api/container/{name}/logs/ticket` | Single-use, container-scoped ticket for the WS log stream (see §5.3) |
 | POST | `/api/container/{name}/restart` | Restart a container |
 | POST | `/api/container/{name}/stop` | Stop a container |
+| WS | `/ws/logs/{name}` | Live `docker logs --follow` stream (`?tail=`, `?ticket=` when auth is enabled) |
 
 ### 5.3 WebSocket Protocol
 
@@ -450,6 +452,25 @@ This keeps the barrier low (no JS needed for simple plugins) while allowing rich
 // Server → Client (alerts)
 { "type": "alert", "level": "warn", "message": "CPU > 90% for 5m", "metric": "cpu" }
 ```
+
+`/ws/logs/{name}` is a separate, per-panel socket (one per open log viewer, not
+multiplexed through `/ws`) speaking its own protocol:
+
+```jsonc
+// Server → Client
+{ "type": "log_start", "container": "grafana", "tail": 100 }
+{ "type": "log", "lines": [{ "stream": "stdout", "line": "2026-01-01T00:00:00Z ..." }] }
+{ "type": "log_dropped", "count": 12 }   // client too slow — oldest lines were dropped
+{ "type": "log_end", "reason": "container exited" }   // or "disconnected" | "stream error" | "error" | "closed"
+
+// Client → Server: any frame (or a disconnect) ends the stream server-side.
+```
+
+Query params: `tail` (clamped to `[1, logs.max_tail]`, default `logs.default_tail`)
+and, only when `auth.enabled` is true, `ticket` — a single-use token minted by
+`GET /api/container/{name}/logs/ticket` (§5.2). WebSocket handshakes can't carry
+an `Authorization` header, so this ticket is the auth boundary for the stream;
+see §7.2/§7.3.
 
 ### 5.4 Demo Mode
 
@@ -550,6 +571,7 @@ Hub is designed for **private networks** (home LAN, Tailscale, VPN). It is NOT d
 |---------|---------|-------|
 | Auth for read-only APIs | Disabled | Stats, services are informational |
 | Auth for destructive APIs | Enabled when auth configured | Restart, stop, logs |
+| Auth for the WS log stream | Enabled when auth configured | `/ws/logs/{name}` is ticket-gated (§5.3) since `BaseHTTPMiddleware` — and therefore `AuthMiddleware`/`RateLimitMiddleware` — never runs for `websocket` scopes; the HTTP ticket endpoint is the actual enforcement point |
 | Input sanitization | Always | Container names validated against `[a-zA-Z0-9_.-]` |
 | Rate limiting | 60 req/min per IP | On destructive endpoints |
 | CORS | Same-origin only | Configurable for fleet cross-node |
