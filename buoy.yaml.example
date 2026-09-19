@@ -357,6 +357,17 @@ plugins:
       project_ref: ""                  # Project reference (e.g. "proj_abc123")
       queue_warn_threshold: 50         # Queued+executing runs before status → error
 
+    # Cloudflare Tunnel connector health + active connections
+    # Requires an API token with "Account > Cloudflare Tunnel > Read" scope
+    # Rate limits: one request per refresh_interval per node — if several
+    # nodes share the same token, keep this interval generous.
+    cloudflare_tunnel:
+      enabled: false
+      account_id: ""                   # Cloudflare account ID
+      api_token: ""                    # Or BUOY_PLUGIN_CLOUDFLARE_TUNNEL_API_TOKEN env var
+      tunnels: []                      # Optional name/id filter; empty = all tunnels
+      min_connections: 0               # Warn if a tunnel's active connections drop below this (0 = off)
+
     # SMART disk health (SATA + NVMe) — requires privileged + pid: host
     smart_disk:
       enabled: false
