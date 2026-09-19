@@ -32,6 +32,30 @@ _DEMO_CONTAINERS = [
 
 _START_TIME = time.time()
 
+# State/health/status for each demo container, keyed by name — kept separate
+# from _DEMO_CONTAINERS (which list_containers() returns by reference and
+# which feeds demo service discovery) so this dict is free to include
+# non-running entries without perturbing that list. Includes one unhealthy
+# and one exited container so the containers panel has something to show off.
+_DEMO_CONTAINER_STATES = {
+    "grafana": {"state": "running", "status": "Up 2 days", "health": None},
+    "prometheus": {"state": "running", "status": "Up 2 days", "health": None},
+    "nginx-proxy": {"state": "running", "status": "Up 5 days (healthy)", "health": "healthy"},
+    "postgres": {"state": "running", "status": "Up 5 days (healthy)", "health": "healthy"},
+    "redis": {"state": "running", "status": "Up 3 hours (unhealthy)", "health": "unhealthy"},
+    "plausible": {"state": "running", "status": "Up 1 day", "health": None},
+    "uptime-kuma": {"state": "running", "status": "Up 5 days", "health": None},
+    "vaultwarden": {"state": "running", "status": "Up 5 days", "health": None},
+    "immich-server": {
+        "state": "running",
+        "status": "Up 12 minutes (health: starting)",
+        "health": "starting",
+    },
+    "homeassistant": {"state": "running", "status": "Up 5 days", "health": None},
+    "jellyfin": {"state": "running", "status": "Up 5 days", "health": None},
+    "actual-budget": {"state": "exited", "status": "Exited (0) 3 hours ago", "health": None},
+}
+
 # Curated builtins auto-enabled for `--demo` when the operator hasn't
 # configured any plugins, so a bare `docker run ... --demo` shows a populated
 # dashboard instead of an empty one. Deliberately excludes prometheus_exporter:
@@ -147,9 +171,32 @@ class DemoDockerCollector:
         return _DEMO_CONTAINERS
 
     async def collect_summary(self) -> dict:
+        containers_list = []
+        running_count = 0
+        for c in _DEMO_CONTAINERS:
+            name = c["name"]
+            st = _DEMO_CONTAINER_STATES.get(
+                name, {"state": "running", "status": "Up", "health": None}
+            )
+            entry = {
+                "name": name,
+                "state": st["state"],
+                "status": st["status"],
+                "health": st["health"],
+                "cpu_pct": None,
+                "mem_usage": None,
+                "mem_pct": None,
+            }
+            if st["state"] == "running":
+                running_count += 1
+                entry["cpu_pct"] = f"{random.uniform(0.1, 15.0):.2f}%"
+                entry["mem_usage"] = f"{random.randint(50, 500)}MiB / 8GiB"
+                entry["mem_pct"] = f"{random.uniform(0.5, 8.0):.2f}%"
+            containers_list.append(entry)
+
         return {
-            "containers": len(_DEMO_CONTAINERS),
-            "containers_list": [{"name": c["name"]} for c in _DEMO_CONTAINERS],
+            "containers": running_count,
+            "containers_list": containers_list,
         }
 
     async def inspect_container(self, name: str) -> dict:

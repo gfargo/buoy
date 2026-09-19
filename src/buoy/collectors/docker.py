@@ -7,6 +7,7 @@ before passing to shell commands.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -23,6 +24,13 @@ logger = logging.getLogger("buoy.collectors.docker")
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 _LIST_CACHE_TTL = 5.0
 
+# Docker appends this to `.Status` for containers with a healthcheck, e.g.
+# "Up 2 hours (healthy)" / "Up 12 seconds (health: starting)". Containers
+# without a healthcheck have no such suffix — this must never be sourced from
+# `{{.State.Health.Status}}` via `inspect`, which nil-pointer-panics (and
+# fails the *entire* batch) on any container that lacks one.
+_HEALTH_RE = re.compile(r"\((healthy|unhealthy|health: starting)\)")
+
 # `docker logs --timestamps` prefixes each line with an RFC3339Nano
 # timestamp (e.g. "2024-01-15T10:23:45.123456789Z message"), which sorts
 # correctly as a plain string — trailing zeros are trimmed by Go's
@@ -33,6 +41,23 @@ _LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z
 
 def _valid_name(name: str) -> bool:
     return bool(_CONTAINER_NAME_RE.match(name)) and len(name) <= 128
+
+
+def _first_name(names: str) -> str:
+    """`docker ps`/`docker stats` can render comma-joined aliases for a
+    container with multiple names; take the first (they refer to the same
+    container, so any consistent choice matches across both commands)."""
+    return names.split(",", 1)[0].strip()
+
+
+def _parse_health(status: str) -> str | None:
+    """Extract health state from a `docker ps` Status string, e.g. 'Up 2
+    hours (healthy)' -> 'healthy'. None when the container has no healthcheck."""
+    match = _HEALTH_RE.search(status or "")
+    if not match:
+        return None
+    value = match.group(1)
+    return "starting" if value == "health: starting" else value
 
 
 def _log_line_sort_key(line: str) -> str:
@@ -51,6 +76,12 @@ class DockerCollector:
         self._containers_cache: list[dict] | None = None
         self._containers_cache_ts: float = 0.0
         self._list_lock = asyncio.Lock()
+        self._states_cache: list[dict] | None = None
+        self._states_cache_ts: float = 0.0
+        self._states_lock = asyncio.Lock()
+        self._stats_cache: dict[str, dict] = {}
+        self._stats_cache_ts: float = 0.0
+        self._stats_task: asyncio.Task | None = None
 
     async def _run(self, *args: str, timeout: float = 10) -> tuple[int, str, str]:
         """Run a docker command and return (returncode, stdout, stderr)."""
@@ -122,12 +153,157 @@ class DockerCollector:
         return containers
 
     async def collect_summary(self) -> dict:
-        """Collect container count and list for the stats endpoint."""
-        containers = await self.list_containers()
+        """Collect container count and list (all containers, with state/health/
+        cpu/mem) for the stats endpoint.
+
+        ``containers`` stays the *running* count (feeds the headline gauge and
+        history) while ``containers_list`` includes stopped/exited containers
+        too, so they're visible without an extra click. Stats
+        (``docker stats --no-stream``) are served from a stale-while-revalidate
+        cache and never awaited here, so a slow/cold stats call can't add
+        latency to this hot path.
+        """
+        containers, states = await asyncio.gather(
+            self.list_containers(), self._container_states_cached()
+        )
+        stats = await self._container_stats_cached() if self.config.features.container_stats else {}
+
+        if not states and containers:
+            # `docker ps -a` (states) failed/timed out while the separate `docker
+            # ps` call (containers) succeeded — fall back to the running set so
+            # `containers_list` doesn't go empty while `containers` still shows a
+            # count. Self-heals once the states cache TTL expires.
+            states = [
+                {"name": c["name"], "state": "running", "status": "", "health": None}
+                for c in containers
+            ]
+
+        containers_list = []
+        for s in states:
+            name = s["name"]
+            entry = {
+                "name": name,
+                "state": s["state"],
+                "status": s["status"],
+                "health": s["health"],
+                "cpu_pct": None,
+                "mem_usage": None,
+                "mem_pct": None,
+            }
+            entry.update(stats.get(name, {}))
+            containers_list.append(entry)
+
         return {
             "containers": len(containers),
-            "containers_list": [{"name": c["name"]} for c in containers],
+            "containers_list": containers_list,
         }
+
+    async def _fetch_container_states(self) -> list[dict]:
+        """Batch-fetch name/state/status/health for ALL containers (running +
+        stopped) via `docker ps -a`. One subprocess regardless of container
+        count."""
+        code, stdout, _ = await self._run(
+            "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Status}}"
+        )
+        if code != 0 or not stdout:
+            return []
+
+        states = []
+        for line in stdout.split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("\t", 2)
+            if len(parts) < 3:
+                continue
+            name = _first_name(parts[0])
+            if not name:
+                continue
+            status = parts[2].strip()
+            states.append(
+                {
+                    "name": name,
+                    "state": parts[1].strip(),
+                    "status": status,
+                    "health": _parse_health(status),
+                }
+            )
+        return states
+
+    async def _container_states_cached(self) -> list[dict]:
+        """`_fetch_container_states()` behind the same TTL cache pattern as
+        `list_containers()`."""
+        now = time.monotonic()
+        if self._states_cache is not None and now - self._states_cache_ts < _LIST_CACHE_TTL:
+            return self._states_cache
+
+        async with self._states_lock:
+            now = time.monotonic()
+            if self._states_cache is not None and now - self._states_cache_ts < _LIST_CACHE_TTL:
+                return self._states_cache
+
+            states = await self._fetch_container_states()
+            self._states_cache = states
+            self._states_cache_ts = time.monotonic()
+            return states
+
+    async def _fetch_container_stats(self) -> dict[str, dict]:
+        """Batch-fetch cpu/mem for all running containers via one
+        `docker stats --no-stream` call (no name args = all running)."""
+        code, stdout, _ = await self._run(
+            "stats",
+            "--no-stream",
+            "--format",
+            "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}",
+            timeout=15,
+        )
+        if code != 0 or not stdout:
+            return {}
+
+        stats: dict[str, dict] = {}
+        for line in stdout.split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            if len(parts) < 4:
+                continue
+            name = _first_name(parts[0])
+            if not name:
+                continue
+            stats[name] = {
+                "cpu_pct": parts[1].strip(),
+                "mem_usage": parts[2].strip(),
+                "mem_pct": parts[3].strip(),
+            }
+        return stats
+
+    async def _refresh_stats(self) -> None:
+        try:
+            self._stats_cache = await self._fetch_container_stats()
+        except Exception:
+            logger.debug("docker stats refresh failed", exc_info=True)
+        finally:
+            self._stats_cache_ts = time.monotonic()
+
+    async def _container_stats_cached(self) -> dict[str, dict]:
+        """Stale-while-revalidate: always return immediately (empty on cold
+        start), kicking off a background refresh when the cache is stale and
+        no refresh is already in flight. Never awaits the `docker stats`
+        subprocess inline — it's ~1-2s and scales with container count, and
+        this is called on every `/api/stats` request."""
+        now = time.monotonic()
+        stale = now - self._stats_cache_ts >= self.config.refresh.container_stats_interval
+        if stale and (self._stats_task is None or self._stats_task.done()):
+            self._stats_task = asyncio.create_task(self._refresh_stats())
+        return self._stats_cache
+
+    async def aclose(self) -> None:
+        """Cancel an in-flight background stats refresh, if any (called from
+        on_shutdown so a refresh doesn't outlive the app and log a 'Task was
+        destroyed but it is pending' warning)."""
+        if self._stats_task is not None and not self._stats_task.done():
+            self._stats_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stats_task
 
     async def inspect_container(self, name: str) -> dict:
         """Get detailed info for a single container."""
