@@ -190,6 +190,25 @@ class TestTopProcessesBy:
         assert result[0]["pid"] == 200
 
     @pytest.mark.asyncio
+    async def test_unparseable_field_in_valid_row_aborts_entire_list(self):
+        """Pins current behavior: int()/float() live inside the same try as the
+        subprocess call, so one row with 11+ fields but a non-numeric PID/cpu/mem
+        raises and is caught by the outer except — returning [] instead of just
+        skipping that row. A future refactor may want to skip per-row instead;
+        until then, this documents the surprise so it isn't changed silently."""
+        stdout = (
+            self.PS_HEADER
+            + "\n"
+            + self._ps_line("not-a-pid", 1.0, 1.0)
+            + "\n"
+            + self._ps_line(200, 2.0, 2.0)
+        )
+
+        result, _ = await self._run("cpu", stdout)
+
+        assert result == []
+
+    @pytest.mark.asyncio
     async def test_ps_not_found_returns_empty_list(self):
         coll = SystemCollector(_make_config())
         with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError("no ps")):
