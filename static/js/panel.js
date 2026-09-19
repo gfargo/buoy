@@ -23,29 +23,53 @@ function colorFor(status) {
   return STATUS_COLOR[status] || 'var(--text)';
 }
 
+// Strips CSI/OSC ANSI escape sequences so they're never interpreted — just removed.
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b./g;
+
+function stripAnsi(value) {
+  return String(value).replace(ANSI, '');
+}
+
 function renderText(block) {
   return `<div style="font-size:0.6rem;color:${colorFor(block.status)}">${escapeHtml(block.value ?? '')}</div>`;
+}
+
+function renderHeading(block) {
+  return `<div style="font-size:0.55rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin:1rem 0 0.5rem">${escapeHtml(block.text ?? '')}</div>`;
+}
+
+function renderLog(block) {
+  const lines = block.lines || [];
+  if (!lines.length) return '';
+  const body = lines.map(line => escapeHtml(stripAnsi(line ?? ''))).join('\n');
+  const color = colorFor(block.status);
+  return `<pre style="margin:0;padding:0.4rem;font-family:'JetBrains Mono',monospace;font-size:0.5rem;color:${color};background:var(--bg);border:1px solid var(--border);border-radius:3px;overflow-x:auto;max-height:240px;overflow-y:auto;line-height:1.4;white-space:pre">${body}</pre>`;
 }
 
 function renderKeyvalue(block) {
   const rows = block.rows || [];
   if (!rows.length) return '';
   const trs = rows
-    .map(
-      r =>
+    .map(r => {
+      const color = colorFor(r.status);
+      const value = r.href
+        ? `<a href="${escapeHtml(safeUrl(r.href))}" target="_blank" rel="noopener noreferrer" style="color:${color};text-decoration:none">${escapeHtml(r.value ?? '')}</a>`
+        : escapeHtml(r.value ?? '');
+      return (
         `<tr><td style="padding:0.15rem 0.3rem;color:var(--text-dim)">${escapeHtml(r.label ?? '')}</td>` +
-        `<td style="padding:0.15rem 0.3rem;color:${colorFor(r.status)}">${escapeHtml(r.value ?? '')}</td></tr>`
-    )
+        `<td style="padding:0.15rem 0.3rem;color:${color}">${value}</td></tr>`
+      );
+    })
     .join('');
   return `<table style="width:100%;border-collapse:collapse;font-size:0.55rem">${trs}</table>`;
 }
 
 function renderTableCell(c) {
   const styles = ['padding:0.2rem 0.4rem', `color:${colorFor(c.status)}`];
-  if (c.truncate) {
+  if (c.wrap) {
+    styles.push('white-space:pre-wrap', 'overflow-wrap:anywhere');
+  } else if (c.truncate) {
     styles.push('max-width:240px', 'overflow:hidden', 'text-overflow:ellipsis', 'white-space:nowrap');
-  } else {
-    styles.push('white-space:nowrap');
   }
   if (c.mono) {
     styles.push("font-family:'JetBrains Mono',monospace");
@@ -132,6 +156,8 @@ function renderList(block) {
 
 const RENDERERS = {
   text: renderText,
+  heading: renderHeading,
+  log: renderLog,
   keyvalue: renderKeyvalue,
   table: renderTable,
   badges: renderBadges,

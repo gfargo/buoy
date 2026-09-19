@@ -14,7 +14,7 @@ A lightweight, per-node system dashboard for homelabs and small infrastructure.
 
 Deploy one container per host. Buoy auto-discovers your Docker services, shows system vitals, and connects to peer nodes for a fleet overview — your tailnet landing page.
 
-- **System vitals** — CPU, RAM, disk, temperature, NVMe health, container count
+- **System vitals** — CPU, RAM, disk, temperature, NVMe health, GPU (NVIDIA/AMD/Intel), container count
 - **Service discovery** — auto-finds running Docker containers; customize with display overrides
 - **Fleet overview** — poll peer Buoy instances for a multi-node dashboard
 - **Tailscale-aware** — links auto-switch between HTTPS tailnet URLs and localhost
@@ -190,6 +190,8 @@ volumes:
 
 > **Note:** `privileged` + `pid: host` enables full system metrics (temperature, all disk mounts, NVMe SMART). If you only need container stats, you can drop `privileged` and keep just `pid: host`. See the [privilege matrix](docs/deployment/privilege-matrix.md) for the full breakdown, or the [native install](docs/deployment/native.md) to get full metrics without any container privilege flags at all.
 >
+> **GPU metrics:** NVIDIA needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (`--gpus all` / `runtime: nvidia`) so `nvidia-smi` is reachable inside the container; AMD/Intel read `/sys/class/drm` directly (present by default) and benefit from mounting `/dev/dri`. No GPU present or none of this configured? The GPU panel just doesn't appear — same graceful degradation as every other collector.
+>
 > Want the same metrics without `privileged`, or to run as a non-root user? Two ready-to-use, verified alternatives: [`docker-compose.hardened.yml`](docker-compose.hardened.yml) (full functionality, specific capabilities instead of `privileged`) and [`docker-compose.minimal.yml`](docker-compose.minimal.yml) (non-root, container-only metrics, no Docker socket).
 
 ## Other Deployment Paths
@@ -208,12 +210,14 @@ Buoy ships with built-in plugins (disabled by default):
 | Plugin | Config key | What it shows | Config needed |
 |--------|------------|----------------|---------------|
 | GitHub | `github` | Notifications + open PRs | `token` |
+| Gitea / Forgejo | `gitea` | Repos, open PRs, Actions queue & failures | `url`, `token` |
 | UptimeKuma | `uptime_kuma` | Service health badges | `url` |
 | Loki | `loki` | Recent error log entries | `url` |
 | Plane | `plane` | Sprint/cycle progress | `api_key`, `url` |
 | Prometheus | `prometheus_exporter` | `/metrics` endpoint | (none) |
 | SnapRAID | `snapraid` | Parity sync age & disk health | `status_file` |
 | Jellyfin | `jellyfin` | Active streams, libraries, transcoding | `url`, `api_key` |
+| *arr Stack | `arr_stack` | Queue depth, wanted/missing, indexer & system health | at least one `<service>_url` + `<service>_api_key` |
 | Home Assistant | `home_assistant` | Entity/automation counts, unavailable entities, updates | `url`, `token` |
 | Portainer | `portainer` | Remote container stats | `url`, `api_key`, `endpoint_id` |
 | Smart Disk | `smart_disk` | SMART health for SATA + NVMe drives | (none) |
@@ -221,8 +225,10 @@ Buoy ships with built-in plugins (disabled by default):
 | Actual Budget | `actual_budget` | Monthly spend vs budget | `url`, `api_key`, `budget_sync_id` |
 | Backups | `backup_status` | Backup health & freshness | (none) |
 | Bans | `ban_status` | Fail2ban / CrowdSec active bans & offenders | (none) |
+| Cloudflare Tunnel | `cloudflare_tunnel` | Connector health, active connections | `account_id`, `api_token` |
 | Cron | `cron_health` | Recent cron job runs | (none) |
 | DNS Filter | `dns_filter` | Pi-hole / AdGuard Home filtering stats | `type`, `url` |
+| Downloads | `download_clients` | qBittorrent / Transmission / SABnzbd / NZBGet queue, speeds, disk | `clients` |
 | Grafana / Alertmanager | `grafana_alerts` | Firing alerts by severity | `type`, `url` (+ `token` for Grafana) |
 | Photos | `immich` | Immich photo library stats | `url`, `api_key` |
 | Journal | `journal_errors` | Priority-error journal entries | (none) |
@@ -233,6 +239,7 @@ Buoy ships with built-in plugins (disabled by default):
 | Trigger.dev | `trigger_dev` | Task run status | `url`, `api_key`, `project_ref` |
 | WireGuard | `wireguard` | WireGuard tunnel peer status | (none) |
 | Zigbee2MQTT | `zigbee2mqtt` | Coordinator status + per-device link quality | `host` (needs `pip install "buoy[zigbee2mqtt]"`) |
+| Databases | `databases` | Connections, replication lag, slow queries, memory/evictions | `targets` (needs `pip install "buoy[databases]"`) |
 
 **Custom plugins** are Python files dropped into the `/plugins` volume:
 
@@ -254,10 +261,11 @@ class WeatherPlugin(Plugin):
 ```
 
 For a richer panel than the default key-value grid, implement `render()` and return blocks from
-`buoy.plugins.panel` (`text`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`) — trusted,
-escaping frontend code turns them into HTML, so untrusted data (names, log lines, URLs) can never
-inject markup. `frontend_js()` (raw JS executed via `new Function()`) is still supported but is a
-deprecated escape hatch — it can't run under a strict CSP and requires escaping every value by hand.
+`buoy.plugins.panel` (`text`, `heading`, `table`, `keyvalue`, `badges`, `bar`, `sparkline`, `list_`,
+`log`) — trusted, escaping frontend code turns them into HTML, so untrusted data (names, log lines,
+URLs) can never inject markup. `frontend_js()` (raw JS executed via `new Function()`) is still
+supported but is a deprecated escape hatch — it can't run under a strict CSP and requires escaping
+every value by hand.
 
 ```python
 from buoy.plugins import panel
@@ -266,6 +274,21 @@ class WeatherPlugin(Plugin):
     ...
     def render(self, data: PanelData) -> list[dict] | None:
         return [panel.keyvalue([("Temp", "72°F"), ("Condition", "Sunny")])]
+```
+
+The dashboard's detail view (`GET /api/plugins/{id}`) calls `render_detail()` instead, which
+defaults to `render()`. Override it when the card's `render()` truncates a list (e.g.
+`entries[:10]`, `truncate=True`) and the detail view should show the full thing — same spec, same
+escaping, just more of it:
+
+```python
+class NotificationsPlugin(Plugin):
+    ...
+    def render(self, data: PanelData) -> list[dict] | None:
+        return [panel.list_(data.detail["entries"][:10], truncate=True)]
+
+    def render_detail(self, data: PanelData) -> list[dict] | None:
+        return [panel.list_(data.detail["entries"], truncate=False)]
 ```
 
 **Distributable plugins** can also be shipped as a pip-installable package. Register your `Plugin`

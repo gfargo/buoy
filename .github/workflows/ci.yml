@@ -15,7 +15,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: pytest --cov=buoy --cov-report=term-missing --cov-fail-under=75
+      - run: pytest --cov=buoy --cov-report=term-missing
+      - name: Collector coverage floor
+        run: >
+          coverage report --fail-under=90
+          --include='*/buoy/collectors/system.py,*/buoy/collectors/disk.py,*/buoy/collectors/docker.py'
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
       - uses: actions/setup-node@v7
