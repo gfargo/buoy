@@ -71,8 +71,17 @@ class DockerCollector:
             logger.debug("docker %s failed: %s", " ".join(args), e, exc_info=True)
             return 1, "", str(e)
 
-    async def is_available(self) -> bool:
-        """Check if Docker CLI is accessible."""
+    async def is_available(self, *, force: bool = False) -> bool:
+        """Check if Docker CLI is accessible.
+
+        Cached forever by default (mirrors the 5s-stats-path caching elsewhere
+        in this class) since most callers hit this every stats tick. Pass
+        ``force=True`` to reset the cache and re-probe — used by the
+        capability-refresh loop so a socket that recovers after startup is
+        eventually reflected instead of staying stuck on the first result.
+        """
+        if force:
+            self._available = None
         if self._available is None:
             code, _, _ = await self._run("info", "--format", "{{.ID}}", timeout=5)
             self._available = code == 0

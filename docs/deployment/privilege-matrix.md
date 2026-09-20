@@ -15,6 +15,12 @@ container privilege flags below. The one exception is NVMe SMART, which
 needs `CAP_SYS_ADMIN` for its ioctl regardless of container boundaries —
 see [Tier 0](#tier-0--native--systemd) below.
 
+This matrix is also observable live, on any running instance, at
+`GET /api/health` — it reports which of these capabilities are actually
+detected (`docker`, `nsenter`, `smartctl`, `proc`, `sys_thermal`, `gpu`) plus
+a short `impact` string per subsystem, refreshed every 10 minutes by a
+background probe. See §5.1 of [SPEC.md](../../SPEC.md) for the response shape.
+
 ## Capability → metric mapping
 
 | Capability | Enables | Lost without it | Source |

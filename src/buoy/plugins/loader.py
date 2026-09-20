@@ -477,6 +477,45 @@ class PluginManager:
             result[plugin_id] = self._not_loaded_stub(plugin_id, name)
         return result
 
+    def health_summary(self) -> dict[str, Any]:
+        """Aggregate per-plugin status for the unauthenticated ``/api/health`` endpoint.
+
+        Reuses the same status bookkeeping ``collect_all_now()`` already
+        exposes per plugin (``_health``, ``_disabled_ids``,
+        ``_configured_not_loaded()``) rather than running any new collection.
+        ``last_error`` is already public via ``GET /api/plugins/{id}``, but is
+        truncated here to keep this summary compact.
+        """
+        counts = {"ok": 0, "error": 0, "disabled": 0, "not_loaded": 0}
+        entries: list[dict[str, Any]] = []
+
+        for plugin_id, plugin in self._plugins.items():
+            health = self._health.get(plugin_id, {})
+            last_error = health.get("last_error")
+            if plugin_id in self._disabled_ids:
+                status = "disabled"
+            elif last_error:
+                status = "error"
+            else:
+                status = "ok"
+            counts[status] += 1
+            entries.append(
+                {
+                    "id": plugin_id,
+                    "name": plugin.manifest.name,
+                    "status": status,
+                    "last_error": last_error[:200] if last_error else None,
+                }
+            )
+
+        for plugin_id, name in self._configured_not_loaded():
+            counts["not_loaded"] += 1
+            entries.append(
+                {"id": plugin_id, "name": name, "status": "not_loaded", "last_error": None}
+            )
+
+        return {"total": len(entries), **counts, "entries": entries}
+
     def _configured_not_loaded(self) -> list[tuple[str, str]]:
         """Return (id, name) for builtins that are enabled in config but not loaded.
 
