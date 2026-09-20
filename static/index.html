@@ -19,6 +19,7 @@
     <span class="tag" id="tier-tag">--</span>
     <span class="node-role" id="node-role" style="display:none"></span>
     <span class="access-badge" id="access-badge" style="display:none">tailscale</span>
+    <button type="button" class="health-badge" id="health-badge" style="display:none" aria-haspopup="dialog"></button>
     <div class="uptime">up <span id="uptime">--</span></div>
   </header>
 
@@ -128,6 +129,15 @@
       <div class="plugin-dialog-ago" id="plugin-detail-ago"></div>
     </div>
     <div class="plugin-dialog-body" id="plugin-detail-body"></div>
+  </dialog>
+
+  <dialog id="health-detail" class="plugin-dialog" aria-labelledby="health-detail-title">
+    <div class="plugin-dialog-head">
+      <span class="plugin-dialog-icon" aria-hidden="true">⚠</span>
+      <h2 class="plugin-dialog-title" id="health-detail-title">System health</h2>
+      <button class="plugin-dialog-close" type="button" aria-label="Close">&#10005;</button>
+    </div>
+    <div class="plugin-dialog-body" id="health-detail-body"></div>
   </dialog>
 
   <footer id="footer">

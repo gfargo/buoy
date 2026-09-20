@@ -172,6 +172,9 @@ class DemoDockerCollector:
     async def list_containers(self) -> list[dict]:
         return _DEMO_CONTAINERS
 
+    async def is_available(self, *, force: bool = False) -> bool:
+        return True
+
     async def collect_summary(self) -> dict:
         containers_list = []
         running_count = 0

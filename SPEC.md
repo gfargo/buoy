@@ -427,6 +427,37 @@ This keeps the barrier low (no JS needed for simple plugins) while allowing rich
 | GET | `/api/health` | No | Health check with dependency status |
 | WS | `/ws` | No | Real-time stats + plugin updates |
 
+`GET /api/health` always returns `200` with `status: "ok"` while the process
+is alive — that's what k8s liveness/readiness probes and the CI smoke test
+key off, so it never reflects degraded subsystems. Degradation is reported
+separately:
+
+```jsonc
+{
+  "status": "ok",
+  "hostname": "compass",
+  "version": "1.2.3",
+  "degraded": true,
+  "subsystems": {
+    "docker": { "status": "unavailable", "impact": "service discovery, container stats/logs/restart unavailable" },
+    "nsenter": { "status": "not_applicable", "impact": "" },
+    "smartctl": { "status": "ok", "impact": "" },
+    "proc": { "status": "ok", "impact": "" },
+    "sys_thermal": { "status": "ok", "impact": "" }
+  },
+  "plugins": {
+    "total": 5, "ok": 4, "error": 1, "disabled": 0, "not_loaded": 0,
+    "entries": [{ "id": "github", "name": "GitHub", "status": "ok", "last_error": null }]
+  }
+}
+```
+
+`subsystems` is a snapshot refreshed by a background probe loop (docker,
+`nsenter`, `smartctl`, `/proc`, `/sys` — see
+[the privilege matrix](docs/deployment/privilege-matrix.md)), never probed
+inline in the handler. `--demo` reports a static all-`ok` map and performs no
+host probing at all.
+
 ### 5.2 Protected Endpoints (require auth when enabled)
 
 | Method | Path | Description |

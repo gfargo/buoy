@@ -8,6 +8,7 @@ import pytest
 from buoy.config import BuoyConfig, NetworkConfig, NodeConfig, RefreshConfig
 from buoy.server import (
     BuoyAppState,
+    _capability_loop,
     _health_check_loop,
     _image_update_loop,
     _latency_loop,
@@ -98,3 +99,21 @@ class TestHealthCheckLoopLogging:
                 )
 
         assert any("static health check failed" in r.message for r in caplog.records)
+
+
+class TestCapabilityLoopLogging:
+    @pytest.mark.asyncio
+    async def test_initial_probe_failure_is_logged(self, caplog, monkeypatch):
+        import buoy.capabilities as capabilities_module
+
+        async def _exploding_probe(*args, **kwargs):
+            raise RuntimeError("probe blew up")
+
+        monkeypatch.setattr(capabilities_module, "probe", _exploding_probe)
+        state = BuoyAppState(config=_make_config())
+
+        with caplog.at_level(logging.WARNING, logger="buoy.server"):
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(_capability_loop(state), timeout=0.2)
+
+        assert any("capability probe failed" in r.message for r in caplog.records)
