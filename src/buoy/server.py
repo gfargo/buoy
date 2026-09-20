@@ -793,17 +793,7 @@ async def _capability_loop(state: BuoyAppState):
     """
     from buoy import capabilities
 
-    try:
-        state.capabilities = await capabilities.probe(
-            state.config,
-            docker_collector=state.collectors.get("docker"),
-            disk_collector=state.collectors.get("disk"),
-            gpu_collector=state.collectors.get("gpu"),
-        )
-    except Exception:
-        logger.warning("capability probe failed", exc_info=True)
-    while True:
-        await asyncio.sleep(CAPABILITY_REFRESH_INTERVAL)
+    async def _refresh_capabilities():
         try:
             state.capabilities = await capabilities.probe(
                 state.config,
@@ -813,6 +803,11 @@ async def _capability_loop(state: BuoyAppState):
             )
         except Exception:
             logger.warning("capability probe failed", exc_info=True)
+
+    await _refresh_capabilities()
+    while True:
+        await asyncio.sleep(CAPABILITY_REFRESH_INTERVAL)
+        await _refresh_capabilities()
 
 
 # ── Lifecycle ──────────────────────────────────────────────────────────────────

@@ -98,6 +98,27 @@ def _make_proc(returncode: int = 0):
     return proc
 
 
+class TestRunningInContainer:
+    def test_dockerenv_present_reports_true(self, fake_fs):
+        fake_fs.set_file("/.dockerenv", "")
+        assert capabilities._running_in_container() is True
+
+    def test_cgroup_docker_marker_reports_true(self, fake_fs):
+        fake_fs.set_file("/proc/1/cgroup", "0::/docker/abc123\n")
+        assert capabilities._running_in_container() is True
+
+    def test_cgroup_kubepods_marker_reports_true(self, fake_fs):
+        fake_fs.set_file("/proc/1/cgroup", "0::/kubepods/besteffort/pod123\n")
+        assert capabilities._running_in_container() is True
+
+    def test_no_markers_reports_false(self, fake_fs):
+        fake_fs.set_file("/proc/1/cgroup", "0::/init.scope\n")
+        assert capabilities._running_in_container() is False
+
+    def test_nothing_readable_reports_false(self, fake_fs):
+        assert capabilities._running_in_container() is False
+
+
 class TestNsenterProbe:
     @pytest.mark.asyncio
     async def test_successful_nsenter_reports_ok(self):
@@ -110,14 +131,33 @@ class TestNsenterProbe:
         with (
             patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()),
             patch("platform.system", return_value="Linux"),
+            patch("buoy.capabilities._running_in_container", return_value=False),
         ):
             result = await capabilities._probe_nsenter(_StubDiskCollector([{"mount": "/"}]))
         assert result["status"] == "not_applicable"
 
     @pytest.mark.asyncio
     async def test_missing_binary_and_no_local_mounts_reports_unavailable(self):
-        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()):
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()),
+            patch("buoy.capabilities._running_in_container", return_value=False),
+        ):
             result = await capabilities._probe_nsenter(_StubDiskCollector([]))
+        assert result["status"] == "unavailable"
+        assert "impact" in result
+
+    @pytest.mark.asyncio
+    async def test_missing_binary_inside_container_reports_unavailable_despite_local_mounts(self):
+        """A Tier 3 container (see docs/deployment/privilege-matrix.md) sees
+        its own mounts just fine via the /proc/mounts fallback — but that's
+        not the host's real mount list, so it must not read as
+        not_applicable the way a native install's local view does."""
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()),
+            patch("platform.system", return_value="Linux"),
+            patch("buoy.capabilities._running_in_container", return_value=True),
+        ):
+            result = await capabilities._probe_nsenter(_StubDiskCollector([{"mount": "/"}]))
         assert result["status"] == "unavailable"
         assert "impact" in result
 

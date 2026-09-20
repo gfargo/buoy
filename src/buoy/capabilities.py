@@ -55,6 +55,29 @@ async def _probe_docker(docker_collector: Any) -> dict[str, Any]:
     return {"status": "ok", "impact": ""} if ok else dict(_DOCKER_UNAVAILABLE)
 
 
+def _running_in_container() -> bool:
+    """Best-effort Linux container detection.
+
+    Only used to disambiguate the nsenter fallback below: both a native
+    install and an unprivileged container resolve ``_local_mounts()`` to a
+    non-empty list, but they mean opposite things (real host mounts vs. just
+    the container's own), so a truthy result alone can't tell them apart.
+    ``/.dockerenv`` covers Docker; ``/proc/1/cgroup`` catches other runtimes
+    (containerd, Kubernetes) where it's absent.
+    """
+    try:
+        open("/.dockerenv").close()
+        return True
+    except OSError:
+        pass
+    try:
+        with open("/proc/1/cgroup") as f:
+            data = f.read()
+        return any(marker in data for marker in ("docker", "kubepods", "containerd"))
+    except OSError:
+        return False
+
+
 async def _probe_nsenter(disk_collector: Any) -> dict[str, Any]:
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -77,9 +100,13 @@ async def _probe_nsenter(disk_collector: Any) -> dict[str, Any]:
 
     # A native (non-container) install never needs nsenter — its local
     # /proc/mounts fallback already sees the real host mounts, so a red
-    # "unavailable" there would be a false alarm.
+    # "unavailable" there would be a false alarm. Inside a container,
+    # though, that same fallback only sees the container's own mounts
+    # (Tier 3, see docs/deployment/privilege-matrix.md) — a real
+    # degradation, not a false alarm — so only take the not_applicable
+    # shortcut once a container boundary has been ruled out.
     local_mounts = getattr(disk_collector, "_local_mounts", None)
-    if platform.system() == "Linux" and local_mounts is not None:
+    if platform.system() == "Linux" and local_mounts is not None and not _running_in_container():
         try:
             if local_mounts():
                 return {"status": "not_applicable", "impact": ""}
