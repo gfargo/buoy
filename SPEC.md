@@ -436,14 +436,47 @@ This keeps the barrier low (no JS needed for simple plugins) while allowing rich
 | GET | `/api/health` | No | Health check with dependency status |
 | WS | `/ws` | No | Real-time stats + plugin updates |
 
+`GET /api/health` always returns `200` with `status: "ok"` while the process
+is alive — that's what k8s liveness/readiness probes and the CI smoke test
+key off, so it never reflects degraded subsystems. Degradation is reported
+separately:
+
+```jsonc
+{
+  "status": "ok",
+  "hostname": "compass",
+  "version": "1.2.3",
+  "degraded": true,
+  "subsystems": {
+    "docker": { "status": "unavailable", "impact": "service discovery, container stats/logs/restart unavailable" },
+    "nsenter": { "status": "not_applicable", "impact": "" },
+    "smartctl": { "status": "ok", "impact": "" },
+    "proc": { "status": "ok", "impact": "" },
+    "sys_thermal": { "status": "ok", "impact": "" }
+  },
+  "plugins": {
+    "total": 5, "ok": 4, "error": 1, "disabled": 0, "not_loaded": 0,
+    "entries": [{ "id": "github", "name": "GitHub", "status": "ok", "last_error": null }]
+  }
+}
+```
+
+`subsystems` is a snapshot refreshed by a background probe loop (docker,
+`nsenter`, `smartctl`, `/proc`, `/sys` — see
+[the privilege matrix](docs/deployment/privilege-matrix.md)), never probed
+inline in the handler. `--demo` reports a static all-`ok` map and performs no
+host probing at all.
+
 ### 5.2 Protected Endpoints (require auth when enabled)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/container/{name}` | Container detail (inspect + resource usage) |
-| GET | `/api/container/{name}/logs` | Last N lines of container stdout/stderr |
+| GET | `/api/container/{name}/logs` | Last N lines of container stdout/stderr (`?tail=` clamped to `logs.max_tail`) |
+| GET | `/api/container/{name}/logs/ticket` | Single-use, container-scoped ticket for the WS log stream (see §5.3) |
 | POST | `/api/container/{name}/restart` | Restart a container |
 | POST | `/api/container/{name}/stop` | Stop a container |
+| WS | `/ws/logs/{name}` | Live `docker logs --follow` stream (`?tail=`, `?ticket=` when auth is enabled) |
 
 ### 5.3 WebSocket Protocol
 
@@ -459,6 +492,25 @@ This keeps the barrier low (no JS needed for simple plugins) while allowing rich
 // Server → Client (alerts)
 { "type": "alert", "level": "warn", "message": "CPU > 90% for 5m", "metric": "cpu" }
 ```
+
+`/ws/logs/{name}` is a separate, per-panel socket (one per open log viewer, not
+multiplexed through `/ws`) speaking its own protocol:
+
+```jsonc
+// Server → Client
+{ "type": "log_start", "container": "grafana", "tail": 100 }
+{ "type": "log", "lines": [{ "stream": "stdout", "line": "2026-01-01T00:00:00Z ..." }] }
+{ "type": "log_dropped", "count": 12 }   // client too slow — oldest lines were dropped
+{ "type": "log_end", "reason": "container exited" }   // or "disconnected" | "stream error" | "error" | "closed"
+
+// Client → Server: any frame (or a disconnect) ends the stream server-side.
+```
+
+Query params: `tail` (clamped to `[1, logs.max_tail]`, default `logs.default_tail`)
+and, only when `auth.enabled` is true, `ticket` — a single-use token minted by
+`GET /api/container/{name}/logs/ticket` (§5.2). WebSocket handshakes can't carry
+an `Authorization` header, so this ticket is the auth boundary for the stream;
+see §7.2/§7.3.
 
 ### 5.4 Demo Mode
 
@@ -559,6 +611,7 @@ Hub is designed for **private networks** (home LAN, Tailscale, VPN). It is NOT d
 |---------|---------|-------|
 | Auth for read-only APIs | Disabled | Stats, services are informational |
 | Auth for destructive APIs | Enabled when auth configured | Restart, stop, logs |
+| Auth for the WS log stream | Enabled when auth configured | `/ws/logs/{name}` is ticket-gated (§5.3) since `BaseHTTPMiddleware` — and therefore `AuthMiddleware`/`RateLimitMiddleware` — never runs for `websocket` scopes; the HTTP ticket endpoint is the actual enforcement point |
 | Input sanitization | Always | Container names validated against `[a-zA-Z0-9_.-]` |
 | Rate limiting | 60 req/min per IP | On destructive endpoints |
 | CORS | Same-origin only | Configurable for fleet cross-node |
@@ -653,7 +706,7 @@ class DiskCollector:
 
 ### 8.4 Network Collector
 
-Fleet polling + latency measurement:
+Fleet polling + latency measurement, plus per-interface throughput:
 
 ```python
 class NetworkCollector:
@@ -669,6 +722,18 @@ class NetworkCollector:
         async with httpx.AsyncClient(timeout=4) as client:
             r = await client.get(f"{peer.url}/api/stats")
             return PeerStatus(name=peer.name, online=True, data=r.json())
+
+    async def collect_throughput(self) -> dict:
+        """Sample rx/tx byte rates per interface from /proc/net/dev (or
+        /proc/1/net/dev, when the host netns is reachable — see the
+        privilege matrix). Rates are a delta against the previous sample,
+        so the first call after startup reports 0 rather than a spike, and
+        a counter that goes backwards (wrap, NIC reset) clamps to 0 rather
+        than going negative. Loopback and container/bridge interfaces (lo,
+        veth*, docker*, br-*, virbr*) are excluded unless explicitly listed
+        in network.interfaces. Returns {} on non-Linux or when
+        /proc/net/dev is unreadable — the "net" key is then absent from
+        /api/stats entirely (BUG-33 convention)."""
 ```
 
 ### 8.5 Collector Scheduler

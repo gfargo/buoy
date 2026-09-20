@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import dataclasses
 import hmac
@@ -10,6 +11,8 @@ import html as html_module
 import json
 import logging
 import re
+import secrets
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -49,7 +52,11 @@ class BuoyAppState:
     alert_engine: AlertEngine | None = None
     image_update_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     static_health: dict[str, dict[str, Any]] = field(default_factory=dict)
+    capabilities: dict[str, Any] = field(default_factory=dict)
     background_tasks: list[asyncio.Task[None]] = field(default_factory=list)
+    # Single-use WS log-stream tickets: ticket -> (container name, monotonic expiry).
+    log_tickets: dict[str, tuple[str, float]] = field(default_factory=dict)
+    log_stream_count: int = 0
 
 
 # ── API Handlers ───────────────────────────────────────────────────────────────
@@ -65,14 +72,37 @@ def _is_tailscale(request: Request, config: BuoyConfig) -> bool:
     return bool(tailnet_domain) and (host == tailnet_domain or host.endswith(f".{tailnet_domain}"))
 
 
+def _is_degraded(subsystems: dict[str, Any], plugins: dict[str, Any]) -> bool:
+    subsystem_down = any(entry.get("status") == "unavailable" for entry in subsystems.values())
+    plugin_down = bool(plugins.get("error")) or bool(plugins.get("not_loaded"))
+    return subsystem_down or plugin_down
+
+
 async def api_health(request: Request) -> JSONResponse:
-    """Health check endpoint."""
+    """Health check endpoint.
+
+    Kept liveness/readiness-safe: ``status`` stays ``"ok"`` and the response
+    stays 200 whenever this process is alive, even when every subsystem below
+    is unavailable — k8s liveness/readiness probes and the CI smoke test key
+    off ``status``, not ``degraded``. Subsystem/plugin data is served from a
+    cached snapshot refreshed by a background loop (``_capability_loop``),
+    never probed inline, so this handler stays O(1) for a 10s-interval probe.
+    """
     state: BuoyAppState = request.app.state.buoy
+    plugins = (
+        state.plugin_manager.health_summary()
+        if state.plugin_manager
+        else {"total": 0, "ok": 0, "error": 0, "disabled": 0, "not_loaded": 0, "entries": []}
+    )
+    subsystems = state.capabilities
     return JSONResponse(
         {
             "status": "ok",
             "hostname": state.config.node.name,
             "version": VERSION,
+            "degraded": _is_degraded(subsystems, plugins),
+            "subsystems": subsystems,
+            "plugins": plugins,
         }
     )
 
@@ -110,6 +140,11 @@ async def api_config(request: Request) -> JSONResponse:
                 "night_mode": state.config.features.night_mode,
                 "keyboard_shortcuts": state.config.features.keyboard_shortcuts,
                 "image_updates": state.config.features.image_updates,
+                "log_streaming": state.config.features.log_streaming,
+            },
+            "logs": {
+                "default_tail": state.config.logs.default_tail,
+                "max_tail": state.config.logs.max_tail,
             },
             "refresh": {
                 "stats_interval": state.config.refresh.stats_interval,
@@ -232,12 +267,13 @@ async def api_stats(request: Request) -> JSONResponse:
     system_coll = state.collectors.get("system")
     docker_coll = state.collectors.get("docker")
     disk_coll = state.collectors.get("disk")
+    network_coll = state.collectors.get("network")
     gpu_coll = state.collectors.get("gpu")
 
     is_tailscale = _is_tailscale(request, state.config)
 
-    # Gather all stats concurrently. gpu is appended last (not inserted
-    # before top_services) so top_services' positional index (3) stays
+    # Gather all stats concurrently. net/gpu are appended last (not inserted
+    # before top_services) so top_services' positional index stays
     # stable — this is a plain list, and inserting in the middle would
     # silently shift every index after it.
     results = await asyncio.gather(
@@ -245,6 +281,7 @@ async def api_stats(request: Request) -> JSONResponse:
         docker_coll.collect_summary() if docker_coll else _empty_docker(),
         disk_coll.collect_summary() if disk_coll else _empty_disk(),
         top_services(state.config, is_tailscale, collector=docker_coll),
+        network_coll.collect_throughput() if network_coll else _empty_net(),
         gpu_coll.collect_summary() if gpu_coll else _empty_gpu(),
         return_exceptions=True,
     )
@@ -253,7 +290,8 @@ async def api_stats(request: Request) -> JSONResponse:
     docker_data = results[1] if not isinstance(results[1], Exception) else {}
     disk_data = results[2] if not isinstance(results[2], Exception) else {}
     services = results[3] if not isinstance(results[3], Exception) else []
-    gpu_data = results[4] if not isinstance(results[4], Exception) else {}
+    net_data = results[4] if not isinstance(results[4], Exception) else {}
+    gpu_data = results[5] if not isinstance(results[5], Exception) else {}
 
     # Decorate each container entry with update status from cache (pure dict lookup)
     if state.image_update_cache and "containers_list" in docker_data:
@@ -268,6 +306,7 @@ async def api_stats(request: Request) -> JSONResponse:
             **system_data,
             **docker_data,
             **disk_data,
+            **net_data,
             **gpu_data,
             "top_services": services,
             "alerts": alerts,
@@ -281,27 +320,31 @@ async def api_stats_detail(request: Request) -> JSONResponse:
 
     system_coll = state.collectors.get("system")
     disk_coll = state.collectors.get("disk")
+    network_coll = state.collectors.get("network")
     gpu_coll = state.collectors.get("gpu")
 
     results = await asyncio.gather(
         system_coll.collect_detail() if system_coll else _empty_detail(),
         disk_coll.collect_detail() if disk_coll else _empty_disk_detail(),
+        network_coll.collect_throughput() if network_coll else _empty_net(),
         gpu_coll.collect_detail() if gpu_coll else _empty_gpu_detail(),
         return_exceptions=True,
     )
 
     system_detail = results[0] if not isinstance(results[0], Exception) else {}
     disk_detail = results[1] if not isinstance(results[1], Exception) else {}
-    gpu_detail = results[2] if not isinstance(results[2], Exception) else {}
+    net_data = results[2] if not isinstance(results[2], Exception) else {}
+    gpu_detail = results[3] if not isinstance(results[3], Exception) else {}
 
-    return JSONResponse(
-        {
-            "cpu": system_detail.get("cpu", {}),
-            "memory": system_detail.get("memory", {}),
-            "disk": disk_detail,
-            "gpu": gpu_detail,
-        }
-    )
+    response = {
+        "cpu": system_detail.get("cpu", {}),
+        "memory": system_detail.get("memory", {}),
+        "disk": disk_detail,
+        "gpu": gpu_detail,
+    }
+    if "net" in net_data:
+        response["net"] = net_data["net"]
+    return JSONResponse(response)
 
 
 async def api_services(request: Request) -> JSONResponse:
@@ -374,6 +417,19 @@ async def api_container_detail(request: Request) -> JSONResponse:
     return JSONResponse(data)
 
 
+def _clamp_tail(raw: str | None, config: BuoyConfig) -> int:
+    """Parse and clamp a `?tail=` query param to `[1, logs.max_tail]`.
+
+    Falls back to `logs.default_tail` for a missing or unparsable value,
+    keeping the one-shot REST endpoint and the WS stream consistent.
+    """
+    try:
+        tail = int(raw) if raw is not None else config.logs.default_tail
+    except (TypeError, ValueError):
+        tail = config.logs.default_tail
+    return max(1, min(tail, config.logs.max_tail))
+
+
 async def api_container_logs(request: Request) -> JSONResponse:
     state: BuoyAppState = request.app.state.buoy
     """Last N lines of container stdout/stderr."""
@@ -385,8 +441,41 @@ async def api_container_logs(request: Request) -> JSONResponse:
     if not docker_coll:
         return JSONResponse({"error": "docker not available"}, status_code=503)
 
-    data = await docker_coll.get_logs(name, tail=30)
+    tail = _clamp_tail(request.query_params.get("tail"), state.config)
+    data = await docker_coll.get_logs(name, tail=tail)
     return JSONResponse(data)
+
+
+_LOG_TICKET_TTL = 30.0
+_LOG_TICKET_MAX = 1000
+
+
+async def api_container_logs_ticket(request: Request) -> JSONResponse:
+    """Issue a single-use, container-scoped ticket for the WS log stream.
+
+    Browsers cannot set an `Authorization` header on a WebSocket handshake,
+    so `ws_container_logs` can't reuse `AuthMiddleware` directly — and
+    `BaseHTTPMiddleware` (both `AuthMiddleware` and `RateLimitMiddleware`)
+    never runs for `websocket` scopes in the first place. This endpoint is
+    plain HTTP under the already-protected `/api/container/` prefix, so it
+    inherits auth (when enabled) and the always-on rate limiter, and hands
+    back a short-lived ticket that the WS handler consumes exactly once.
+    """
+    state: BuoyAppState = request.app.state.buoy
+    name = request.path_params["name"]
+    if not _validate_container_name(name):
+        return JSONResponse({"error": "invalid container name"}, status_code=400)
+
+    now = time.monotonic()
+    for stale in [t for t, (_, exp) in state.log_tickets.items() if exp <= now]:
+        del state.log_tickets[stale]
+
+    if len(state.log_tickets) >= _LOG_TICKET_MAX:
+        return JSONResponse({"error": "too many pending tickets"}, status_code=429)
+
+    ticket = secrets.token_urlsafe(32)
+    state.log_tickets[ticket] = (name, now + _LOG_TICKET_TTL)
+    return JSONResponse({"ticket": ticket, "expires_in": int(_LOG_TICKET_TTL)})
 
 
 async def api_container_restart(request: Request) -> JSONResponse:
@@ -510,12 +599,14 @@ async def api_metrics(request: Request) -> Response:
     system_coll = state.collectors.get("system")
     docker_coll = state.collectors.get("docker")
     disk_coll = state.collectors.get("disk")
+    network_coll = state.collectors.get("network")
     gpu_coll = state.collectors.get("gpu")
 
     results = await asyncio.gather(
         system_coll.collect() if system_coll else _empty_system(state.config),
         docker_coll.collect_summary() if docker_coll else _empty_docker(),
         disk_coll.collect_summary() if disk_coll else _empty_disk(),
+        network_coll.collect_throughput() if network_coll else _empty_net(),
         gpu_coll.collect_summary() if gpu_coll else _empty_gpu(),
         return_exceptions=True,
     )
@@ -523,8 +614,9 @@ async def api_metrics(request: Request) -> Response:
     system_data = results[0] if not isinstance(results[0], Exception) else {}
     docker_data = results[1] if not isinstance(results[1], Exception) else {}
     disk_data = results[2] if not isinstance(results[2], Exception) else {}
-    gpu_data = results[3] if not isinstance(results[3], Exception) else {}
-    combined = {**system_data, **docker_data, **disk_data, **gpu_data}
+    net_data = results[3] if not isinstance(results[3], Exception) else {}
+    gpu_data = results[4] if not isinstance(results[4], Exception) else {}
+    combined = {**system_data, **docker_data, **disk_data, **net_data, **gpu_data}
 
     body = PrometheusExporterPlugin.format_metrics(combined)
     return Response(body, media_type="text/plain; version=0.0.4; charset=utf-8")
@@ -598,6 +690,208 @@ async def ws_endpoint(websocket: WebSocket):
         state.ws_clients.discard(websocket)
 
 
+def _consume_log_ticket(state: BuoyAppState, ticket: str, name: str) -> bool:
+    """Look up and immediately invalidate a log-stream ticket.
+
+    Single-use (popped regardless of outcome), TTL-checked, and bound to
+    the container name it was issued for.
+    """
+    if not ticket:
+        return False
+    entry = state.log_tickets.pop(ticket, None)
+    if entry is None:
+        return False
+    ticket_name, expiry = entry
+    return ticket_name == name and time.monotonic() <= expiry
+
+
+class _DropOldestQueue:
+    """Bounded FIFO buffer of pending log items; overflow drops the oldest entry.
+
+    Decouples the `docker logs --follow` pump from a slow client: the
+    producer never blocks on a stalled WebSocket send (which would otherwise
+    also stall the docker CLI's stdout pipe), and the count of dropped lines
+    is surfaced to the client explicitly via a `log_dropped` frame instead of
+    silently losing data or growing memory without bound.
+    """
+
+    def __init__(self, maxsize: int):
+        self._items: collections.deque = collections.deque()
+        self._maxsize = maxsize
+        self._dropped = 0
+        self._event = asyncio.Event()
+
+    def push(self, item: dict) -> None:
+        if len(self._items) >= self._maxsize:
+            self._items.popleft()
+            self._dropped += 1
+        self._items.append(item)
+        self._event.set()
+
+    def wake(self) -> None:
+        self._event.set()
+
+    async def wait_not_empty(self) -> None:
+        if self._items:
+            return
+        self._event.clear()
+        await self._event.wait()
+
+    def drain(self) -> tuple[list[dict], int]:
+        items = list(self._items)
+        self._items.clear()
+        dropped, self._dropped = self._dropped, 0
+        return items, dropped
+
+    def drain_up_to(self, n: int) -> tuple[list[dict], int]:
+        """Like `drain()`, but leaves anything beyond `n` items queued —
+        used to pace output to `logs.stream_rate_limit` without discarding
+        the backlog (it stays subject to normal drop-oldest on overflow)."""
+        items = [self._items.popleft() for _ in range(min(n, len(self._items)))]
+        dropped, self._dropped = self._dropped, 0
+        return items, dropped
+
+    def has_pending(self) -> bool:
+        return bool(self._items)
+
+
+_LOG_STREAM_BATCH_INTERVAL = 0.1
+_LOG_STREAM_BATCH_MAX_LINES = 100
+_LOG_STREAM_QUEUE_MAX_LINES = 2000
+
+
+async def ws_container_logs(websocket: WebSocket):
+    """WebSocket for live `docker logs --follow` streaming.
+
+    `BaseHTTPMiddleware` (both `AuthMiddleware` and `RateLimitMiddleware`)
+    only wraps `http` scopes and never runs for `websocket` connections, so
+    this handler re-implements the auth check explicitly via a short-lived
+    ticket (see `api_container_logs_ticket`) rather than relying on the
+    middleware stack — a naive route here would otherwise serve logs
+    unauthenticated even when `auth.enabled` is true.
+    """
+    state: BuoyAppState = websocket.app.state.buoy
+    config = state.config
+    name = websocket.path_params.get("name", "")
+
+    if not _validate_container_name(name):
+        await websocket.close(code=4400, reason="invalid container name")
+        return
+
+    if not config.features.log_streaming:
+        await websocket.close(code=4403, reason="log streaming disabled")
+        return
+
+    if config.auth.enabled:
+        ticket = websocket.query_params.get("ticket", "")
+        if not _consume_log_ticket(state, ticket, name):
+            await websocket.close(code=4401, reason="authentication required")
+            return
+
+    docker_coll = state.collectors.get("docker")
+    if not docker_coll:
+        await websocket.close(code=4404, reason="docker not available")
+        return
+
+    if state.log_stream_count >= config.logs.max_streams:
+        await websocket.close(code=4429, reason="too many concurrent log streams")
+        return
+
+    tail = _clamp_tail(websocket.query_params.get("tail"), config)
+
+    await websocket.accept()
+    state.log_stream_count += 1
+
+    queue = _DropOldestQueue(_LOG_STREAM_QUEUE_MAX_LINES)
+    stop = asyncio.Event()
+    producer_error: Exception | None = None
+
+    async def _produce() -> None:
+        nonlocal producer_error
+        try:
+            async with contextlib.aclosing(
+                docker_coll.stream_logs(name, tail=tail, max_line_bytes=config.logs.max_line_bytes)
+            ) as stream:
+                async for item in stream:
+                    if stop.is_set():
+                        break
+                    queue.push(item)
+        except Exception as exc:
+            producer_error = exc
+            logger.warning("ws_container_logs: producer failed for %s: %s", name, exc)
+        finally:
+            stop.set()
+            queue.wake()
+
+    producer = asyncio.ensure_future(_produce())
+    recv_task = asyncio.ensure_future(websocket.receive_text())
+    reason = "closed"
+
+    # `stream_rate_limit` (lines/sec, <=0 disables it) is a soft cap enforced
+    # here by pacing how many items we drain per rolling 1s window — items
+    # beyond the budget stay queued (and remain subject to normal
+    # drop-oldest) rather than being discarded outright.
+    rate_limit = config.logs.stream_rate_limit
+    rate_window_start = time.monotonic()
+    rate_window_sent = 0
+
+    try:
+        await websocket.send_json({"type": "log_start", "container": name, "tail": tail})
+        while True:
+            now = time.monotonic()
+            if now - rate_window_start >= 1.0:
+                rate_window_start = now
+                rate_window_sent = 0
+            budget = None if rate_limit <= 0 else max(0, rate_limit - rate_window_sent)
+
+            waitables = {recv_task}
+            wait_task = None
+            if budget != 0:
+                wait_task = asyncio.ensure_future(queue.wait_not_empty())
+                waitables.add(wait_task)
+            done, _pending = await asyncio.wait(
+                waitables,
+                timeout=_LOG_STREAM_BATCH_INTERVAL,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if wait_task is not None and not wait_task.done():
+                wait_task.cancel()
+
+            if recv_task in done:
+                with contextlib.suppress(Exception):
+                    recv_task.result()
+                reason = "disconnected"
+                break
+
+            items, dropped = queue.drain() if budget is None else queue.drain_up_to(budget)
+            rate_window_sent += len(items)
+            for i in range(0, len(items), _LOG_STREAM_BATCH_MAX_LINES):
+                await websocket.send_json(
+                    {"type": "log", "lines": items[i : i + _LOG_STREAM_BATCH_MAX_LINES]}
+                )
+            if dropped:
+                await websocket.send_json({"type": "log_dropped", "count": dropped})
+
+            if stop.is_set() and not items and not dropped and not queue.has_pending():
+                reason = "stream error" if producer_error is not None else "container exited"
+                break
+    except WebSocketDisconnect:
+        reason = "disconnected"
+    except Exception:
+        logger.debug("ws_container_logs: send loop failed for %s", name, exc_info=True)
+        reason = "error"
+    finally:
+        stop.set()
+        state.log_stream_count -= 1
+        recv_task.cancel()
+        producer.cancel()
+        await asyncio.gather(recv_task, producer, return_exceptions=True)
+        with contextlib.suppress(Exception):
+            await websocket.send_json({"type": "log_end", "reason": reason})
+        with contextlib.suppress(Exception):
+            await websocket.close(code=1000, reason=reason)
+
+
 async def broadcast_stats(state: BuoyAppState, data: dict):
     """Push stats update to this app's connected WebSocket clients."""
     if not state.ws_clients:
@@ -643,12 +937,14 @@ async def _stats_loop(state: BuoyAppState):
             system_coll = state.collectors.get("system")
             docker_coll = state.collectors.get("docker")
             disk_coll = state.collectors.get("disk")
+            network_coll = state.collectors.get("network")
             gpu_coll = state.collectors.get("gpu")
 
             results = await asyncio.gather(
                 system_coll.collect() if system_coll else _empty_system(state.config),
                 docker_coll.collect_summary() if docker_coll else _empty_docker(),
                 disk_coll.collect_summary() if disk_coll else _empty_disk(),
+                network_coll.collect_throughput() if network_coll else _empty_net(),
                 gpu_coll.collect_summary() if gpu_coll else _empty_gpu(),
                 return_exceptions=True,
             )
@@ -656,9 +952,10 @@ async def _stats_loop(state: BuoyAppState):
             system_data = results[0] if not isinstance(results[0], Exception) else {}
             docker_data = results[1] if not isinstance(results[1], Exception) else {}
             disk_data = results[2] if not isinstance(results[2], Exception) else {}
-            gpu_data = results[3] if not isinstance(results[3], Exception) else {}
+            net_data = results[3] if not isinstance(results[3], Exception) else {}
+            gpu_data = results[4] if not isinstance(results[4], Exception) else {}
 
-            combined = {**system_data, **docker_data, **disk_data, **gpu_data}
+            combined = {**system_data, **docker_data, **disk_data, **net_data, **gpu_data}
 
             # Decorate containers with update status from cache (pure dict lookup)
             if state.image_update_cache and "containers_list" in combined:
@@ -684,7 +981,18 @@ async def _stats_loop(state: BuoyAppState):
 
             # Store in history (if enabled)
             if state.metric_store:
-                await asyncio.to_thread(state.metric_store.record, "stats", combined)
+                # Drop the per-interface breakdown before persisting — it's
+                # ~150 bytes/interface/sample, which balloons the 24h ring
+                # buffer (roughly 17k samples/day at the default 5s
+                # interval) for data the sparkline/gauge don't need from
+                # history (they track an in-memory rolling window instead).
+                stored = combined
+                if "net" in combined and "interfaces" in combined["net"]:
+                    stored = {
+                        **combined,
+                        "net": {k: v for k, v in combined["net"].items() if k != "interfaces"},
+                    }
+                await asyncio.to_thread(state.metric_store.record, "stats", stored)
                 # Sample container states every ~30s (every 6th cycle at 5s interval)
                 if docker_coll and cycle % 6 == 0:
                     try:
@@ -755,6 +1063,37 @@ async def _health_check_loop(state: BuoyAppState, checker: Any):
             logger.warning("static health check failed", exc_info=True)
 
 
+# Not a RefreshConfig field — this loop feeds a diagnostic snapshot, not a
+# user-visible refresh cadence, so it doesn't need to be operator-tunable.
+CAPABILITY_REFRESH_INTERVAL = 600
+
+
+async def _capability_loop(state: BuoyAppState):
+    """Periodically probe docker/nsenter/smartctl/proc/sys availability.
+
+    Runs on its own long interval (unlike the 5s stats loop) since these
+    probes shell out and rarely change. Never runs inline in api_health —
+    see that handler's docstring for why.
+    """
+    from buoy import capabilities
+
+    async def _refresh_capabilities():
+        try:
+            state.capabilities = await capabilities.probe(
+                state.config,
+                docker_collector=state.collectors.get("docker"),
+                disk_collector=state.collectors.get("disk"),
+                gpu_collector=state.collectors.get("gpu"),
+            )
+        except Exception:
+            logger.warning("capability probe failed", exc_info=True)
+
+    await _refresh_capabilities()
+    while True:
+        await asyncio.sleep(CAPABILITY_REFRESH_INTERVAL)
+        await _refresh_capabilities()
+
+
 # ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 
@@ -768,12 +1107,14 @@ async def on_startup(state: BuoyAppState):
             DemoDiskCollector,
             DemoDockerCollector,
             DemoGpuCollector,
+            DemoNetworkCollector,
             DemoSystemCollector,
         )
 
         state.collectors["system"] = DemoSystemCollector(state.config)
         state.collectors["docker"] = DemoDockerCollector(state.config)
         state.collectors["disk"] = DemoDiskCollector(state.config)
+        state.collectors["network"] = DemoNetworkCollector(state.config)
         if state.config.features.gpu:
             state.collectors["gpu"] = DemoGpuCollector(state.config)
     else:
@@ -790,6 +1131,10 @@ async def on_startup(state: BuoyAppState):
             from buoy.collectors.gpu import GpuCollector
 
             state.collectors["gpu"] = GpuCollector(state.config)
+
+    # Start capability probing loop — needs collectors constructed above so
+    # it can query docker/disk/gpu availability.
+    state.background_tasks.append(asyncio.create_task(_capability_loop(state)))
 
     # Initialize metric history store (if enabled)
     if state.config.features.history:
@@ -890,7 +1235,10 @@ async def on_shutdown(state: BuoyAppState):
         state.ws_clients.clear()
         state.image_update_cache.clear()
         state.static_health.clear()
+        state.capabilities.clear()
         state.background_tasks.clear()
+        state.log_tickets.clear()
+        state.log_stream_count = 0
 
 
 @contextlib.asynccontextmanager
@@ -954,6 +1302,10 @@ async def _empty_docker():
 
 async def _empty_disk():
     return {"disk_pct": 0}
+
+
+async def _empty_net():
+    return {}
 
 
 async def _empty_detail():
@@ -1104,8 +1456,10 @@ def create_app(config: BuoyConfig) -> Starlette:
         Route("/api/container/{name}/history", api_container_history),
         Route("/api/container/{name}", api_container_detail),
         Route("/api/container/{name}/logs", api_container_logs),
+        Route("/api/container/{name}/logs/ticket", api_container_logs_ticket),
         Route("/api/container/{name}/restart", api_container_restart, methods=["POST"]),
         WebSocketRoute("/ws", ws_endpoint),
+        WebSocketRoute("/ws/logs/{name}", ws_container_logs),
         Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
     ]
 

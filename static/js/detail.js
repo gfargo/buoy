@@ -4,9 +4,22 @@
 
 import { authedFetch } from './auth.js';
 import { escapeHtml } from './escape.js';
+import { openLogViewer } from './logs.js';
 import { apiUrl } from './paths.js';
+import { formatRate } from './format.js';
 
 let currentDetail = null;
+let buoyConfig = null;
+
+/**
+ * detail.js is initialized before buoy.js finishes fetching /api/config
+ * (see initDetail() in buoy.js's init()), so the log viewer — which needs
+ * auth/logs/features to build its ticket + tail-depth flow — is handed the
+ * config once it's available rather than fetching its own copy.
+ */
+export function setDetailConfig(config) {
+  buoyConfig = config;
+}
 
 export function initDetail() {
   document.querySelectorAll('.gauge[data-detail]').forEach(gauge => {
@@ -59,6 +72,7 @@ async function openDetail(type) {
       case 'cpu': content.innerHTML = renderCpuDetail(d); break;
       case 'memory': content.innerHTML = renderMemoryDetail(d); break;
       case 'disk': content.innerHTML = renderDiskDetail(d); break;
+      case 'network': content.innerHTML = renderNetworkDetail(d); break;
       case 'gpu': content.innerHTML = renderGpuDetail(d); break;
       default: content.innerHTML = '';
     }
@@ -132,6 +146,31 @@ function renderDiskDetail(d) {
   return html;
 }
 
+function renderNetworkDetail(d) {
+  const net = d.net || {};
+  const interfaces = net.interfaces || [];
+  let html = `
+    <div class="detail-header">
+      <div class="detail-title">Network — Interfaces${net.primary ? ` (primary: ${escapeHtml(net.primary)})` : ''}</div>
+      <button class="detail-close">&#10005; close</button>
+    </div>`;
+
+  if (interfaces.length) {
+    html += `<table class="process-table"><thead><tr><th>Interface</th><th>Down</th><th>Up</th><th>Rx Err/Drop</th><th>Tx Err/Drop</th></tr></thead><tbody>`;
+    interfaces.forEach((iface) => {
+      const rx = formatRate(iface.rx_bytes_per_sec);
+      const tx = formatRate(iface.tx_bytes_per_sec);
+      const hasErrors = (iface.rx_errors || 0) + (iface.tx_errors || 0) + (iface.rx_dropped || 0) + (iface.tx_dropped || 0) > 0;
+      const errCls = hasErrors ? ' class="warn"' : '';
+      html += `<tr><td>${escapeHtml(iface.name)}</td><td>&#8595; ${rx.value} ${rx.unit}</td><td>&#8593; ${tx.value} ${tx.unit}</td><td${errCls}>${iface.rx_errors || 0}/${iface.rx_dropped || 0}</td><td${errCls}>${iface.tx_errors || 0}/${iface.tx_dropped || 0}</td></tr>`;
+    });
+    html += `</tbody></table>`;
+  } else {
+    html += `<div style="color:var(--text-dim);font-size:0.7rem">No interfaces reporting</div>`;
+  }
+  return html;
+}
+
 function renderGpuDetail(d) {
   const gpuDetail = d.gpu || {};
   const gpus = gpuDetail.gpus || [];
@@ -197,11 +236,14 @@ function renderContainersDetail() {
     html += `</div>`;
     html += `<div id="container-inspect-panel"></div>`;
 
-    // Fire off history fetches after the DOM settles
+    // Fire off history fetches after the DOM settles (skip when the server
+    // has told us history is disabled — the endpoint 404s in that case).
     setTimeout(() => {
-      document.querySelectorAll('.ctr-uptime[data-ctr]').forEach(el => {
-        loadContainerHistory(el.dataset.ctr, el);
-      });
+      if (buoyConfig?.features?.history !== false) {
+        document.querySelectorAll('.ctr-uptime[data-ctr]').forEach(el => {
+          loadContainerHistory(el.dataset.ctr, el);
+        });
+      }
       document.querySelectorAll('.ctr[data-ctr-name]').forEach(el => {
         el.addEventListener('click', () => inspectContainer(el.dataset.ctrName));
       });
@@ -413,27 +455,11 @@ async function restartContainer(name, btn) {
 }
 
 /**
- * Show recent logs for a container inline.
+ * Toggle a live log viewer for the container inline (WS streaming with a
+ * one-shot fallback — see logs.js).
  */
-async function showContainerLogs(name) {
+function showContainerLogs(name) {
   const panel = document.getElementById('container-inspect-panel');
   if (!panel) return;
-
-  try {
-    const r = await authedFetch(apiUrl(`container/${encodeURIComponent(name)}/logs`));
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-
-    const lines = (d.lines || []).join('\n');
-    const existing = panel.querySelector('.ctr-logs');
-    if (existing) { existing.remove(); return; }
-
-    const logsDiv = document.createElement('div');
-    logsDiv.className = 'ctr-logs';
-    logsDiv.innerHTML = `<div class="ctr-logs-header">Logs — ${escapeHtml(name)} (last ${d.lines?.length || 0} lines)<button class="ctr-logs-close">&#10005;</button></div><pre class="ctr-logs-pre">${escapeHtml(lines)}</pre>`;
-    logsDiv.querySelector('.ctr-logs-close')?.addEventListener('click', () => logsDiv.remove());
-    panel.appendChild(logsDiv);
-  } catch (e) {
-    // Silently fail
-  }
+  openLogViewer(name, panel, buoyConfig);
 }

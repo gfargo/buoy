@@ -65,6 +65,10 @@ class NetworkConfig:
     allowed_origins: list[str] = field(default_factory=list)
     trusted_proxies: list[str] = field(default_factory=list)
     verify_ssl: bool = True  # TLS verification for peer polling (default on)
+    # Explicit allowlist of interface names for throughput collection. Empty
+    # (default) means auto-detect: every interface except loopback/virtual
+    # (lo, veth*, docker*, br-*, virbr*).
+    interfaces: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -122,7 +126,17 @@ class FeaturesConfig:
     night_mode: str = "auto"  # auto | always | never
     keyboard_shortcuts: bool = True
     image_updates: bool = False  # Docker image update checker (off by default)
+    log_streaming: bool = True  # Live WebSocket container log streaming
     gpu: bool = True  # GPU collector (NVIDIA/AMD/Intel); auto-detects, no-ops without a GPU
+
+
+@dataclass
+class LogsConfig:
+    default_tail: int = 100
+    max_tail: int = 1000
+    max_streams: int = 4  # concurrent live log streams per app instance
+    max_line_bytes: int = 8192
+    stream_rate_limit: int = 500  # max lines/sec forwarded to a single client
 
 
 @dataclass
@@ -175,6 +189,7 @@ class BuoyConfig:
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    logs: LogsConfig = field(default_factory=LogsConfig)
 
 
 # ── Loader ─────────────────────────────────────────────────────────────────────
@@ -225,6 +240,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_NETWORK_ALLOWED_ORIGINS": ("network", "allowed_origins"),
         "BUOY_NETWORK_TRUSTED_PROXIES": ("network", "trusted_proxies"),
         "BUOY_NETWORK_VERIFY_SSL": ("network", "verify_ssl"),
+        "BUOY_NETWORK_INTERFACES": ("network", "interfaces"),
         "BUOY_AUTH_ENABLED": ("auth", "enabled"),
         "BUOY_AUTH_TOKEN": ("auth", "token"),
         "BUOY_AUTH_TYPE": ("auth", "type"),
@@ -235,6 +251,9 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_WEBSOCKET": ("features", "websocket"),
         "BUOY_FEATURES_HISTORY": ("features", "history"),
         "BUOY_FEATURES_IMAGE_UPDATES": ("features", "image_updates"),
+        "BUOY_FEATURES_LOG_STREAMING": ("features", "log_streaming"),
+        "BUOY_LOGS_DEFAULT_TAIL": ("logs", "default_tail"),
+        "BUOY_LOGS_MAX_TAIL": ("logs", "max_tail"),
         "BUOY_FEATURES_GPU": ("features", "gpu"),
         "BUOY_REFRESH_STATS_INTERVAL": ("refresh", "stats_interval"),
         "BUOY_REFRESH_SERVICES_INTERVAL": ("refresh", "services_interval"),
@@ -263,6 +282,8 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "fleet_interval",
             "plugins_interval",
             "image_updates_interval",
+            "default_tail",
+            "max_tail",
             "health_check_interval",
         ):
             # An empty string (e.g. `BUOY_NETWORK_LISTEN_PORT=`) is treated as an
@@ -276,13 +297,14 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "history",
             "demo_mode",
             "image_updates",
+            "log_streaming",
             "verify_ssl",
             "gpu",
         ):
             raw[section][key] = value.lower() in ("true", "1", "yes")
         elif key == "allowed_origins":
             raw[section][key] = [origin.strip() for origin in value.split(",") if origin.strip()]
-        elif key == "trusted_proxies":
+        elif key in ("trusted_proxies", "interfaces"):
             raw[section][key] = [entry.strip() for entry in value.split(",") if entry.strip()]
         else:
             raw[section][key] = value
@@ -419,6 +441,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     plugins_raw = raw.get("plugins", {})
     alerts_raw = raw.get("alerts", {})
     logging_raw = raw.get("logging", {})
+    logs_raw = raw.get("logs", {})
 
     node = NodeConfig(
         name=node_raw.get("name", "buoy"),
@@ -435,6 +458,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         allowed_origins=list(network_raw.get("allowed_origins", [])),
         trusted_proxies=list(network_raw.get("trusted_proxies", [])),
         verify_ssl=bool(network_raw.get("verify_ssl", True)),
+        interfaces=list(network_raw.get("interfaces", [])),
     )
 
     raw_static = services_raw.get("static", [])
@@ -494,6 +518,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         night_mode=features_raw.get("night_mode", "auto"),
         keyboard_shortcuts=bool(features_raw.get("keyboard_shortcuts", True)),
         image_updates=bool(features_raw.get("image_updates", False)),
+        log_streaming=bool(features_raw.get("log_streaming", True)),
         gpu=bool(features_raw.get("gpu", True)),
     )
 
@@ -529,6 +554,16 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         level=logging_raw.get("level", "INFO") if isinstance(logging_raw, dict) else "INFO",
     )
 
+    logs = LogsConfig(
+        default_tail=_coerce_int(logs_raw.get("default_tail", 100), "logs.default_tail"),
+        max_tail=_coerce_int(logs_raw.get("max_tail", 1000), "logs.max_tail"),
+        max_streams=_coerce_int(logs_raw.get("max_streams", 4), "logs.max_streams"),
+        max_line_bytes=_coerce_int(logs_raw.get("max_line_bytes", 8192), "logs.max_line_bytes"),
+        stream_rate_limit=_coerce_int(
+            logs_raw.get("stream_rate_limit", 500), "logs.stream_rate_limit"
+        ),
+    )
+
     return BuoyConfig(
         node=node,
         network=network,
@@ -540,6 +575,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         plugins=plugins,
         alerts=alerts,
         logging=logging_cfg,
+        logs=logs,
     )
 
 
@@ -559,6 +595,7 @@ _CONFIG_SECTIONS: dict[str, type] = {
     "plugins": PluginsConfig,
     "alerts": AlertsConfig,
     "logging": LoggingConfig,
+    "logs": LogsConfig,
 }
 
 

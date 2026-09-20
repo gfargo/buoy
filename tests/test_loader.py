@@ -1067,6 +1067,97 @@ class TestPluginCollection:
 
 
 # =============================================================================
+# health_summary() — the /api/health plugin rollup
+# =============================================================================
+
+
+class TestHealthSummary:
+    def test_counts_ok_plugin(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._health = {"fake": {"last_error": None}}
+
+        summary = mgr.health_summary()
+
+        assert summary["total"] == 1
+        assert summary["ok"] == 1
+        assert summary["error"] == 0
+        assert summary["entries"] == [
+            {"id": "fake", "name": "Fake Plugin", "status": "ok", "last_error": None}
+        ]
+
+    def test_counts_error_plugin_from_last_error(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"failing": FailingPlugin()}
+        mgr._health = {"failing": {"last_error": "boom"}}
+
+        summary = mgr.health_summary()
+
+        assert summary["error"] == 1
+        assert summary["entries"][0]["status"] == "error"
+        assert summary["entries"][0]["last_error"] == "boom"
+
+    def test_counts_disabled_by_config_error_over_last_error(self):
+        """disabled takes precedence: a disabled plugin can have a stale
+        last_error from before it was disabled, but that's not why it's down."""
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._disabled_ids = {"fake"}
+        mgr._health = {"fake": {"last_error": "stale error"}}
+
+        summary = mgr.health_summary()
+
+        assert summary["disabled"] == 1
+        assert summary["error"] == 0
+        assert summary["entries"][0]["status"] == "disabled"
+
+    @pytest.mark.asyncio
+    async def test_counts_configured_but_not_loaded(self):
+        config = _make_config(builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        mgr._builtin_names = {"broken": "Broken Plugin"}
+
+        summary = mgr.health_summary()
+
+        assert summary["not_loaded"] == 1
+        assert summary["total"] == 1
+        assert summary["entries"][0] == {
+            "id": "broken",
+            "name": "Broken Plugin",
+            "status": "not_loaded",
+            "last_error": None,
+        }
+
+    def test_truncates_long_last_error(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._health = {"fake": {"last_error": "x" * 500}}
+
+        summary = mgr.health_summary()
+
+        assert len(summary["entries"][0]["last_error"]) == 200
+
+    def test_empty_when_no_plugins(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        summary = mgr.health_summary()
+
+        assert summary == {
+            "total": 0,
+            "ok": 0,
+            "error": 0,
+            "disabled": 0,
+            "not_loaded": 0,
+            "entries": [],
+        }
+
+
+# =============================================================================
 # get_plugin_payload / detail view
 # =============================================================================
 

@@ -79,7 +79,11 @@ export async function refreshServices(config) {
     const services = data.local || [];
 
     if (services.length === 0) {
-      localEl.innerHTML = '<div style="color:var(--text-dim);font-size:0.65rem;padding:0.5rem">No services discovered</div>';
+      const dockerDown = window._buoyHealth?.subsystems?.docker?.status === 'unavailable';
+      const message = dockerDown
+        ? 'Docker socket unavailable — no services discovered'
+        : 'No services discovered';
+      localEl.innerHTML = `<div style="color:var(--text-dim);font-size:0.65rem;padding:0.5rem">${message}</div>`;
       return;
     }
 
