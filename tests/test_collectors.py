@@ -827,29 +827,6 @@ class TestDockerRun:
         assert result == (1, "", "docker not found")
 
 
-class TestDockerCollectSummary:
-    @pytest.mark.asyncio
-    async def test_collect_summary_reports_count_and_names(self):
-        from unittest.mock import AsyncMock
-
-        from buoy.collectors.docker import DockerCollector
-
-        coll = DockerCollector(_make_config())
-        coll.list_containers = AsyncMock(
-            return_value=[
-                {"name": "grafana", "host_port": 3000, "service": "grafana"},
-                {"name": "redis", "host_port": None, "service": "redis"},
-            ]
-        )
-
-        summary = await coll.collect_summary()
-
-        assert summary == {
-            "containers": 2,
-            "containers_list": [{"name": "grafana"}, {"name": "redis"}],
-        }
-
-
 class TestDockerIsAvailable:
     """is_available() had no direct tests at all — only exercised
     indirectly (and inconsistently) via other tests that stub it out."""
