@@ -259,6 +259,127 @@ class TestDockerListContainersCache:
         assert result == [{"name": "already-cached", "host_port": None}]
 
 
+class TestDockerFetchContainersGroupLabel:
+    """Tests for the group/project label appended to `docker ps --format`
+    (FEAT-11) — the label name is interpolated into a Go template, so it
+    must be validated before use."""
+
+    @pytest.mark.asyncio
+    async def test_default_label_parses_project_field(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        coll = DockerCollector(_make_config())
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana\tmonitoring"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        assert containers == [
+            {"name": "grafana", "host_port": 3000, "service": "grafana", "project": "monitoring"}
+        ]
+        fmt_arg = coll._run.call_args.args[2]
+        assert 'Label "com.docker.compose.project"' in fmt_arg
+
+    @pytest.mark.asyncio
+    async def test_missing_project_column_yields_empty_string(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        coll = DockerCollector(_make_config())
+        # 3-column line: the label was absent on this container
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        assert containers[0]["project"] == ""
+
+    @pytest.mark.asyncio
+    async def test_custom_group_label_used_in_format(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+        from buoy.config import ServicesConfig
+
+        config = _make_config()
+        config.services = ServicesConfig(group_label="my.custom.stack")
+        coll = DockerCollector(config)
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana\tmystack"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        assert containers[0]["project"] == "mystack"
+        fmt_arg = coll._run.call_args.args[2]
+        assert 'Label "my.custom.stack"' in fmt_arg
+
+    @pytest.mark.asyncio
+    async def test_invalid_group_label_rejected_and_warns(self, caplog):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+        from buoy.config import ServicesConfig
+
+        config = _make_config()
+        config.services = ServicesConfig(group_label='"}} {{.Names')
+        coll = DockerCollector(config)
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        with caplog.at_level("WARNING", logger="buoy.collectors.docker"):
+            containers = await coll._fetch_containers()
+
+        fmt_arg = coll._run.call_args.args[2]
+        assert '"}} {{.Names' not in fmt_arg
+        assert containers[0]["project"] == ""
+        assert any("group_label" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_non_string_group_label_does_not_crash(self, caplog):
+        # ServicesConfig is a plain dataclass with no runtime type
+        # enforcement, so a non-string could reach here even though
+        # load_config() itself now guards against it — the regex match must
+        # not blow up on a bool/int/list value.
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+        from buoy.config import ServicesConfig
+
+        config = _make_config()
+        config.services = ServicesConfig(group_label=True)
+        coll = DockerCollector(config)
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        fmt_arg = coll._run.call_args.args[2]
+        assert fmt_arg.count("Label") == 1  # only the compose-service label
+        assert containers[0]["project"] == ""
+
+    @pytest.mark.asyncio
+    async def test_empty_group_label_omits_field(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+        from buoy.config import ServicesConfig
+
+        config = _make_config()
+        config.services = ServicesConfig(group_label="")
+        coll = DockerCollector(config)
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        fmt_arg = coll._run.call_args.args[2]
+        assert fmt_arg.count("Label") == 1  # only the compose-service label
+        assert containers[0]["project"] == ""
+
+
 class TestDockerGetLogs:
     """Tests for DockerCollector.get_logs() stdout/stderr interleaving (BUG-49).
 
@@ -648,7 +769,9 @@ class TestDockerFetchContainers:
 
         containers = await coll._fetch_containers()
 
-        assert containers == [{"name": "grafana", "host_port": 3000, "service": "grafana"}]
+        assert containers == [
+            {"name": "grafana", "host_port": 3000, "service": "grafana", "project": ""}
+        ]
 
     @pytest.mark.asyncio
     async def test_missing_ports_and_service_columns_default_to_empty(self):
@@ -661,7 +784,7 @@ class TestDockerFetchContainers:
 
         containers = await coll._fetch_containers()
 
-        assert containers == [{"name": "grafana", "host_port": None, "service": ""}]
+        assert containers == [{"name": "grafana", "host_port": None, "service": "", "project": ""}]
 
     @pytest.mark.asyncio
     async def test_blank_lines_are_skipped(self):

@@ -78,6 +78,7 @@ class ServiceOverride:
     desc: str = ""
     port: int | None = None
     path: str = ""
+    group: str = ""
 
 
 @dataclass
@@ -88,6 +89,7 @@ class StaticService:
     url: str = ""
     health_check: str = ""  # "" = no check, else the URL to poll
     verify_ssl: bool | None = None  # None = inherit network.verify_ssl
+    group: str = ""
 
 
 @dataclass
@@ -95,6 +97,10 @@ class ServicesConfig:
     hidden: list[str] = field(default_factory=list)
     overrides: dict[str, ServiceOverride] = field(default_factory=dict)
     static: list[StaticService] = field(default_factory=list)
+    group_label: str = "com.docker.compose.project"
+    group_order: list[str] = field(default_factory=list)
+    order: list[str] = field(default_factory=list)
+    pinned: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -346,6 +352,7 @@ def _parse_overrides(raw_overrides: dict[str, dict]) -> dict[str, ServiceOverrid
             desc=cfg.get("desc", ""),
             port=cfg.get("port"),
             path=cfg.get("path", ""),
+            group=cfg.get("group", ""),
         )
     return overrides
 
@@ -387,6 +394,7 @@ def _parse_static_services(raw_static: list) -> list[StaticService]:
                 url=cfg.get("url", ""),
                 health_check=health_check,
                 verify_ssl=verify_ssl,
+                group=cfg.get("group", ""),
             )
         )
     return entries
@@ -460,10 +468,34 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         )
         raw_static = []
 
+    def _string_list(key: str) -> list[str]:
+        value = services_raw.get(key, [])
+        if not isinstance(value, list):
+            logger.warning(
+                "services.%s: expected a list, got %s — ignoring", key, type(value).__name__
+            )
+            return []
+        return value
+
+    def _string_or_default(key: str, default: str) -> str:
+        value = services_raw.get(key, default)
+        if not isinstance(value, str):
+            logger.warning(
+                "services.%s: expected a string, got %s — using default",
+                key,
+                type(value).__name__,
+            )
+            return default
+        return value
+
     services = ServicesConfig(
         hidden=services_raw.get("hidden", []),
         overrides=_parse_overrides(services_raw.get("overrides", {})),
         static=_parse_static_services(raw_static),
+        group_label=_string_or_default("group_label", "com.docker.compose.project"),
+        group_order=_string_list("group_order"),
+        order=_string_list("order"),
+        pinned=_string_list("pinned"),
     )
 
     theme = ThemeConfig(

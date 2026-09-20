@@ -12,6 +12,38 @@ const STATUS_COLOR = {
   error: 'var(--red)',
 };
 
+/**
+ * Split an already-ordered service list into consecutive group runs. The
+ * server is the sorting authority (services.py's _sort_services) — this
+ * just partitions its output, it never re-sorts.
+ */
+export function groupServices(services) {
+  const groups = [];
+  for (const s of services) {
+    const group = s.group || '';
+    const last = groups[groups.length - 1];
+    if (last && last.group === group) {
+      last.items.push(s);
+    } else {
+      groups.push({ group, items: [s] });
+    }
+  }
+  return groups;
+}
+
+export function renderGroupLabel(group) {
+  return `<h3 class="svc-group-label">${escapeHtml(group)}</h3>`;
+}
+
+/**
+ * The group header to render above a run, or '' for the ungrouped run — a
+ * single unnamed group (or an ungrouped run alongside named ones) must not
+ * render a blank <h3>.
+ */
+export function renderGroupHeader(group) {
+  return group !== '' ? renderGroupLabel(group) : '';
+}
+
 export function renderServiceCard(s) {
   const dotColor = s.status ? STATUS_COLOR[s.status] : null;
   const dot = dotColor
@@ -55,7 +87,10 @@ export async function refreshServices(config) {
       return;
     }
 
-    localEl.innerHTML = services.map(renderServiceCard).join('');
+    const groups = groupServices(services);
+    localEl.innerHTML = groups
+      .map(({ group, items }) => renderGroupHeader(group) + items.map(renderServiceCard).join(''))
+      .join('');
 
     localEl.querySelectorAll('.svc[data-no-url="1"]').forEach(a => {
       a.addEventListener('click', (e) => e.preventDefault());

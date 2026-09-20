@@ -290,6 +290,8 @@ header .uptime span { color: var(--green); }
 .svc .svc-icon { font-size: 0.9rem; }
 .svc .svc-desc { font-size: 0.65rem; color: var(--text-dim); line-height: 1.4; }
 .svc .svc-url { font-size: 0.6rem; color: var(--amber); margin-top: 0.5rem; opacity: 0.7; word-break: break-all; }
+.svc-group-label { grid-column: 1 / -1; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); margin: 0.5rem 0 0.25rem; padding-left: 0.25rem; font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 0.35rem; }
+.svc-group-label:first-child { margin-top: 0; }
 
 /* Plugin cards are clickable buttons that open the detail dialog below */
 #plugins-grid .svc { position: relative; cursor: pointer; }
