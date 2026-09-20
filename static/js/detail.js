@@ -316,6 +316,16 @@ function _applyRowUpdate(row, c) {
   }
   const metricsEl = row.querySelector('.ctr-metrics');
   if (metricsEl) metricsEl.textContent = `${c.cpu_pct ?? '--'} · ${c.mem_usage ?? '--'}`;
+
+  // A stopped/exited row has no data-ctr (see containerRowHtml) and so never
+  // got a history fetch on initial render. If it transitions to running on a
+  // later tick, wire it up now instead of leaving the uptime bar empty until
+  // the panel is closed and reopened.
+  const uptimeEl = row.querySelector('.ctr-uptime');
+  if (uptimeEl && c.state === 'running' && !uptimeEl.hasAttribute('data-ctr')) {
+    uptimeEl.setAttribute('data-ctr', c.name);
+    if (buoyConfig?.features?.history !== false) loadContainerHistory(c.name, uptimeEl);
+  }
 }
 
 /**
