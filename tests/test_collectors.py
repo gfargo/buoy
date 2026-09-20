@@ -331,6 +331,29 @@ class TestDockerFetchContainersGroupLabel:
         assert any("group_label" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
+    async def test_non_string_group_label_does_not_crash(self, caplog):
+        # ServicesConfig is a plain dataclass with no runtime type
+        # enforcement, so a non-string could reach here even though
+        # load_config() itself now guards against it — the regex match must
+        # not blow up on a bool/int/list value.
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+        from buoy.config import ServicesConfig
+
+        config = _make_config()
+        config.services = ServicesConfig(group_label=True)
+        coll = DockerCollector(config)
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        fmt_arg = coll._run.call_args.args[2]
+        assert fmt_arg.count("Label") == 1  # only the compose-service label
+        assert containers[0]["project"] == ""
+
+    @pytest.mark.asyncio
     async def test_empty_group_label_omits_field(self):
         from unittest.mock import AsyncMock
 

@@ -35,6 +35,15 @@ export function renderGroupLabel(group) {
   return `<h3 class="svc-group-label">${escapeHtml(group)}</h3>`;
 }
 
+/**
+ * The group header to render above a run, or '' for the ungrouped run — a
+ * single unnamed group (or an ungrouped run alongside named ones) must not
+ * render a blank <h3>.
+ */
+export function renderGroupHeader(group) {
+  return group !== '' ? renderGroupLabel(group) : '';
+}
+
 export function renderServiceCard(s) {
   const dotColor = s.status ? STATUS_COLOR[s.status] : null;
   const dot = dotColor
@@ -76,10 +85,7 @@ export async function refreshServices(config) {
 
     const groups = groupServices(services);
     localEl.innerHTML = groups
-      .map(({ group, items }) => {
-        const label = group !== '' ? renderGroupLabel(group) : '';
-        return label + items.map(renderServiceCard).join('');
-      })
+      .map(({ group, items }) => renderGroupHeader(group) + items.map(renderServiceCard).join(''))
       .join('');
 
     localEl.querySelectorAll('.svc[data-no-url="1"]').forEach(a => {

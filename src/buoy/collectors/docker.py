@@ -107,7 +107,11 @@ class DockerCollector:
         """Shell out to `docker ps` and parse the container list, including compose service label
         and (when configured) a group label such as `com.docker.compose.project`."""
         group_label = self.config.services.group_label
-        include_group = bool(group_label) and _LABEL_NAME_RE.match(group_label) is not None
+        include_group = (
+            isinstance(group_label, str)
+            and bool(group_label)
+            and _LABEL_NAME_RE.match(group_label) is not None
+        )
         if group_label and not include_group and not self._group_label_warned:
             logger.warning(
                 "services.group_label %r is not a valid Docker label name — falling back to "

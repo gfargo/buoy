@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderServiceCard, groupServices, renderGroupLabel } from '../../static/js/services.js';
+import {
+  renderServiceCard,
+  groupServices,
+  renderGroupLabel,
+  renderGroupHeader,
+} from '../../static/js/services.js';
 
 test('renderServiceCard escapes hostile name, desc, and url', () => {
   const html = renderServiceCard({
@@ -108,10 +113,19 @@ test('renderGroupLabel escapes a hostile group name', () => {
   assert.ok(html.includes('&lt;img'));
 });
 
+test('renderGroupHeader renders a header for a named group', () => {
+  const html = renderGroupHeader('monitoring');
+  assert.ok(html.includes('svc-group-label'));
+  assert.ok(html.includes('monitoring'));
+});
+
+test('renderGroupHeader produces no header for the ungrouped run', () => {
+  assert.equal(renderGroupHeader(''), '');
+});
+
 test('a single unnamed group produces no header in refreshServices-style rendering', () => {
   const groups = groupServices([{ name: 'grafana', group: '' }]);
-  const label = groups[0].group !== '' ? renderGroupLabel(groups[0].group) : '';
-  assert.equal(label, '');
+  assert.equal(renderGroupHeader(groups[0].group), '');
 });
 
 test('an ungrouped run alongside named groups produces no header for that run', () => {
@@ -123,6 +137,6 @@ test('an ungrouped run alongside named groups produces no header for that run', 
     { name: 'standalone', group: '' },
   ];
   const groups = groupServices(services);
-  const labels = groups.map(({ group }) => (group !== '' ? renderGroupLabel(group) : ''));
+  const labels = groups.map(({ group }) => renderGroupHeader(group));
   assert.equal(labels[labels.length - 1], '');
 });

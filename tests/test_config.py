@@ -364,6 +364,15 @@ class TestServicesGrouping:
         config = _build_config(raw)
         assert config.services.group_label == ""
 
+    def test_group_label_non_string_falls_back_to_default(self, caplog):
+        # A typo'd `group_label: true` (bool) or `group_label: 5` (int) must
+        # not reach the regex match in DockerCollector as a non-string.
+        raw = {"services": {"group_label": True}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert config.services.group_label == "com.docker.compose.project"
+        assert any("services.group_label" in r.message for r in caplog.records)
+
     def test_group_order_parsed(self):
         raw = {"services": {"group_order": ["media", "monitoring"]}}
         config = _build_config(raw)

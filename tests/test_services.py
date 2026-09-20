@@ -509,6 +509,40 @@ class TestServiceGrouping:
         assert result["local"] == []
 
     @pytest.mark.asyncio
+    async def test_pinned_matches_full_container_name_even_with_service_label(self):
+        # Regression: a container Compose labeled with a service name must
+        # still honor `pinned`/`order` entries written against its full
+        # container name, not just the bare service label.
+        config = _make_config(pinned=["plane-plane-redis-1"])
+        containers = [
+            {"name": "plane-plane-redis-1", "host_port": 1, "project": "plane", "service": "redis"},
+            {"name": "plane-plane-api-1", "host_port": 2, "project": "plane", "service": "api"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["plane-plane-redis-1", "plane-plane-api-1"]
+        assert result["local"][0]["pinned"] is True
+
+    @pytest.mark.asyncio
+    async def test_order_matches_full_container_name_even_with_service_label(self):
+        config = _make_config(order=["plane-plane-redis-1"])
+        containers = [
+            {"name": "plane-plane-api-1", "host_port": 1, "project": "plane", "service": "api"},
+            {"name": "plane-plane-redis-1", "host_port": 2, "project": "plane", "service": "redis"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["plane-plane-redis-1", "plane-plane-api-1"]
+
+    @pytest.mark.asyncio
     async def test_unknown_pinned_and_order_keys_ignored(self):
         config = _make_config(pinned=["nonexistent"], order=["also-nonexistent"])
         containers = [{"name": "grafana", "host_port": 3000}]

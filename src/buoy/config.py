@@ -453,11 +453,22 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
             return []
         return value
 
+    def _string_or_default(key: str, default: str) -> str:
+        value = services_raw.get(key, default)
+        if not isinstance(value, str):
+            logger.warning(
+                "services.%s: expected a string, got %s — using default",
+                key,
+                type(value).__name__,
+            )
+            return default
+        return value
+
     services = ServicesConfig(
         hidden=services_raw.get("hidden", []),
         overrides=_parse_overrides(services_raw.get("overrides", {})),
         static=_parse_static_services(raw_static),
-        group_label=services_raw.get("group_label", "com.docker.compose.project"),
+        group_label=_string_or_default("group_label", "com.docker.compose.project"),
         group_order=_string_list("group_order"),
         order=_string_list("order"),
         pinned=_string_list("pinned"),

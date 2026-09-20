@@ -35,14 +35,27 @@ def _hidden_matcher(pattern: str):
     return lambda ctr: ctr.get("service") == pattern or ctr["name"] == pattern
 
 
-def _service_key(ctr: dict) -> str:
-    """The key a Docker container is matched under: its Compose service label
-    (e.g. "redis" for `plane-plane-redis-1`) if Compose set one, else its
-    full container name. Shared by `_resolve_override`, `pinned`, and `order`
-    so all four config surfaces (`hidden`, `overrides`, `pinned`, `order`)
-    key containers identically.
+def _match_keys(ctr: dict) -> tuple[str, ...]:
+    """The key(s) a Docker container may be referenced by in `services.pinned`
+    /`services.order`: its Compose service label (e.g. "redis" for
+    `plane-plane-redis-1`) *and* its full container name. Checking only one
+    would silently ignore config written against the other — `_resolve_override`
+    already falls back from service label to full name for `services.overrides`,
+    so `pinned`/`order` match the same way instead of requiring the caller to
+    guess which form a given container resolves to.
     """
-    return ctr.get("service") or ctr["name"]
+    service = ctr.get("service")
+    name = ctr["name"]
+    if service and service != name:
+        return (service, name)
+    return (name,)
+
+
+def _best_rank(rank_map: dict, keys: tuple[str, ...], default: int) -> int:
+    """The lowest configured rank among `keys` that appears in `rank_map`, or
+    `default` if none do."""
+    ranks = [rank_map[k] for k in keys if k in rank_map]
+    return min(ranks) if ranks else default
 
 
 def _resolve_override(overrides: dict, ctr: dict):
@@ -68,10 +81,11 @@ def _resolve_group(override, ctr: dict) -> str:
 
 
 def _sort_services(entries: list[dict], config: BuoyConfig) -> list[dict]:
-    """Order `entries` (each already carrying `key`, `group`, `pinned`) into
-    final display order: pinned first (in `services.pinned` order), then by
-    group (per `services.group_order`, else alphabetical, ungrouped last),
-    then within a group by `services.order`, else discovery order.
+    """Order `entries` (each already carrying `key` — a tuple of candidate
+    match keys — `group`, `pinned`) into final display order: pinned first
+    (in `services.pinned` order), then by group (per `services.group_order`,
+    else alphabetical, ungrouped last), then within a group by
+    `services.order`, else discovery order.
 
     A single stable sort with a composite key — rather than multiple passes
     or a dict-based regroup — so entries with equal rank keep their relative
@@ -87,11 +101,11 @@ def _sort_services(entries: list[dict], config: BuoyConfig) -> list[dict]:
         index, entry = item
         group = entry["group"]
         if entry["pinned"]:
-            return (-1, "", pinned_rank.get(entry["key"], len(pinned_rank)), index)
+            return (-1, "", _best_rank(pinned_rank, entry["key"], len(pinned_rank)), index)
         return (
             group_rank.get(group, unranked_group if group else unranked_group + 1),
             group.casefold(),
-            within_rank.get(entry["key"], unranked_within),
+            _best_rank(within_rank, entry["key"], unranked_within),
             index,
         )
 
@@ -160,8 +174,8 @@ async def discover_services(
         else:
             url = ""
 
-        key = _service_key(ctr)
-        pinned = key in pinned_keys
+        keys = _match_keys(ctr)
+        pinned = any(k in pinned_keys for k in keys)
         group = _PINNED_GROUP if pinned else _resolve_group(override, ctr)
 
         local_services.append(
@@ -174,7 +188,7 @@ async def discover_services(
                 "status": None,
                 "group": group,
                 "pinned": pinned,
-                "key": key,
+                "key": keys,
             }
         )
 
@@ -182,8 +196,8 @@ async def discover_services(
     # services.hidden/overrides, which only apply to Docker discovery.
     for entry in config.services.static:
         h = (health or {}).get(entry.name) or {}
-        key = entry.name
-        pinned = key in pinned_keys
+        keys = (entry.name,)
+        pinned = entry.name in pinned_keys
         group = _PINNED_GROUP if pinned else entry.group
 
         local_services.append(
@@ -197,7 +211,7 @@ async def discover_services(
                 "latency_ms": h.get("latency_ms"),
                 "group": group,
                 "pinned": pinned,
-                "key": key,
+                "key": keys,
             }
         )
 
