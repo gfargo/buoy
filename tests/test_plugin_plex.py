@@ -387,6 +387,35 @@ class TestPlexPlugin:
         ]
 
     @pytest.mark.asyncio
+    async def test_streams_count_survives_max_rows_truncation(self):
+        """Regression: with more sessions than max_rows, the active count must
+        reflect the full session list, not just the rows kept after truncation.
+        Ten paused sessions sort first here, so a naive recount over the
+        truncated rows(len == max_rows) would see zero active sessions."""
+        plugin = self._make_plugin(max_rows=10)
+
+        sessions = [_session(title=f"Paused {i}", state="paused") for i in range(10)] + [
+            _session(title=f"Playing {i}", state="playing") for i in range(5)
+        ]
+        routes = {
+            "http://plex:32400/status/sessions": _sessions_body(sessions),
+            "http://plex:32400/identity": _identity_body(),
+            "http://plex:32400/library/sections": _sections_body([]),
+        }
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen(routes)):
+            result = await plugin.collect()
+
+        assert result.detail["active_count"] == 5
+        assert "5 streams" in result.summary
+        assert len(result.detail["sessions"]) == 10  # truncated to max_rows
+
+        blocks = plugin.render(result)
+        assert blocks[0]["type"] == "keyvalue"
+        streams_row = next(row for row in blocks[0]["rows"] if row["label"] == "Streams")
+        assert streams_row["value"] == "5"
+
+    @pytest.mark.asyncio
     async def test_render_idle_shows_text(self):
         plugin = self._make_plugin()
 

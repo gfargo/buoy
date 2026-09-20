@@ -205,6 +205,7 @@ class PlexPlugin(Plugin):
             summary=summary,
             detail={
                 "sessions": rows[:max_rows],
+                "active_count": active,
                 "transcoding_count": transcoding_count,
                 "paused_count": paused_count,
                 "bandwidth_kbps": bandwidth_kbps,
@@ -246,6 +247,7 @@ class PlexPlugin(Plugin):
             summary="1 stream (1 transcoding) · 1 paused",
             detail={
                 "sessions": sessions,
+                "active_count": 1,
                 "transcoding_count": 1,
                 "paused_count": 1,
                 "bandwidth_kbps": 8200,
@@ -261,8 +263,7 @@ class PlexPlugin(Plugin):
         transcoding_count = d.get("transcoding_count", 0)
         paused_count = d.get("paused_count", 0)
         bandwidth_kbps = d.get("bandwidth_kbps")
-
-        active_count = sum(1 for s in sessions if s.get("state") in _ACTIVE_STATES)
+        active_count = d.get("active_count", 0)
 
         kv_rows: list[dict[str, Any]] = [{"label": "Streams", "value": str(active_count)}]
         if transcoding_count:
