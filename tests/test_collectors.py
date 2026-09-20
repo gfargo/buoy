@@ -353,6 +353,154 @@ class TestDockerGetLogs:
         assert result == {"error": "invalid container name"}
 
 
+class _FakeStream:
+    """Minimal stand-in for asyncio.StreamReader — yields queued lines, then hangs."""
+
+    def __init__(self, lines):
+        self._lines = list(lines)
+
+    async def readline(self):
+        if self._lines:
+            return self._lines.pop(0)
+        await asyncio.sleep(3600)  # simulate a still-following, quiet container
+
+
+class TestDockerStreamLogs:
+    """Tests for DockerCollector.stream_logs() — the WS-backed `docker logs -f` follow."""
+
+    def _make_proc(self, stdout_lines=(), stderr_lines=()):
+        from unittest.mock import AsyncMock, MagicMock
+
+        proc = MagicMock()
+        proc.stdout = _FakeStream(stdout_lines)
+        proc.stderr = _FakeStream(stderr_lines)
+        proc.kill = MagicMock()
+        proc.wait = AsyncMock()
+        return proc
+
+    @pytest.mark.asyncio
+    async def test_invalid_container_name_raises(self):
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+
+        with pytest.raises(ValueError):
+            async for _ in coll.stream_logs("../../etc/passwd"):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_yields_interleaved_stdout_and_stderr(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        proc = self._make_proc(
+            stdout_lines=[b"2024-01-01T00:00:00Z out1\n"],
+            stderr_lines=[b"2024-01-01T00:00:01Z err1\n"],
+        )
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10)
+            items = []
+            async for item in gen:
+                items.append(item)
+                if len(items) == 2:
+                    break
+            await gen.aclose()
+
+        assert {"stream": "stdout", "line": "2024-01-01T00:00:00Z out1"} in items
+        assert {"stream": "stderr", "line": "2024-01-01T00:00:01Z err1"} in items
+
+    @pytest.mark.asyncio
+    async def test_truncates_over_long_lines(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        long_line = ("x" * 50 + "\n").encode()
+        proc = self._make_proc(stdout_lines=[long_line])
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10, max_line_bytes=10)
+            item = await gen.__anext__()
+            await gen.aclose()
+
+        assert item["line"].endswith("…[truncated]")
+        assert len(item["line"]) <= 10 + len("…[truncated]")
+
+    @pytest.mark.asyncio
+    async def test_truncates_multibyte_utf8_by_byte_budget_not_char_count(self):
+        """`max_line_bytes` is documented (and named) as a byte budget — a
+        line of multi-byte UTF-8 chars must be capped by encoded byte length,
+        not `len()` of the decoded string, or it silently exceeds the cap."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        # Each "é" is 2 bytes in UTF-8 — 20 of them is 40 bytes but len() == 20.
+        long_line = ("é" * 20 + "\n").encode("utf-8")
+        proc = self._make_proc(stdout_lines=[long_line])
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10, max_line_bytes=10)
+            item = await gen.__anext__()
+            await gen.aclose()
+
+        assert item["line"].endswith("…[truncated]")
+        kept = item["line"].removesuffix("…[truncated]")
+        assert len(kept.encode("utf-8")) <= 10
+
+    @pytest.mark.asyncio
+    async def test_kills_and_reaps_process_on_early_close(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        proc = self._make_proc(stdout_lines=[b"2024-01-01T00:00:00Z hello\n"])
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10)
+            await gen.__anext__()
+            await gen.aclose()
+
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_kills_process_on_task_cancellation(self):
+        """Regression: cancellation from the WS handler side (not an explicit
+        aclose()) must still reach the kill/reap `finally` block."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        proc = self._make_proc(stdout_lines=[b"2024-01-01T00:00:00Z hello\n"])
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10)
+            await gen.__anext__()
+
+            task = asyncio.ensure_future(gen.__anext__())
+            await asyncio.sleep(0)  # let the task start awaiting the next item
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited()
+
+
 class TestDockerRun:
     """Tests for DockerCollector._run()'s own exception-handling branches."""
 

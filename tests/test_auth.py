@@ -50,6 +50,14 @@ class TestProtectedPathDetection:
         mw = self._make_middleware()
         assert mw._is_protected("/api/container/plane-api-1/logs") is True
 
+    def test_container_logs_ticket_is_protected(self):
+        """The WS log-stream ticket endpoint must inherit auth + rate
+        limiting via the same `/api/container/` prefix (OSS-1551) — a naive
+        WebSocket route can't be covered by BaseHTTPMiddleware at all, so
+        this plain-HTTP ticket endpoint is the only enforcement point."""
+        mw = self._make_middleware()
+        assert mw._is_protected("/api/container/plane-api-1/logs/ticket") is True
+
     def test_stats_not_protected(self):
         mw = self._make_middleware()
         assert mw._is_protected("/api/stats") is False
@@ -188,6 +196,65 @@ class TestBasicAuth:
         mw = self._make_middleware(username="admïn", password="pässwörd")
         request = FakeRequest(headers={"Authorization": self._encode_basic("admïn", "wrong")})
         assert mw._authenticate(request) is False
+
+
+class TestCheckCredentials:
+    """Test the module-level check_credentials() extracted for OSS-1551.
+
+    ws_container_logs (server.py) can't rely on AuthMiddleware — Starlette's
+    BaseHTTPMiddleware never runs for `websocket` scopes — so it calls this
+    function directly with the same AuthConfig. These tests pin its
+    behavior in isolation from both callers.
+    """
+
+    def _encode_basic(self, user, password):
+        creds = base64.b64encode(f"{user}:{password}".encode()).decode()
+        return f"Basic {creds}"
+
+    def test_token_mode_valid(self):
+        from buoy.auth import check_credentials
+
+        config = FakeAuthConfig(auth_type="token", token="s3cret")
+        assert check_credentials(config, "Bearer s3cret") is True
+
+    def test_token_mode_invalid(self):
+        from buoy.auth import check_credentials
+
+        config = FakeAuthConfig(auth_type="token", token="s3cret")
+        assert check_credentials(config, "Bearer wrong") is False
+
+    def test_token_mode_missing_header(self):
+        from buoy.auth import check_credentials
+
+        config = FakeAuthConfig(auth_type="token", token="s3cret")
+        assert check_credentials(config, "") is False
+
+    def test_basic_mode_valid(self):
+        from buoy.auth import check_credentials
+
+        config = FakeAuthConfig(auth_type="basic", username="admin", password="pass123")
+        assert check_credentials(config, self._encode_basic("admin", "pass123")) is True
+
+    def test_basic_mode_invalid(self):
+        from buoy.auth import check_credentials
+
+        config = FakeAuthConfig(auth_type="basic", username="admin", password="pass123")
+        assert check_credentials(config, self._encode_basic("admin", "wrong")) is False
+
+    def test_unknown_type_denies(self):
+        from buoy.auth import check_credentials
+
+        config = FakeAuthConfig(auth_type="unknown", token="s3cret")
+        assert check_credentials(config, "Bearer s3cret") is False
+
+    def test_middleware_delegates_match_module_function(self):
+        """AuthMiddleware._check_token/_check_basic are thin delegates —
+        pin that they stay equivalent to the shared implementation."""
+        config = FakeAuthConfig(auth_type="token", token="s3cret")
+        mw = AuthMiddleware.__new__(AuthMiddleware)
+        mw.auth_config = config
+        assert mw._check_token("Bearer s3cret") is True
+        assert mw._check_token("Bearer wrong") is False
 
 
 class TestRateLimiting:

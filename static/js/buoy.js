@@ -5,7 +5,7 @@
 
 import { initAuth } from './auth.js';
 import { initGauges, updateGauges } from './gauges.js';
-import { initDetail } from './detail.js';
+import { initDetail, setDetailConfig } from './detail.js';
 import { refreshServices } from './services.js';
 import { refreshFleet } from './fleet.js';
 import { refreshPlugins, initPluginDetail, openPluginDetailFromHash } from './plugins.js';
@@ -25,7 +25,8 @@ async function fetchConfig() {
     network: { tailnet_domain: '', peers: [] },
     theme: { preset: 'terminal' },
     auth: { enabled: false, type: null },
-    features: { websocket: true, night_mode: 'auto', keyboard_shortcuts: true },
+    features: { websocket: true, night_mode: 'auto', keyboard_shortcuts: true, log_streaming: true },
+    logs: { default_tail: 100, max_tail: 1000 },
     refresh: { stats_interval: 5, services_interval: 30, fleet_interval: 15 },
   };
 }
@@ -254,6 +255,7 @@ function applyCustomTheme(custom) {
 async function init() {
   config = await fetchConfig();
   initAuth(config.auth);
+  setDetailConfig(config);
 
   // Apply theme: resolve preset via persisted choice / config / OS preference,
   // then swap the stylesheet if it differs from the default terminal.css that

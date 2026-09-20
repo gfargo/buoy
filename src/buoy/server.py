@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import dataclasses
 import hmac
@@ -10,6 +11,8 @@ import html as html_module
 import json
 import logging
 import re
+import secrets
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,6 +53,9 @@ class BuoyAppState:
     image_update_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     static_health: dict[str, dict[str, Any]] = field(default_factory=dict)
     background_tasks: list[asyncio.Task[None]] = field(default_factory=list)
+    # Single-use WS log-stream tickets: ticket -> (container name, monotonic expiry).
+    log_tickets: dict[str, tuple[str, float]] = field(default_factory=dict)
+    log_stream_count: int = 0
 
 
 # ── API Handlers ───────────────────────────────────────────────────────────────
@@ -110,6 +116,11 @@ async def api_config(request: Request) -> JSONResponse:
                 "night_mode": state.config.features.night_mode,
                 "keyboard_shortcuts": state.config.features.keyboard_shortcuts,
                 "image_updates": state.config.features.image_updates,
+                "log_streaming": state.config.features.log_streaming,
+            },
+            "logs": {
+                "default_tail": state.config.logs.default_tail,
+                "max_tail": state.config.logs.max_tail,
             },
             "refresh": {
                 "stats_interval": state.config.refresh.stats_interval,
@@ -382,6 +393,19 @@ async def api_container_detail(request: Request) -> JSONResponse:
     return JSONResponse(data)
 
 
+def _clamp_tail(raw: str | None, config: BuoyConfig) -> int:
+    """Parse and clamp a `?tail=` query param to `[1, logs.max_tail]`.
+
+    Falls back to `logs.default_tail` for a missing or unparsable value,
+    keeping the one-shot REST endpoint and the WS stream consistent.
+    """
+    try:
+        tail = int(raw) if raw is not None else config.logs.default_tail
+    except (TypeError, ValueError):
+        tail = config.logs.default_tail
+    return max(1, min(tail, config.logs.max_tail))
+
+
 async def api_container_logs(request: Request) -> JSONResponse:
     state: BuoyAppState = request.app.state.buoy
     """Last N lines of container stdout/stderr."""
@@ -393,8 +417,41 @@ async def api_container_logs(request: Request) -> JSONResponse:
     if not docker_coll:
         return JSONResponse({"error": "docker not available"}, status_code=503)
 
-    data = await docker_coll.get_logs(name, tail=30)
+    tail = _clamp_tail(request.query_params.get("tail"), state.config)
+    data = await docker_coll.get_logs(name, tail=tail)
     return JSONResponse(data)
+
+
+_LOG_TICKET_TTL = 30.0
+_LOG_TICKET_MAX = 1000
+
+
+async def api_container_logs_ticket(request: Request) -> JSONResponse:
+    """Issue a single-use, container-scoped ticket for the WS log stream.
+
+    Browsers cannot set an `Authorization` header on a WebSocket handshake,
+    so `ws_container_logs` can't reuse `AuthMiddleware` directly — and
+    `BaseHTTPMiddleware` (both `AuthMiddleware` and `RateLimitMiddleware`)
+    never runs for `websocket` scopes in the first place. This endpoint is
+    plain HTTP under the already-protected `/api/container/` prefix, so it
+    inherits auth (when enabled) and the always-on rate limiter, and hands
+    back a short-lived ticket that the WS handler consumes exactly once.
+    """
+    state: BuoyAppState = request.app.state.buoy
+    name = request.path_params["name"]
+    if not _validate_container_name(name):
+        return JSONResponse({"error": "invalid container name"}, status_code=400)
+
+    now = time.monotonic()
+    for stale in [t for t, (_, exp) in state.log_tickets.items() if exp <= now]:
+        del state.log_tickets[stale]
+
+    if len(state.log_tickets) >= _LOG_TICKET_MAX:
+        return JSONResponse({"error": "too many pending tickets"}, status_code=429)
+
+    ticket = secrets.token_urlsafe(32)
+    state.log_tickets[ticket] = (name, now + _LOG_TICKET_TTL)
+    return JSONResponse({"ticket": ticket, "expires_in": int(_LOG_TICKET_TTL)})
 
 
 async def api_container_restart(request: Request) -> JSONResponse:
@@ -607,6 +664,208 @@ async def ws_endpoint(websocket: WebSocket):
         logger.debug("ws_endpoint: client connection failed", exc_info=True)
     finally:
         state.ws_clients.discard(websocket)
+
+
+def _consume_log_ticket(state: BuoyAppState, ticket: str, name: str) -> bool:
+    """Look up and immediately invalidate a log-stream ticket.
+
+    Single-use (popped regardless of outcome), TTL-checked, and bound to
+    the container name it was issued for.
+    """
+    if not ticket:
+        return False
+    entry = state.log_tickets.pop(ticket, None)
+    if entry is None:
+        return False
+    ticket_name, expiry = entry
+    return ticket_name == name and time.monotonic() <= expiry
+
+
+class _DropOldestQueue:
+    """Bounded FIFO buffer of pending log items; overflow drops the oldest entry.
+
+    Decouples the `docker logs --follow` pump from a slow client: the
+    producer never blocks on a stalled WebSocket send (which would otherwise
+    also stall the docker CLI's stdout pipe), and the count of dropped lines
+    is surfaced to the client explicitly via a `log_dropped` frame instead of
+    silently losing data or growing memory without bound.
+    """
+
+    def __init__(self, maxsize: int):
+        self._items: collections.deque = collections.deque()
+        self._maxsize = maxsize
+        self._dropped = 0
+        self._event = asyncio.Event()
+
+    def push(self, item: dict) -> None:
+        if len(self._items) >= self._maxsize:
+            self._items.popleft()
+            self._dropped += 1
+        self._items.append(item)
+        self._event.set()
+
+    def wake(self) -> None:
+        self._event.set()
+
+    async def wait_not_empty(self) -> None:
+        if self._items:
+            return
+        self._event.clear()
+        await self._event.wait()
+
+    def drain(self) -> tuple[list[dict], int]:
+        items = list(self._items)
+        self._items.clear()
+        dropped, self._dropped = self._dropped, 0
+        return items, dropped
+
+    def drain_up_to(self, n: int) -> tuple[list[dict], int]:
+        """Like `drain()`, but leaves anything beyond `n` items queued —
+        used to pace output to `logs.stream_rate_limit` without discarding
+        the backlog (it stays subject to normal drop-oldest on overflow)."""
+        items = [self._items.popleft() for _ in range(min(n, len(self._items)))]
+        dropped, self._dropped = self._dropped, 0
+        return items, dropped
+
+    def has_pending(self) -> bool:
+        return bool(self._items)
+
+
+_LOG_STREAM_BATCH_INTERVAL = 0.1
+_LOG_STREAM_BATCH_MAX_LINES = 100
+_LOG_STREAM_QUEUE_MAX_LINES = 2000
+
+
+async def ws_container_logs(websocket: WebSocket):
+    """WebSocket for live `docker logs --follow` streaming.
+
+    `BaseHTTPMiddleware` (both `AuthMiddleware` and `RateLimitMiddleware`)
+    only wraps `http` scopes and never runs for `websocket` connections, so
+    this handler re-implements the auth check explicitly via a short-lived
+    ticket (see `api_container_logs_ticket`) rather than relying on the
+    middleware stack — a naive route here would otherwise serve logs
+    unauthenticated even when `auth.enabled` is true.
+    """
+    state: BuoyAppState = websocket.app.state.buoy
+    config = state.config
+    name = websocket.path_params.get("name", "")
+
+    if not _validate_container_name(name):
+        await websocket.close(code=4400, reason="invalid container name")
+        return
+
+    if not config.features.log_streaming:
+        await websocket.close(code=4403, reason="log streaming disabled")
+        return
+
+    if config.auth.enabled:
+        ticket = websocket.query_params.get("ticket", "")
+        if not _consume_log_ticket(state, ticket, name):
+            await websocket.close(code=4401, reason="authentication required")
+            return
+
+    docker_coll = state.collectors.get("docker")
+    if not docker_coll:
+        await websocket.close(code=4404, reason="docker not available")
+        return
+
+    if state.log_stream_count >= config.logs.max_streams:
+        await websocket.close(code=4429, reason="too many concurrent log streams")
+        return
+
+    tail = _clamp_tail(websocket.query_params.get("tail"), config)
+
+    await websocket.accept()
+    state.log_stream_count += 1
+
+    queue = _DropOldestQueue(_LOG_STREAM_QUEUE_MAX_LINES)
+    stop = asyncio.Event()
+    producer_error: Exception | None = None
+
+    async def _produce() -> None:
+        nonlocal producer_error
+        try:
+            async with contextlib.aclosing(
+                docker_coll.stream_logs(name, tail=tail, max_line_bytes=config.logs.max_line_bytes)
+            ) as stream:
+                async for item in stream:
+                    if stop.is_set():
+                        break
+                    queue.push(item)
+        except Exception as exc:
+            producer_error = exc
+            logger.warning("ws_container_logs: producer failed for %s: %s", name, exc)
+        finally:
+            stop.set()
+            queue.wake()
+
+    producer = asyncio.ensure_future(_produce())
+    recv_task = asyncio.ensure_future(websocket.receive_text())
+    reason = "closed"
+
+    # `stream_rate_limit` (lines/sec, <=0 disables it) is a soft cap enforced
+    # here by pacing how many items we drain per rolling 1s window — items
+    # beyond the budget stay queued (and remain subject to normal
+    # drop-oldest) rather than being discarded outright.
+    rate_limit = config.logs.stream_rate_limit
+    rate_window_start = time.monotonic()
+    rate_window_sent = 0
+
+    try:
+        await websocket.send_json({"type": "log_start", "container": name, "tail": tail})
+        while True:
+            now = time.monotonic()
+            if now - rate_window_start >= 1.0:
+                rate_window_start = now
+                rate_window_sent = 0
+            budget = None if rate_limit <= 0 else max(0, rate_limit - rate_window_sent)
+
+            waitables = {recv_task}
+            wait_task = None
+            if budget != 0:
+                wait_task = asyncio.ensure_future(queue.wait_not_empty())
+                waitables.add(wait_task)
+            done, _pending = await asyncio.wait(
+                waitables,
+                timeout=_LOG_STREAM_BATCH_INTERVAL,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if wait_task is not None and not wait_task.done():
+                wait_task.cancel()
+
+            if recv_task in done:
+                with contextlib.suppress(Exception):
+                    recv_task.result()
+                reason = "disconnected"
+                break
+
+            items, dropped = queue.drain() if budget is None else queue.drain_up_to(budget)
+            rate_window_sent += len(items)
+            for i in range(0, len(items), _LOG_STREAM_BATCH_MAX_LINES):
+                await websocket.send_json(
+                    {"type": "log", "lines": items[i : i + _LOG_STREAM_BATCH_MAX_LINES]}
+                )
+            if dropped:
+                await websocket.send_json({"type": "log_dropped", "count": dropped})
+
+            if stop.is_set() and not items and not dropped and not queue.has_pending():
+                reason = "stream error" if producer_error is not None else "container exited"
+                break
+    except WebSocketDisconnect:
+        reason = "disconnected"
+    except Exception:
+        logger.debug("ws_container_logs: send loop failed for %s", name, exc_info=True)
+        reason = "error"
+    finally:
+        stop.set()
+        state.log_stream_count -= 1
+        recv_task.cancel()
+        producer.cancel()
+        await asyncio.gather(recv_task, producer, return_exceptions=True)
+        with contextlib.suppress(Exception):
+            await websocket.send_json({"type": "log_end", "reason": reason})
+        with contextlib.suppress(Exception):
+            await websocket.close(code=1000, reason=reason)
 
 
 async def broadcast_stats(state: BuoyAppState, data: dict):
@@ -918,6 +1177,8 @@ async def on_shutdown(state: BuoyAppState):
         state.image_update_cache.clear()
         state.static_health.clear()
         state.background_tasks.clear()
+        state.log_tickets.clear()
+        state.log_stream_count = 0
 
 
 @contextlib.asynccontextmanager
@@ -1135,8 +1396,10 @@ def create_app(config: BuoyConfig) -> Starlette:
         Route("/api/container/{name}/history", api_container_history),
         Route("/api/container/{name}", api_container_detail),
         Route("/api/container/{name}/logs", api_container_logs),
+        Route("/api/container/{name}/logs/ticket", api_container_logs_ticket),
         Route("/api/container/{name}/restart", api_container_restart, methods=["POST"]),
         WebSocketRoute("/ws", ws_endpoint),
+        WebSocketRoute("/ws/logs/{name}", ws_container_logs),
         Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
     ]
 

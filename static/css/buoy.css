@@ -235,9 +235,21 @@ header .uptime span { color: var(--green); }
 
 /* Container logs */
 .ctr-logs { margin-top: 0.75rem; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
-.ctr-logs-header { display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0.75rem; background: var(--bg); font-size: 0.55rem; color: var(--text-dim); border-bottom: 1px solid var(--border); }
-.ctr-logs-close { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.7rem; }
-.ctr-logs-pre { margin: 0; padding: 0.75rem; font-size: 0.5rem; color: var(--text); overflow-x: auto; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.4; }
+.ctr-logs-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.4rem; padding: 0.4rem 0.75rem; background: var(--bg); font-size: 0.55rem; color: var(--text-dim); border-bottom: 1px solid var(--border); }
+.ctr-logs-title { white-space: nowrap; }
+.ctr-logs-toolbar { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
+.ctr-logs-toolbar select.ctr-logs-tail,
+.ctr-logs-toolbar input.ctr-logs-filter { background: var(--surface); border: 1px solid var(--border); border-radius: 3px; color: var(--text); font-size: 0.55rem; padding: 0.15rem 0.4rem; font-family: 'JetBrains Mono', monospace; }
+.ctr-logs-toolbar input.ctr-logs-filter { width: 120px; }
+.ctr-logs-toolbar button { background: var(--surface); border: 1px solid var(--border); border-radius: 3px; color: var(--text-dim); cursor: pointer; font-size: 0.55rem; padding: 0.15rem 0.5rem; font-family: 'JetBrains Mono', monospace; }
+.ctr-logs-toolbar button:hover { border-color: var(--cyan-dim); color: var(--cyan); }
+.ctr-logs-follow[aria-pressed="true"] { border-color: var(--green); color: var(--green); }
+.ctr-logs-close { font-size: 0.7rem; }
+.ctr-logs-status { padding: 0.25rem 0.75rem; font-size: 0.5rem; color: var(--text-dim); border-bottom: 1px solid var(--border); min-height: 1em; }
+.ctr-logs-body { margin: 0; padding: 0.5rem 0.75rem; font-size: 0.5rem; font-family: 'JetBrains Mono', monospace; color: var(--text); overflow-x: auto; max-height: 260px; overflow-y: auto; line-height: 1.4; }
+.ctr-log-line { white-space: pre-wrap; word-break: break-all; }
+.ctr-log-line.hidden { display: none; }
+.ctr-log-line-err { color: var(--amber); }
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
 

@@ -373,6 +373,60 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+def check_credentials(auth_config: AuthConfig, authorization_header: str) -> bool:
+    """Validate an ``Authorization`` header against the configured auth mode.
+
+    Extracted from ``AuthMiddleware`` so callers outside the HTTP middleware
+    stack — namely the WebSocket log-streaming ticket flow, since Starlette's
+    ``BaseHTTPMiddleware`` only wraps ``http`` scopes and never runs for
+    ``websocket`` connections — can perform the same credential check.
+    """
+    if auth_config.type == "token":
+        return _check_token(auth_config, authorization_header)
+    elif auth_config.type == "basic":
+        return _check_basic(auth_config, authorization_header)
+    return False
+
+
+def _check_token(auth_config: AuthConfig, auth_header: str) -> bool:
+    """Verify Bearer token."""
+    expected = auth_config.token
+    if not expected:
+        return False  # No token configured = fail closed, deny all
+
+    if not auth_header.startswith("Bearer "):
+        return False
+
+    provided = auth_header[7:]
+    # Constant-time comparison to prevent timing attacks. Compare as bytes so a
+    # non-ASCII token doesn't raise TypeError (compare_digest only accepts
+    # ASCII str) and turn an auth failure into a 500.
+    return hmac.compare_digest(provided.encode(), expected.encode())
+
+
+def _check_basic(auth_config: AuthConfig, auth_header: str) -> bool:
+    """Verify Basic auth credentials."""
+    expected_user = auth_config.username
+    expected_pass = auth_config.password
+
+    if not expected_user or not expected_pass:
+        return False  # Not configured = fail closed, deny all
+
+    if not auth_header.startswith("Basic "):
+        return False
+
+    try:
+        decoded = base64.b64decode(auth_header[6:]).decode()
+        user, password = decoded.split(":", 1)
+        # Compare as bytes — see _check_token for why (non-ASCII would otherwise
+        # raise TypeError instead of a clean auth failure).
+        return hmac.compare_digest(user.encode(), expected_user.encode()) and hmac.compare_digest(
+            password.encode(), expected_pass.encode()
+        )
+    except Exception:
+        return False
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """Optional auth middleware — only active when auth.enabled is True."""
 
@@ -411,49 +465,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
     def _authenticate(self, request: Request) -> bool:
         """Validate the request's auth credentials."""
         auth_header = request.headers.get("Authorization", "")
-
-        if self.auth_config.type == "token":
-            return self._check_token(auth_header)
-        elif self.auth_config.type == "basic":
-            return self._check_basic(auth_header)
-        return False
+        return check_credentials(self.auth_config, auth_header)
 
     def _check_token(self, auth_header: str) -> bool:
-        """Verify Bearer token."""
-        expected = self.auth_config.token
-        if not expected:
-            return False  # No token configured = fail closed, deny all
-
-        if not auth_header.startswith("Bearer "):
-            return False
-
-        provided = auth_header[7:]
-        # Constant-time comparison to prevent timing attacks. Compare as bytes so a
-        # non-ASCII token doesn't raise TypeError (compare_digest only accepts
-        # ASCII str) and turn an auth failure into a 500.
-        return hmac.compare_digest(provided.encode(), expected.encode())
+        """Thin delegate to the module-level check — kept for existing callers."""
+        return _check_token(self.auth_config, auth_header)
 
     def _check_basic(self, auth_header: str) -> bool:
-        """Verify Basic auth credentials."""
-        expected_user = self.auth_config.username
-        expected_pass = self.auth_config.password
-
-        if not expected_user or not expected_pass:
-            return False  # Not configured = fail closed, deny all
-
-        if not auth_header.startswith("Basic "):
-            return False
-
-        try:
-            decoded = base64.b64decode(auth_header[6:]).decode()
-            user, password = decoded.split(":", 1)
-            # Compare as bytes — see _check_token for why (non-ASCII would otherwise
-            # raise TypeError instead of a clean auth failure).
-            return hmac.compare_digest(
-                user.encode(), expected_user.encode()
-            ) and hmac.compare_digest(password.encode(), expected_pass.encode())
-        except Exception:
-            return False
+        """Thin delegate to the module-level check — kept for existing callers."""
+        return _check_basic(self.auth_config, auth_header)
 
     def _check_rate_limit(self, client_ip: str) -> bool:
         """Simple sliding window rate limiter."""

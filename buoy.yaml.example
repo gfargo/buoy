@@ -179,7 +179,19 @@ features:
   night_mode: auto           # auto (10pm-6am) | always | never
   keyboard_shortcuts: true   # 1-5 for gauges, Escape to close
   image_updates: false       # Docker image update checker (badges on container cards)
+  log_streaming: true        # Live WebSocket container log streaming (falls back to a
+                              # one-shot fetch when off or the socket fails)
   gpu: true                  # GPU collector (NVIDIA/AMD/Intel) — auto-detects, no-ops without a GPU
+
+# ── Live Log Streaming ─────────────────────────────────────
+# Tuning for the /ws/logs/{name} WebSocket (docker logs --follow). Also
+# settable via BUOY_LOGS_DEFAULT_TAIL / BUOY_LOGS_MAX_TAIL.
+logs:
+  default_tail: 100          # Lines requested when the viewer opens
+  max_tail: 1000              # Upper bound a client's ?tail= is clamped to
+  max_streams: 4               # Concurrent live log streams per node
+  max_line_bytes: 8192         # Per-line truncation cap
+  stream_rate_limit: 500       # Soft cap on lines/sec forwarded to one client
 
 # ── Refresh Intervals (seconds) ───────────────────────────
 refresh:

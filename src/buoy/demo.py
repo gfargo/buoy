@@ -6,6 +6,7 @@ No Docker socket, no /proc, no privileged mode needed.
 
 from __future__ import annotations
 
+import asyncio
 import math
 import random
 import time
@@ -178,6 +179,27 @@ class DemoDockerCollector:
             for i in range(min(tail, 10))
         ]
         return {"container": name, "lines": lines}
+
+    async def stream_logs(self, name: str, tail: int = 100, max_line_bytes: int = 8192):
+        """Emit a synthetic log line roughly once a second, forever.
+
+        Mirrors ``DockerCollector.stream_logs``'s shape (an async generator
+        of ``{"stream", "line"}`` dicts) so the frontend viewer and
+        playwright smoke tests can exercise live streaming in demo mode
+        without a real Docker socket.
+        """
+        i = 0
+        while True:
+            await asyncio.sleep(1)
+            i += 1
+            ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            stream = "stderr" if i % 7 == 0 else "stdout"
+            level = "WARN" if stream == "stderr" else "INFO"
+            yield {
+                "stream": stream,
+                "line": f"{ts} {level} [{name}] demo log line {i} — "
+                f"request handled in {random.randint(1, 80)}ms",
+            }
 
     async def restart_container(self, name: str) -> dict:
         return {"success": True, "container": name}
