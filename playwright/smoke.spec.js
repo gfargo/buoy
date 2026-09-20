@@ -21,6 +21,16 @@ test('dashboard loads with no console/page errors and renders gauges', async ({ 
   expect(consoleErrors).toEqual([]);
 });
 
+test('demo mode shows a populated network throughput gauge', async ({ page }) => {
+  await page.goto('/');
+
+  const netGauge = page.locator('#net-gauge');
+  await expect(netGauge).toBeVisible();
+
+  const netValue = page.locator('#net');
+  await expect(netValue).not.toHaveText('↓ -- ↑ --');
+});
+
 test('demo mode stubs plugins instead of erroring (BUG-40)', async ({ page, request }) => {
   const res = await request.get('/api/plugins');
   expect(res.ok()).toBeTruthy();

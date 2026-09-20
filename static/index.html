@@ -60,6 +60,12 @@
       <div class="value"><span id="nvme-temp">--</span><span class="unit">&deg;C</span></div>
       <div class="bar"><div class="bar-fill" id="nvme-temp-bar" style="width:0%"></div></div>
     </div>
+    <div class="gauge" id="net-gauge" data-detail="network" style="display:none" role="button" tabindex="0" aria-label="Network throughput">
+      <div class="label">Network</div>
+      <div class="value"><span id="net">&#8595; -- &#8593; --</span><span class="unit" id="net-unit"></span></div>
+      <div class="sparkline" id="net-sparkline"></div>
+      <span class="expand-hint" aria-hidden="true">&#9662; detail</span>
+    </div>
     <div class="gauge" id="gpu-util-gauge" data-detail="gpu" role="button" tabindex="0" style="display:none" aria-label="GPU utilization">
       <div class="label">GPU</div>
       <div class="value"><span id="gpu-util">--</span><span class="unit">%</span></div>

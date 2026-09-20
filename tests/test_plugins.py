@@ -1151,6 +1151,47 @@ class TestPrometheusExporterPlugin:
 
         assert "buoy_nvme" not in output
 
+    def test_format_metrics_with_network(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "compass",
+            "cpu": 10,
+            "mem_used": 2.0,
+            "mem_total": 8.0,
+            "temp": 39,
+            "disk_pct": 45,
+            "containers": 5,
+            "uptime_h": 10,
+            "uptime_m": 0,
+            "net": {
+                "primary": "eth0",
+                "interfaces": [
+                    {
+                        "name": "eth0",
+                        "rx_bytes": 1000,
+                        "tx_bytes": 500,
+                        "rx_bytes_per_sec": 12.5,
+                        "tx_bytes_per_sec": 3.2,
+                        "rx_errors": 1,
+                        "tx_errors": 2,
+                        "rx_dropped": 3,
+                        "tx_dropped": 4,
+                    }
+                ],
+            },
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert 'buoy_network_receive_bytes_total{host="compass",device="eth0"} 1000' in output
+        assert 'buoy_network_transmit_bytes_total{host="compass",device="eth0"} 500' in output
+        assert 'buoy_network_receive_bytes_per_second{host="compass",device="eth0"} 12.5' in output
+        assert 'buoy_network_transmit_bytes_per_second{host="compass",device="eth0"} 3.2' in output
+        assert 'buoy_network_receive_errors_total{host="compass",device="eth0"} 1' in output
+        assert 'buoy_network_transmit_errors_total{host="compass",device="eth0"} 2' in output
+        assert 'buoy_network_receive_drops_total{host="compass",device="eth0"} 3' in output
+        assert 'buoy_network_transmit_drops_total{host="compass",device="eth0"} 4' in output
+
     def test_format_metrics_with_gpu(self):
         from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
 
@@ -1228,6 +1269,59 @@ class TestPrometheusExporterPlugin:
         assert "buoy_gpu_temperature_celsius{" not in output
         assert "buoy_gpu_power_watts{" not in output
         assert "None" not in output
+
+    def test_format_metrics_without_network(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "watch",
+            "cpu": 5,
+            "mem_used": 1.0,
+            "mem_total": 4.0,
+            "temp": 44,
+            "disk_pct": 30,
+            "containers": 8,
+            "uptime_h": 200,
+            "uptime_m": 0,
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert "buoy_network_" not in output
+        assert "None" not in output
+
+    def test_format_metrics_escapes_network_device_label(self):
+        from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
+
+        stats = {
+            "hostname": "compass",
+            "cpu": 1,
+            "mem_used": 0.0,
+            "mem_total": 1.0,
+            "temp": 0,
+            "disk_pct": 0,
+            "containers": 0,
+            "uptime_h": 0,
+            "uptime_m": 0,
+            "net": {
+                "primary": None,
+                "interfaces": [
+                    {
+                        "name": 'weird"iface',
+                        "rx_bytes": 0,
+                        "tx_bytes": 0,
+                        "rx_bytes_per_sec": 0,
+                        "tx_bytes_per_sec": 0,
+                        "rx_errors": 0,
+                        "tx_errors": 0,
+                        "rx_dropped": 0,
+                        "tx_dropped": 0,
+                    }
+                ],
+            },
+        }
+        output = PrometheusExporterPlugin.format_metrics(stats)
+
+        assert 'device="weird\\"iface"' in output
 
     def test_format_metrics_without_gpu(self):
         from buoy.plugins.builtin.prometheus_exporter import PrometheusExporterPlugin
