@@ -305,6 +305,16 @@ plugins:
       url: ""                # e.g., http://localhost:8096
       api_key: ""            # Jellyfin API key (Dashboard → API Keys)
 
+    # Plex media server (sessions, transcoding, library counts)
+    plex:
+      enabled: false
+      url: ""                      # e.g., http://localhost:32400
+      token: ""                    # X-Plex-Token (or BUOY_PLUGIN_PLEX_TOKEN)
+      verify_ssl: true             # set false for plex.direct/self-signed over HTTPS
+      library_counts: true         # one extra request per library section
+      transcode_warn_threshold: 1  # transcoding sessions before status → warn (0 = off)
+      max_rows: 10                 # session/library rows on the card
+
     # *arr stack — queue depth, wanted/missing, and health warnings.
     # Configure only the services you run; each needs Settings → General → API Key.
     arr_stack:
