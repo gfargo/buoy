@@ -3,11 +3,12 @@
  */
 
 import { escapeHtml } from './escape.js';
-import { formatUptime } from './format.js';
+import { formatUptime, formatRatePair } from './format.js';
 
 const SPARK_MAX = 30;
 const tempHistory = [];
 const diskHistory = [];
+const netHistory = [];
 
 /**
  * Build the active-alerts banner HTML from /api/stats' `alerts` array
@@ -38,6 +39,21 @@ export function activeAlertsHtml(alerts) {
 export function formatMemUsage(memUsed, memTotal) {
   if (memUsed == null || memTotal == null) return '--/--';
   return `${memUsed}/${memTotal}`;
+}
+
+/**
+ * Format a hover-friendly summary of every detected GPU: "name (util%)"
+ * joined by commas. Pure + escaped so it's safe to use as an innerHTML
+ * source or a title attribute, and testable without a DOM.
+ */
+export function formatGpuSummary(gpus) {
+  if (!gpus || gpus.length === 0) return 'No GPU detected';
+  return gpus
+    .map((g) => {
+      const util = g.util_pct == null ? '--' : `${g.util_pct}%`;
+      return `${escapeHtml(g.name || g.vendor || 'GPU')} (${util})`;
+    })
+    .join(', ');
 }
 
 export function initGauges() {
@@ -122,6 +138,38 @@ export function updateGauges(data) {
       badge.textContent = wear >= 90 ? 'Critical' : wear >= 70 ? 'Warning' : 'Healthy';
       badge.className = 'health-badge' + (wear >= 90 ? ' crit' : wear >= 70 ? ' warn' : '');
     }
+  }
+
+  // Network throughput. `net` is absent entirely (rather than present with
+  // nulls) on non-Linux or when /proc/net/dev couldn't be read (BUG-33
+  // convention), so the gauge stays hidden instead of rendering "NaN B/s".
+  if (data.net) {
+    show('net-gauge');
+    const rate = formatRatePair(data.net.rx_bytes_per_sec, data.net.tx_bytes_per_sec);
+    setText('net', `↓ ${rate.rxValue} ↑ ${rate.txValue}`);
+    setText('net-unit', rate.unit);
+
+    const total = (data.net.rx_bytes_per_sec || 0) + (data.net.tx_bytes_per_sec || 0);
+    netHistory.push(total);
+    if (netHistory.length > SPARK_MAX) netHistory.shift();
+    // Rolling max over the visible window (not all-time) so a one-off burst
+    // doesn't permanently flatten later normal traffic; floor of 1 keeps an
+    // idle link from flatlining at max scale.
+    const netRollingMax = Math.max(1, ...netHistory);
+    renderSparkline('net-sparkline', netHistory, 0, netRollingMax, 'var(--cyan)');
+  }
+
+  // GPU
+  if (data.gpus && data.gpus.length) {
+    show('gpu-util-gauge');
+    show('gpu-temp-gauge');
+    const primary = data.gpus[0];
+    setGauge('gpu-util', primary.util_pct, '%');
+    setBar('gpu-util-bar', primary.util_pct || 0, 80, 95);
+    setGauge('gpu-temp', primary.temp, '°C');
+    setBar('gpu-temp-bar', Math.min((primary.temp || 0) / 90 * 100, 100), 75, 85);
+    const utilGaugeEl = document.getElementById('gpu-util-gauge');
+    if (utilGaugeEl) utilGaugeEl.title = formatGpuSummary(data.gpus);
   }
 
   // Tailscale badge

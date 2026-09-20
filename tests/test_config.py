@@ -50,6 +50,18 @@ class TestConfigDefaults:
         config = _build_config({})
         assert config.logging.level == "INFO"
 
+    def test_default_log_streaming_enabled(self):
+        config = _build_config({})
+        assert config.features.log_streaming is True
+
+    def test_default_logs_config(self):
+        config = _build_config({})
+        assert config.logs.default_tail == 100
+        assert config.logs.max_tail == 1000
+        assert config.logs.max_streams == 4
+        assert config.logs.max_line_bytes == 8192
+        assert config.logs.stream_rate_limit == 500
+
 
 class TestConfigFromYAML:
     """Config loaded from a YAML dict."""
@@ -86,6 +98,14 @@ class TestConfigFromYAML:
         assert "grafana" in config.services.overrides
         assert config.services.overrides["grafana"].name == "Grafana"
         assert config.services.overrides["grafana"].port == 3000
+
+    def test_refresh_health_check_interval_default(self):
+        config = _build_config({})
+        assert config.refresh.health_check_interval == 60
+
+    def test_refresh_health_check_interval_override(self):
+        config = _build_config({"refresh": {"health_check_interval": 30}})
+        assert config.refresh.health_check_interval == 30
 
     def test_auth_enabled(self):
         raw = {"auth": {"enabled": True, "type": "token", "token": "secret123"}}
@@ -198,9 +218,155 @@ class TestConfigFromYAML:
         assert config.theme.custom["bg"] == "#ff0000"
         assert config.theme.custom["amber"] == "#00ff00"
 
+    def test_logs_section_from_yaml(self):
+        raw = {"logs": {"default_tail": 200, "max_tail": 5000, "max_streams": 2}}
+        config = _build_config(raw)
+        assert config.logs.default_tail == 200
+        assert config.logs.max_tail == 5000
+        assert config.logs.max_streams == 2
+        # Unset fields still take their dataclass defaults.
+        assert config.logs.max_line_bytes == 8192
+
+    def test_log_streaming_disabled_from_yaml(self):
+        config = _build_config({"features": {"log_streaming": False}})
+        assert config.features.log_streaming is False
+
     def test_logging_level_from_yaml(self):
         config = _build_config({"logging": {"level": "DEBUG"}})
         assert config.logging.level == "DEBUG"
+
+
+class TestServicesStatic:
+    """Tests for services.static (non-Docker service entries / bookmarks)."""
+
+    def test_defaults_empty(self):
+        config = _build_config({})
+        assert config.services.static == []
+
+    def test_parsed(self):
+        raw = {
+            "services": {
+                "static": [
+                    {
+                        "name": "NAS",
+                        "icon": "💾",
+                        "desc": "Synology",
+                        "url": "https://nas.local",
+                    }
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert len(config.services.static) == 1
+        entry = config.services.static[0]
+        assert entry.name == "NAS"
+        assert entry.icon == "💾"
+        assert entry.desc == "Synology"
+        assert entry.url == "https://nas.local"
+        assert entry.health_check == ""
+        assert entry.verify_ssl is None
+
+    def test_description_alias(self):
+        raw = {"services": {"static": [{"name": "NAS", "description": "Synology"}]}}
+        config = _build_config(raw)
+        assert config.services.static[0].desc == "Synology"
+
+    def test_desc_wins_over_description_alias(self):
+        raw = {"services": {"static": [{"name": "NAS", "desc": "primary", "description": "alias"}]}}
+        config = _build_config(raw)
+        assert config.services.static[0].desc == "primary"
+
+    def test_skips_entry_without_name(self, caplog):
+        raw = {"services": {"static": [{"url": "https://nas.local"}, {"name": "Router"}]}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert len(config.services.static) == 1
+        assert config.services.static[0].name == "Router"
+        assert any("services.static" in r.message for r in caplog.records)
+
+    def test_health_check_true_uses_url(self):
+        raw = {
+            "services": {
+                "static": [{"name": "NAS", "url": "https://nas.local", "health_check": True}]
+            }
+        }
+        config = _build_config(raw)
+        assert config.services.static[0].health_check == "https://nas.local"
+
+    def test_health_check_explicit_url(self):
+        raw = {
+            "services": {
+                "static": [
+                    {
+                        "name": "NAS",
+                        "url": "https://nas.local",
+                        "health_check": "https://nas.local/health",
+                    }
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert config.services.static[0].health_check == "https://nas.local/health"
+
+    def test_health_check_absent_or_false_means_no_check(self):
+        raw = {
+            "services": {
+                "static": [
+                    {"name": "A", "url": "https://a.local"},
+                    {"name": "B", "url": "https://b.local", "health_check": False},
+                ]
+            }
+        }
+        config = _build_config(raw)
+        assert config.services.static[0].health_check == ""
+        assert config.services.static[1].health_check == ""
+
+    def test_verify_ssl_none_when_absent(self):
+        raw = {"services": {"static": [{"name": "NAS", "url": "https://nas.local"}]}}
+        config = _build_config(raw)
+        assert config.services.static[0].verify_ssl is None
+
+    def test_verify_ssl_explicit_false(self):
+        raw = {
+            "services": {
+                "static": [{"name": "NAS", "url": "https://nas.local", "verify_ssl": False}]
+            }
+        }
+        config = _build_config(raw)
+        assert config.services.static[0].verify_ssl is False
+
+    def test_non_list_static_warns_and_degrades_to_empty(self, caplog):
+        raw = {"services": {"static": {"name": "NAS"}}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert config.services.static == []
+        assert any("services.static" in r.message for r in caplog.records)
+
+    def test_non_dict_static_entry_skipped_with_warning(self, caplog):
+        raw = {"services": {"static": ["https://nas.local", {"name": "Router"}]}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            config = _build_config(raw)
+        assert len(config.services.static) == 1
+        assert config.services.static[0].name == "Router"
+        assert any("services.static" in r.message for r in caplog.records)
+
+    def test_services_static_produces_no_unknown_key_warning(self, caplog):
+        raw = {
+            "services": {
+                "static": [
+                    {
+                        "name": "NAS",
+                        "icon": "💾",
+                        "url": "https://nas.local",
+                        "health_check": True,
+                        "verify_ssl": False,
+                    }
+                ]
+            }
+        }
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys(raw)
+        assert caplog.records == []
 
 
 class TestEnvOverrides:
@@ -335,6 +501,32 @@ class TestEnvOverrides:
         monkeypatch.setenv("BUOY_REFRESH_PLUGINS_INTERVAL", "90")
         result = _apply_env_overrides({})
         assert result["refresh"]["plugins_interval"] == 90
+
+    def test_log_streaming_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_FEATURES_LOG_STREAMING", "false")
+        result = _apply_env_overrides({})
+        assert result["features"]["log_streaming"] is False
+
+    def test_logs_default_tail_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOGS_DEFAULT_TAIL", "250")
+        result = _apply_env_overrides({})
+        assert result["logs"]["default_tail"] == 250
+
+    def test_logs_max_tail_env(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOGS_MAX_TAIL", "5000")
+        result = _apply_env_overrides({})
+        assert result["logs"]["max_tail"] == 5000
+
+    def test_logs_default_tail_env_builds_config(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOGS_DEFAULT_TAIL", "250")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.logs.default_tail == 250
+
+    def test_logs_default_tail_env_invalid_raises(self, monkeypatch):
+        monkeypatch.setenv("BUOY_LOGS_DEFAULT_TAIL", "lots")
+        with pytest.raises(ConfigError):
+            _apply_env_overrides({})
 
 
 class TestLoadConfig:
@@ -490,6 +682,7 @@ class TestWarnUnknownKeys:
                 "allowed_origins": ["https://harbor.example.ts.net"],
                 "trusted_proxies": ["10.0.0.1"],
                 "verify_ssl": True,
+                "interfaces": ["eth0"],
             },
             "services": {"hidden": ["internal-tool"], "overrides": {}},
             "theme": {"preset": "nord", "custom": {}},
@@ -499,10 +692,19 @@ class TestWarnUnknownKeys:
             "plugins": {"enabled": True, "directory": "/plugins", "builtin": {}, "user": {}},
             "alerts": {"webhook_url": "https://example.com/hook"},
             "logging": {"level": "DEBUG"},
+            "logs": {"default_tail": 200, "max_tail": 2000, "max_streams": 8},
         }
 
         with caplog.at_level("WARNING", logger="buoy.config"):
             _warn_unknown_keys(raw)
+
+        assert caplog.records == []
+
+    def test_logs_section_does_not_warn(self, caplog):
+        """logs: is a recognized top-level section (LogsConfig) — omitting it
+        from _CONFIG_SECTIONS would make every logs.* key look like a typo."""
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys({"logs": {"default_tail": 50, "max_tail": 500}})
 
         assert caplog.records == []
 
@@ -611,3 +813,34 @@ class TestNetworkVerifySsl:
         raw = _apply_env_overrides({"network": {"verify_ssl": True}})
         config = _build_config(raw)
         assert config.network.verify_ssl is False
+
+
+class TestNetworkInterfaces:
+    """Tests for network.interfaces (the throughput collector's allowlist)."""
+
+    def test_default_empty(self):
+        config = _build_config({})
+        assert config.network.interfaces == []
+
+    def test_parses_from_yaml(self):
+        raw = {"network": {"interfaces": ["eth0", "tailscale0"]}}
+        config = _build_config(raw)
+        assert config.network.interfaces == ["eth0", "tailscale0"]
+
+    def test_env_override_splits_on_commas(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_INTERFACES", "eth0, tailscale0 ,wg0")
+        raw = _apply_env_overrides({})
+        config = _build_config(raw)
+        assert config.network.interfaces == ["eth0", "tailscale0", "wg0"]
+
+    def test_env_override_overrides_yaml(self, monkeypatch):
+        monkeypatch.setenv("BUOY_NETWORK_INTERFACES", "wg0")
+        raw = _apply_env_overrides({"network": {"interfaces": ["eth0"]}})
+        config = _build_config(raw)
+        assert config.network.interfaces == ["wg0"]
+
+    def test_realistic_config_with_interfaces_warns_about_nothing(self, caplog):
+        raw = {"network": {"interfaces": ["eth0", "tailscale0"]}}
+        with caplog.at_level("WARNING", logger="buoy.config"):
+            _warn_unknown_keys(raw)
+        assert caplog.records == []

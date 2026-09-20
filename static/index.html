@@ -24,6 +24,7 @@
     <span class="tag" id="tier-tag">--</span>
     <span class="node-role" id="node-role" style="display:none"></span>
     <span class="access-badge" id="access-badge" style="display:none">tailscale</span>
+    <button type="button" class="health-badge" id="health-badge" style="display:none" aria-haspopup="dialog"></button>
     <div class="uptime">up <span id="uptime">--</span></div>
   </header>
 
@@ -65,6 +66,23 @@
       <div class="value"><span id="nvme-temp">--</span><span class="unit">&deg;C</span></div>
       <div class="bar"><div class="bar-fill" id="nvme-temp-bar" style="width:0%"></div></div>
     </div>
+    <div class="gauge" id="net-gauge" data-detail="network" style="display:none" role="button" tabindex="0" aria-label="Network throughput">
+      <div class="label">Network</div>
+      <div class="value"><span id="net">&#8595; -- &#8593; --</span><span class="unit" id="net-unit"></span></div>
+      <div class="sparkline" id="net-sparkline"></div>
+      <span class="expand-hint" aria-hidden="true">&#9662; detail</span>
+    </div>
+    <div class="gauge" id="gpu-util-gauge" data-detail="gpu" role="button" tabindex="0" style="display:none" aria-label="GPU utilization">
+      <div class="label">GPU</div>
+      <div class="value"><span id="gpu-util">--</span><span class="unit">%</span></div>
+      <div class="bar"><div class="bar-fill" id="gpu-util-bar" style="width:0%"></div></div>
+      <span class="expand-hint" aria-hidden="true">&#9662; detail</span>
+    </div>
+    <div class="gauge no-detail" id="gpu-temp-gauge" style="display:none" aria-label="GPU temperature">
+      <div class="label">GPU Temp</div>
+      <div class="value"><span id="gpu-temp">--</span><span class="unit">&deg;C</span></div>
+      <div class="bar"><div class="bar-fill" id="gpu-temp-bar" style="width:0%"></div></div>
+    </div>
   </section>
 
   <div class="detail-panel" id="detail-panel" aria-live="polite">
@@ -105,6 +123,27 @@
     <div class="section-label">Integrations</div>
     <div class="services" id="plugins-grid"></div>
   </section>
+
+  <dialog id="plugin-detail" class="plugin-dialog" aria-labelledby="plugin-detail-title">
+    <div class="plugin-dialog-head">
+      <span class="plugin-dialog-icon" id="plugin-detail-icon" aria-hidden="true">🔌</span>
+      <h2 class="plugin-dialog-title" id="plugin-detail-title">--</h2>
+      <span class="plugin-dialog-dot" id="plugin-detail-dot"></span>
+      <button class="plugin-dialog-close" type="button" aria-label="Close">&#10005;</button>
+      <div class="plugin-dialog-summary" id="plugin-detail-summary"></div>
+      <div class="plugin-dialog-ago" id="plugin-detail-ago"></div>
+    </div>
+    <div class="plugin-dialog-body" id="plugin-detail-body"></div>
+  </dialog>
+
+  <dialog id="health-detail" class="plugin-dialog" aria-labelledby="health-detail-title">
+    <div class="plugin-dialog-head">
+      <span class="plugin-dialog-icon" aria-hidden="true">⚠</span>
+      <h2 class="plugin-dialog-title" id="health-detail-title">System health</h2>
+      <button class="plugin-dialog-close" type="button" aria-label="Close">&#10005;</button>
+    </div>
+    <div class="plugin-dialog-body" id="health-detail-body"></div>
+  </dialog>
 
   <footer id="footer">
     <span id="footer-model">--</span>

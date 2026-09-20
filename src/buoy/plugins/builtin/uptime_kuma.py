@@ -44,7 +44,14 @@ class UptimeKumaPlugin(Plugin):
                 latest = beats[-1]
                 is_up = latest.get("status") == 1
                 name = latest.get("msg", f"Monitor {monitor_id}")
-                monitors.append({"name": name, "up": is_up})
+                monitors.append(
+                    {
+                        "name": name,
+                        "up": is_up,
+                        "time": latest.get("time", ""),
+                        "msg": latest.get("msg", ""),
+                    }
+                )
                 if is_up:
                     up_count += 1
                 else:
@@ -60,10 +67,10 @@ class UptimeKumaPlugin(Plugin):
 
     def demo_data(self) -> PanelData:
         monitors = [
-            {"name": "nas-01", "up": True},
-            {"name": "grafana", "up": True},
-            {"name": "plausible", "up": True},
-            {"name": "pi-cam", "up": True},
+            {"name": "nas-01", "up": True, "time": "2026-08-23 09:14:02", "msg": "200 - OK"},
+            {"name": "grafana", "up": True, "time": "2026-08-23 09:14:05", "msg": "200 - OK"},
+            {"name": "plausible", "up": True, "time": "2026-08-23 09:14:08", "msg": "200 - OK"},
+            {"name": "pi-cam", "up": True, "time": "2026-08-23 09:14:11", "msg": "200 - OK"},
         ]
         return PanelData(
             status="ok",
@@ -84,3 +91,26 @@ class UptimeKumaPlugin(Plugin):
                 ]
             )
         ]
+
+    def render_detail(self, data: PanelData) -> list[dict] | None:
+        monitors = data.detail.get("monitors") or []
+        if not monitors:
+            return [panel.text("No monitors", status="dim")]
+
+        rows = [
+            [
+                panel.cell(m.get("name", "")),
+                panel.cell(
+                    "Up" if m.get("up") else "Down", status="ok" if m.get("up") else "error"
+                ),
+                panel.cell(m.get("time", ""), status="dim"),
+                panel.cell(m.get("msg", ""), wrap=True),
+            ]
+            for m in monitors
+        ]
+        blocks: list[dict] = [panel.table(["Monitor", "Status", "Last heartbeat", "Message"], rows)]
+
+        url = self.config.get("url", "")
+        if url:
+            blocks.append(panel.keyvalue([{"label": "Status page", "value": url, "href": url}]))
+        return blocks

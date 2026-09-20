@@ -409,6 +409,24 @@ def test_repeated_lifespan_starts_clean_and_reinitializes_every_resource():
     _assert_reset(state)
 
 
+def test_capability_task_runs_on_startup_and_is_cancelled_and_cleared_on_shutdown():
+    app = create_app(_make_config("alpha"))
+    state = app.state.buoy
+
+    with TestClient(app) as client:
+        assert state.background_tasks
+        assert any(
+            task.get_coro().__name__ == "_capability_loop" for task in state.background_tasks
+        )
+        # Round-trip a request to give the event loop a chance to run the
+        # capability task's first iteration before asserting on its result.
+        client.get("/api/health")
+        assert state.capabilities
+
+    assert state.capabilities == {}
+    assert state.background_tasks == []
+
+
 def test_removed_module_global_attributes_are_absent():
     for name in (
         "_config",

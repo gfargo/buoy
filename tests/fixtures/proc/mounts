@@ -1,0 +1,5 @@
+overlay / overlay rw,relatime,lowerdir=/a,upperdir=/b,workdir=/c 0 0
+proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
+tmpfs /dev tmpfs rw,nosuid,size=65536k,mode=755 0 0
+/dev/sda1 /data ext4 rw,relatime 0 0

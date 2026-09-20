@@ -27,9 +27,15 @@ class DnsFilterPlugin(Plugin):
         config_schema={
             "type": {"type": "string", "required": True},  # pihole | adguard
             "url": {"type": "string", "required": True},
-            "api_key": {"type": "string"},  # Pi-hole v5: topItems token; AdGuard: base64 user:pass
+            "api_key": {
+                "type": "string",
+                "secret": True,
+            },  # Pi-hole v5: topItems token; AdGuard: base64 user:pass
             "username": {"type": "string"},  # AdGuard Basic-auth username
-            "password": {"type": "string"},  # Pi-hole v6 password or AdGuard Basic-auth password
+            "password": {
+                "type": "string",
+                "secret": True,
+            },  # Pi-hole v6 password or AdGuard Basic-auth password
             "version": {"type": "string"},  # Pi-hole version hint: "auto" (default) | "5" | "6"
             "verify_ssl": {"type": "boolean"},
         },
