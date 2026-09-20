@@ -5,10 +5,10 @@
 
 import { initAuth } from './auth.js';
 import { initGauges, updateGauges } from './gauges.js';
-import { initDetail } from './detail.js';
+import { initDetail, setDetailConfig } from './detail.js';
 import { refreshServices } from './services.js';
 import { refreshFleet } from './fleet.js';
-import { refreshPlugins } from './plugins.js';
+import { refreshPlugins, initPluginDetail, openPluginDetailFromHash } from './plugins.js';
 import { connectWebSocket, isWebSocketOpen } from './ws.js';
 import { apiUrl, staticUrl } from './paths.js';
 
@@ -25,7 +25,8 @@ async function fetchConfig() {
     network: { tailnet_domain: '', peers: [] },
     theme: { preset: 'terminal' },
     auth: { enabled: false, type: null },
-    features: { websocket: true, night_mode: 'auto', keyboard_shortcuts: true },
+    features: { websocket: true, night_mode: 'auto', keyboard_shortcuts: true, log_streaming: true },
+    logs: { default_tail: 100, max_tail: 1000 },
     refresh: { stats_interval: 5, services_interval: 30, fleet_interval: 15 },
   };
 }
@@ -83,7 +84,7 @@ const SHORTCUTS = [
   { key: 'r', desc: 'Force refresh stats' },
   { key: 't', desc: 'Toggle light/dark theme' },
   { key: 'f', desc: 'Focus fleet section' },
-  { key: '1–4', desc: 'Open gauge detail panel' },
+  { key: '1–6', desc: 'Open gauge detail panel' },
   { key: 'Esc', desc: 'Close detail panel / help' },
   { key: '?', desc: 'Show this help' },
 ];
@@ -113,6 +114,7 @@ function showShortcutHelp() {
 function initKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (document.querySelector('dialog[open]')) return;
     switch (e.key) {
       case 'r': refreshStats(); break;
       case 't': {
@@ -142,6 +144,8 @@ function initKeyboardShortcuts() {
       case '2': document.querySelector('.gauge[data-detail="memory"]')?.click(); break;
       case '3': document.querySelector('.gauge[data-detail="disk"]')?.click(); break;
       case '4': document.querySelector('.gauge[data-detail="containers"]')?.click(); break;
+      case '5': document.querySelector('.gauge[data-detail="network"]')?.click(); break;
+      case '6': document.querySelector('.gauge[data-detail="gpu"]')?.click(); break;
       case 'Escape': {
         const helpOverlay = document.getElementById('kb-help-overlay');
         if (helpOverlay) { helpOverlay.remove(); break; }
@@ -251,6 +255,7 @@ function applyCustomTheme(custom) {
 async function init() {
   config = await fetchConfig();
   initAuth(config.auth);
+  setDetailConfig(config);
 
   // Apply theme: resolve preset via persisted choice / config / OS preference,
   // then swap the stylesheet if it differs from the default terminal.css that
@@ -295,12 +300,14 @@ async function init() {
   // Initialize modules
   initGauges();
   initDetail();
+  initPluginDetail();
 
   // Initial data fetch
   await refreshStats();
   await refreshServices(config);
   await refreshFleet(config);
   await refreshPlugins();
+  openPluginDetailFromHash();
   await fetchDeployInfo();
 
   // Refresh loops

@@ -12,6 +12,7 @@ from buoy.config import (
     PeerConfig,
     ServiceOverride,
     ServicesConfig,
+    StaticService,
 )
 from buoy.services import discover_services
 
@@ -21,6 +22,7 @@ def _make_config(
     peers=None,
     hidden=None,
     overrides=None,
+    static=None,
     tailnet_domain="tailb82ead.ts.net",
 ):
     config = BuoyConfig()
@@ -33,6 +35,7 @@ def _make_config(
     config.services = ServicesConfig(
         hidden=hidden or [],
         overrides=overrides or {},
+        static=static or [],
     )
     return config
 
@@ -249,6 +252,105 @@ class TestDiscoverServicesLocal:
             result = await discover_services(config, is_tailscale=False)
 
         assert result["local"] == []
+
+
+class TestDiscoverServicesStatic:
+    """Test static (non-Docker) service entries."""
+
+    @pytest.mark.asyncio
+    async def test_static_entry_appended_after_docker(self):
+        static = [StaticService(name="NAS", icon="💾", desc="Synology", url="https://nas.local")]
+        config = _make_config(static=static)
+        containers = [{"name": "grafana", "host_port": 3000}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["grafana", "NAS"]
+        assert result["local"][1]["source"] == "static"
+        assert result["local"][1]["url"] == "https://nas.local"
+        assert result["local"][0]["source"] == "docker"
+
+    @pytest.mark.asyncio
+    async def test_static_entries_survive_no_containers(self):
+        static = [StaticService(name="Router", url="https://router.local")]
+        config = _make_config(static=static)
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=[])
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "Router"
+
+    @pytest.mark.asyncio
+    async def test_health_map_applied_to_matching_entry(self):
+        static = [
+            StaticService(name="NAS", url="https://nas.local", health_check="https://nas.local")
+        ]
+        config = _make_config(static=static)
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=[])
+
+            result = await discover_services(
+                config, is_tailscale=False, health={"NAS": {"status": "error", "latency_ms": 12.3}}
+            )
+
+        svc = result["local"][0]
+        assert svc["status"] == "error"
+        assert svc["latency_ms"] == 12.3
+
+    @pytest.mark.asyncio
+    async def test_missing_health_entry_yields_none_status(self):
+        static = [
+            StaticService(name="NAS", url="https://nas.local", health_check="https://nas.local")
+        ]
+        config = _make_config(static=static)
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=[])
+
+            result = await discover_services(config, is_tailscale=False, health={})
+
+        assert result["local"][0]["status"] is None
+
+    @pytest.mark.asyncio
+    async def test_hidden_does_not_apply_to_static_entries(self):
+        static = [StaticService(name="nas", url="https://nas.local")]
+        config = _make_config(hidden=["nas"], static=static)
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=[])
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "nas"
+
+    @pytest.mark.asyncio
+    async def test_top_services_includes_static_entries_with_url(self):
+        from buoy.services import top_services
+
+        static = [StaticService(name="NAS", url="https://nas.local")]
+        config = _make_config(static=static)
+        containers = [{"name": "grafana", "host_port": 3000}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await top_services(config, is_tailscale=False)
+
+        assert {s["name"] for s in result} == {"grafana", "NAS"}
 
 
 class TestDiscoverServicesNetwork:

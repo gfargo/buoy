@@ -6,6 +6,7 @@ No Docker socket, no /proc, no privileged mode needed.
 
 from __future__ import annotations
 
+import asyncio
 import math
 import random
 import time
@@ -70,6 +71,7 @@ DEMO_PLUGIN_IDS = (
     "jellyfin",
     "proxmox",
     "dns_filter",
+    "arr_stack",
 )
 
 
@@ -225,6 +227,27 @@ class DemoDockerCollector:
         ]
         return {"container": name, "lines": lines}
 
+    async def stream_logs(self, name: str, tail: int = 100, max_line_bytes: int = 8192):
+        """Emit a synthetic log line roughly once a second, forever.
+
+        Mirrors ``DockerCollector.stream_logs``'s shape (an async generator
+        of ``{"stream", "line"}`` dicts) so the frontend viewer and
+        playwright smoke tests can exercise live streaming in demo mode
+        without a real Docker socket.
+        """
+        i = 0
+        while True:
+            await asyncio.sleep(1)
+            i += 1
+            ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            stream = "stderr" if i % 7 == 0 else "stdout"
+            level = "WARN" if stream == "stderr" else "INFO"
+            yield {
+                "stream": stream,
+                "line": f"{ts} {level} [{name}] demo log line {i} — "
+                f"request handled in {random.randint(1, 80)}ms",
+            }
+
     async def restart_container(self, name: str) -> dict:
         return {"success": True, "container": name}
 
@@ -270,6 +293,20 @@ class DemoImageUpdateChecker:
                 "checked_at": now,
             }
             for c in _DEMO_CONTAINERS
+        }
+
+
+class DemoStaticHealthChecker:
+    """Mock static-service health checker — makes no outbound requests."""
+
+    def __init__(self, config: BuoyConfig):
+        self.config = config
+
+    async def check_all(self) -> dict[str, dict]:
+        return {
+            entry.name: {"status": "ok", "latency_ms": round(random.uniform(5, 40), 1)}
+            for entry in self.config.services.static
+            if entry.health_check
         }
 
 
@@ -321,4 +358,94 @@ class DemoDiskCollector:
             ],
             "io_read_gb": round(_sinusoidal(142, 2), 1),
             "io_write_gb": round(_sinusoidal(86, 1), 1),
+        }
+
+
+class DemoNetworkCollector:
+    """Mock network collector: synthetic per-interface throughput, no peers.
+
+    ``collect()`` and ``measure_latency()`` mirror the real collector's
+    peer-polling/latency shape but return empty results (demo mode has no
+    real peers to poll), so ``api_fleet`` and ``_latency_loop`` behave
+    exactly as they did before demo mode had a "network" collector at all.
+    """
+
+    def __init__(self, config: BuoyConfig):
+        self.config = config
+
+    async def collect(self) -> dict:
+        return {"peers": []}
+
+    async def measure_latency(self) -> list:
+        return []
+
+    async def collect_throughput(self) -> dict:
+        rx0 = max(0, _sinusoidal(1_800_000, 900_000, period=180))
+        tx0 = max(0, _sinusoidal(320_000, 160_000, period=180))
+        rx1 = max(0, _sinusoidal(45_000, 30_000, period=240))
+        tx1 = max(0, _sinusoidal(12_000, 8_000, period=240))
+        return {
+            "net": {
+                "primary": "eth0",
+                "rx_bytes_per_sec": round(rx0, 1),
+                "tx_bytes_per_sec": round(tx0, 1),
+                "source": "demo",
+                "interfaces": [
+                    {
+                        "name": "eth0",
+                        "rx_bytes": 128_849_018_880,
+                        "tx_bytes": 42_949_672_960,
+                        "rx_bytes_per_sec": round(rx0, 1),
+                        "tx_bytes_per_sec": round(tx0, 1),
+                        "rx_errors": 0,
+                        "tx_errors": 0,
+                        "rx_dropped": 0,
+                        "tx_dropped": 0,
+                    },
+                    {
+                        "name": "tailscale0",
+                        "rx_bytes": 4_294_967_296,
+                        "tx_bytes": 2_147_483_648,
+                        "rx_bytes_per_sec": round(rx1, 1),
+                        "tx_bytes_per_sec": round(tx1, 1),
+                        "rx_errors": 0,
+                        "tx_errors": 0,
+                        "rx_dropped": 0,
+                        "tx_dropped": 0,
+                    },
+                ],
+            }
+        }
+
+
+class DemoGpuCollector:
+    """Mock GPU collector — one NVIDIA GPU, so the transcoding/ML audience
+    (Jellyfin, Frigate, Ollama) sees a populated GPU panel in `--demo`."""
+
+    def __init__(self, config: BuoyConfig):
+        self.config = config
+
+    async def collect_summary(self) -> dict:
+        return {"gpus": [self._gpu()]}
+
+    async def collect_detail(self) -> dict:
+        return {
+            "gpus": [self._gpu()],
+            "processes": [
+                {"pid": 4821, "name": "ffmpeg", "mem_mb": 1024},
+                {"pid": 5290, "name": "ollama", "mem_mb": 3072},
+            ],
+        }
+
+    def _gpu(self) -> dict:
+        return {
+            "vendor": "nvidia",
+            "index": 0,
+            "name": "NVIDIA GeForce RTX 3060",
+            "util_pct": max(0, min(100, int(_sinusoidal(35, 25, period=180)))),
+            "mem_used_mb": max(500, min(11500, int(_sinusoidal(4200, 1500, period=240)))),
+            "mem_total_mb": 12288,
+            "temp": max(35, min(80, int(_sinusoidal(58, 10, period=200)))),
+            "power_w": round(max(20, min(170, _sinusoidal(95, 40, period=180))), 1),
+            "power_limit_w": 170.0,
         }

@@ -18,7 +18,14 @@ class GitHubPlugin(Plugin):
         icon="🐙",
         description="Notifications & open PRs",
         version="1.0.0",
-        config_schema={"token": {"type": "string", "required": True, "env": "BUOY_GITHUB_TOKEN"}},
+        config_schema={
+            "token": {
+                "type": "string",
+                "required": True,
+                "env": "BUOY_GITHUB_TOKEN",
+                "secret": True,
+            }
+        },
         refresh_interval=300,
     )
 

@@ -17,20 +17,61 @@ class TestText:
         }
 
 
+class TestHeading:
+    def test_defaults(self):
+        assert panel.heading("Recent jobs") == {"type": "heading", "text": "Recent jobs"}
+
+
+class TestLog:
+    def test_defaults(self):
+        block = panel.log(["line one", "line two"])
+        assert block == {
+            "type": "log",
+            "lines": ["line one", "line two"],
+            "status": None,
+        }
+
+    def test_with_status(self):
+        block = panel.log(["error!"], status="error")
+        assert block == {"type": "log", "lines": ["error!"], "status": "error"}
+
+    def test_empty(self):
+        assert panel.log([]) == {"type": "log", "lines": [], "status": None}
+
+    def test_materializes_non_list_iterable(self):
+        block = panel.log(line for line in ("a", "b"))
+        assert block["lines"] == ["a", "b"]
+
+
 class TestKeyvalue:
     def test_tuples(self):
         block = panel.keyvalue([("Label", "Value"), ("Other", "42")])
         assert block == {
             "type": "keyvalue",
             "rows": [
-                {"label": "Label", "value": "Value", "status": None},
-                {"label": "Other", "value": "42", "status": None},
+                {"label": "Label", "value": "Value", "status": None, "href": None},
+                {"label": "Other", "value": "42", "status": None, "href": None},
             ],
         }
 
     def test_dict_rows_with_status(self):
         block = panel.keyvalue([{"label": "Disk errors", "value": "YES", "status": "error"}])
-        assert block["rows"] == [{"label": "Disk errors", "value": "YES", "status": "error"}]
+        assert block["rows"] == [
+            {"label": "Disk errors", "value": "YES", "status": "error", "href": None}
+        ]
+
+    def test_dict_row_with_href(self):
+        block = panel.keyvalue(
+            [{"label": "Monitor", "value": "web-1", "href": "https://example.com/status"}]
+        )
+        assert block["rows"] == [
+            {
+                "label": "Monitor",
+                "value": "web-1",
+                "status": None,
+                "href": "https://example.com/status",
+            }
+        ]
 
     def test_empty(self):
         assert panel.keyvalue([]) == {"type": "keyvalue", "rows": []}
@@ -45,8 +86,20 @@ class TestTable:
             "columns": ["Device", "Temp"],
             "rows": [
                 [
-                    {"value": "sda", "status": "ok", "truncate": False, "mono": False},
-                    {"value": 42, "status": None, "truncate": False, "mono": False},
+                    {
+                        "value": "sda",
+                        "status": "ok",
+                        "truncate": False,
+                        "mono": False,
+                        "wrap": False,
+                    },
+                    {
+                        "value": 42,
+                        "status": None,
+                        "truncate": False,
+                        "mono": False,
+                        "wrap": False,
+                    },
                 ]
             ],
         }
@@ -59,6 +112,11 @@ class TestTable:
         c = panel.cell("a1b2c3", mono=True)
         assert c["mono"] is True
         assert panel.cell("plain")["mono"] is False
+
+    def test_cell_wrap(self):
+        c = panel.cell("a very long message", wrap=True)
+        assert c["wrap"] is True
+        assert panel.cell("plain")["wrap"] is False
 
 
 class TestBadges:

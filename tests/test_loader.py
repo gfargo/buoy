@@ -1067,6 +1067,504 @@ class TestPluginCollection:
 
 
 # =============================================================================
+# get_plugin_payload / detail view
+# =============================================================================
+
+
+class TestPluginDetailPayload:
+    """Test get_plugin_payload(detail=...) and the not-loaded stub."""
+
+    def test_non_detail_has_no_detail_panel_or_manifest(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok", summary="Fake data")}
+
+        payload = mgr.get_plugin_payload("fake")
+
+        assert "detail_panel" not in payload
+        assert "manifest" not in payload
+
+    @pytest.mark.asyncio
+    async def test_collect_all_now_entries_have_no_detail_panel(self):
+        """Guards the 'keep the 60s poll small' requirement across the whole list."""
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin(), "another": AnotherFakePlugin()}
+        mgr._latest_data = {
+            "fake": PanelData(status="ok", summary="Fake data"),
+            "another": PanelData(status="warn", summary="Warning"),
+        }
+
+        result = await mgr.collect_all_now()
+
+        for entry in result.values():
+            assert "detail_panel" not in entry
+            assert "manifest" not in entry
+
+    def test_detail_defaults_to_render_output(self):
+        class RenderOnlyPlugin(Plugin):
+            manifest = PluginManifest(id="render_only", name="Render Only")
+
+            def render(self, data):
+                return [{"type": "text", "value": data.summary}]
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"render_only": RenderOnlyPlugin()}
+        mgr._latest_data = {"render_only": PanelData(summary="hi")}
+
+        payload = mgr.get_plugin_payload("render_only", detail=True)
+
+        assert payload["detail_panel"] == payload["panel"]
+
+    def test_detail_uses_render_detail_override(self):
+        class OverridingPlugin(Plugin):
+            manifest = PluginManifest(id="overriding", name="Overriding")
+
+            def render(self, data):
+                return [{"type": "text", "value": "capped"}]
+
+            def render_detail(self, data):
+                return [{"type": "text", "value": "full"}]
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"overriding": OverridingPlugin()}
+        mgr._latest_data = {"overriding": PanelData()}
+
+        payload = mgr.get_plugin_payload("overriding", detail=True)
+
+        assert payload["panel"] == [{"type": "text", "value": "capped"}]
+        assert payload["detail_panel"] == [{"type": "text", "value": "full"}]
+
+    def test_render_detail_error_falls_back_to_panel_and_logs(self, caplog):
+        class BrokenDetailPlugin(Plugin):
+            manifest = PluginManifest(id="broken_detail", name="Broken Detail")
+
+            def render(self, data):
+                return [{"type": "text", "value": "capped"}]
+
+            def render_detail(self, data):
+                raise RuntimeError("boom")
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"broken_detail": BrokenDetailPlugin()}
+        mgr._latest_data = {"broken_detail": PanelData()}
+
+        with caplog.at_level(logging.WARNING, logger="buoy.plugins"):
+            payload = mgr.get_plugin_payload("broken_detail", detail=True)
+
+        assert payload["detail_panel"] == payload["panel"]
+        assert any("broken_detail" in r.message for r in caplog.records)
+
+    def test_render_and_render_detail_both_raising_stay_none(self):
+        class DoubleBrokenPlugin(Plugin):
+            manifest = PluginManifest(id="double_broken", name="Double Broken")
+
+            def render(self, data):
+                raise RuntimeError("render boom")
+
+            def render_detail(self, data):
+                raise RuntimeError("detail boom")
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"double_broken": DoubleBrokenPlugin()}
+        mgr._latest_data = {"double_broken": PanelData()}
+
+        payload = mgr.get_plugin_payload("double_broken", detail=True)
+
+        assert payload["panel"] is None
+        assert payload["detail_panel"] is None
+
+    def test_unknown_id_returns_none(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        assert mgr.get_plugin_payload("nope") is None
+        assert mgr.get_plugin_payload("nope", detail=True) is None
+
+    def test_pending_plugin_in_detail_mode_does_not_crash(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        # No entry in _latest_data — first collect() hasn't completed yet.
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["status"] == "pending"
+        assert payload["detail_panel"] is None
+
+    def test_manifest_reflects_effective_refresh_interval_and_source(self):
+        config = _make_config(
+            builtin={"fake": PluginEntry(enabled=True, refresh_interval=90)},
+        )
+        config.refresh = RefreshConfig(plugins_interval=10)
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._plugin_sources = {"fake": "builtin"}
+        mgr._latest_data = {"fake": PanelData(status="ok")}
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["manifest"]["source"] == "builtin"
+        assert payload["manifest"]["effective_refresh_interval"] == 90
+        assert payload["manifest"]["refresh_interval"] == FakePlugin.manifest.refresh_interval
+
+    def test_manifest_floor_from_global_refresh_interval(self):
+        config = _make_config(builtin={"fake": PluginEntry(enabled=True)})
+        config.refresh = RefreshConfig(plugins_interval=300)
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}  # manifest.refresh_interval = 60
+        mgr._plugin_sources = {"fake": "builtin"}
+        mgr._latest_data = {"fake": PanelData(status="ok")}
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["manifest"]["effective_refresh_interval"] == 300
+
+    def test_manifest_source_none_when_unrecorded(self):
+        """A plugin injected directly (bypassing registration) has no known source."""
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok")}
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["manifest"]["source"] is None
+
+    def test_not_loaded_stub_detail_has_none_panel_and_manifest(self):
+        config = _make_config(builtin={"broken": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+
+        payload = mgr.get_plugin_or_stub_payload("broken", detail=True)
+
+        assert payload["loaded"] is False
+        assert payload["detail_panel"] is None
+        assert payload["manifest"] is None
+
+    def test_get_plugin_or_stub_payload_unknown_id_returns_none(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        assert mgr.get_plugin_or_stub_payload("nope", detail=True) is None
+
+    def test_get_plugin_or_stub_payload_prefers_loaded_plugin(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="ok", summary="Fake data")}
+
+        payload = mgr.get_plugin_or_stub_payload("fake", detail=True)
+
+        assert payload["loaded"] is True
+
+
+# =============================================================================
+# Health timing (last_attempt_at / last_collect_duration_ms) — OSS-2718
+# =============================================================================
+
+
+class TestHealthTiming:
+    """_safe_collect records last_attempt_at and last_collect_duration_ms."""
+
+    @pytest.mark.asyncio
+    async def test_success_records_attempt_and_duration(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        await mgr._safe_collect("fake", FakePlugin())
+
+        health = mgr._health["fake"]
+        assert isinstance(health["last_attempt_at"], float)
+        assert isinstance(health["last_collect_duration_ms"], int)
+        assert health["last_collect_duration_ms"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_failure_records_attempt_and_duration(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        await mgr._safe_collect("failing", FailingPlugin())
+
+        health = mgr._health["failing"]
+        assert isinstance(health["last_attempt_at"], float)
+        assert isinstance(health["last_collect_duration_ms"], int)
+
+    @pytest.mark.asyncio
+    async def test_timeout_records_attempt_duration_and_timed_out_error(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        class SlowPlugin(Plugin):
+            manifest = PluginManifest(id="slow", name="Slow")
+
+            async def collect(self):
+                await asyncio.sleep(100)
+                return PanelData()
+
+        with patch("buoy.plugins.loader.asyncio.wait_for", side_effect=TimeoutError()):
+            await mgr._safe_collect("slow", SlowPlugin())
+
+        health = mgr._health["slow"]
+        assert health["last_error"] == "collect timed out"
+        assert isinstance(health["last_attempt_at"], float)
+        assert isinstance(health["last_collect_duration_ms"], int)
+
+    def test_detail_payload_surfaces_timed_out_flag_and_timeout_seconds(self):
+        from buoy.plugins.loader import COLLECT_TIMEOUT
+
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="error")}
+        mgr._health["fake"] = {
+            "last_collect_at": None,
+            "last_attempt_at": 123.0,
+            "last_collect_duration_ms": 30001,
+            "last_error": "collect timed out",
+            "consecutive_failures": 1,
+        }
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["health"]["timed_out"] is True
+        assert payload["health"]["timeout_seconds"] == COLLECT_TIMEOUT
+        assert payload["health"]["last_attempt_at"] == 123.0
+        assert payload["health"]["last_collect_duration_ms"] == 30001
+
+    def test_detail_payload_timed_out_false_for_other_errors(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="error")}
+        mgr._health["fake"] = {
+            "last_collect_at": None,
+            "last_attempt_at": 1.0,
+            "last_collect_duration_ms": 5,
+            "last_error": "boom",
+            "consecutive_failures": 1,
+        }
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["health"]["timed_out"] is False
+
+
+# =============================================================================
+# collect_once() — manual refresh-now (OSS-2718)
+# =============================================================================
+
+
+class TestCollectOnce:
+    @pytest.mark.asyncio
+    async def test_unknown_plugin_returns_unknown(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+
+        assert await mgr.collect_once("nope") == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_disabled_plugin_returns_disabled(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._disabled_ids = {"fake"}
+
+        assert await mgr.collect_once("fake") == "disabled"
+
+    @pytest.mark.asyncio
+    async def test_demo_mode_returns_demo_without_calling_collect(self):
+        config = _make_config(features=FeaturesConfig(demo_mode=True))
+        mgr = PluginManager(config)
+        plugin = MagicMock(spec=FakePlugin)
+        plugin.collect = AsyncMock(return_value=PanelData())
+        mgr._plugins = {"fake": plugin}
+
+        result = await mgr.collect_once("fake")
+
+        assert result == "demo"
+        plugin.collect.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_busy_while_collect_in_flight(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        release = asyncio.Event()
+
+        class ParkedPlugin(Plugin):
+            manifest = PluginManifest(id="parked", name="Parked")
+            calls = 0
+
+            async def collect(self):
+                ParkedPlugin.calls += 1
+                await release.wait()
+                return PanelData(status="ok")
+
+        plugin = ParkedPlugin()
+        mgr._plugins = {"parked": plugin}
+
+        task = asyncio.create_task(mgr.collect_once("parked"))
+        while ParkedPlugin.calls < 1:  # let the collect actually start
+            await asyncio.sleep(0)
+
+        assert await mgr.collect_once("parked") == "busy"
+        assert ParkedPlugin.calls == 1
+
+        release.set()
+        assert await task == "ok"
+
+    @pytest.mark.asyncio
+    async def test_ok_refreshes_latest_data(self):
+        config = _make_config()
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._latest_data = {"fake": PanelData(status="pending", summary="Collecting…")}
+
+        result = await mgr.collect_once("fake")
+
+        assert result == "ok"
+        assert mgr._latest_data["fake"].status == "ok"
+        assert mgr._latest_data["fake"].summary == "Fake data"
+
+
+# =============================================================================
+# _config_rows() — per-key config provenance (OSS-2718)
+# =============================================================================
+
+
+class TestConfigRows:
+    def _plugin_with_schema(self, plugin_id, schema, settings):
+        class SchemaPlugin(Plugin):
+            manifest = PluginManifest(id=plugin_id, name="Schema Plugin", config_schema=schema)
+
+        plugin = SchemaPlugin()
+        plugin.configure(dict(settings))
+        return plugin
+
+    def test_source_yaml_when_set_via_entry_settings(self):
+        schema = {"token": {"type": "string", "secret": True}}
+        config = _make_config(
+            builtin={"github": PluginEntry(enabled=True, settings={"token": "s3cr3t"})}
+        )
+        mgr = PluginManager(config)
+        plugin = self._plugin_with_schema("github", schema, {"token": "s3cr3t"})
+
+        rows = mgr._config_rows("github", plugin)
+
+        assert rows[0]["source"] == "yaml"
+        assert rows[0]["secret"] is True
+        assert rows[0]["value"] == "***REDACTED***"
+
+    def test_source_default_when_unset_but_schema_has_default(self):
+        schema = {"verify_ssl": {"type": "boolean", "default": True}}
+        config = _make_config(builtin={"fake": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        plugin = self._plugin_with_schema("fake", schema, {"verify_ssl": True})
+
+        rows = mgr._config_rows("fake", plugin)
+
+        assert rows[0]["source"] == "default"
+
+    def test_source_unset_when_no_default_and_not_configured(self):
+        schema = {"nickname": {"type": "string"}}
+        config = _make_config(builtin={"fake": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        plugin = self._plugin_with_schema("fake", schema, {})
+
+        rows = mgr._config_rows("fake", plugin)
+
+        assert rows[0]["source"] == "unset"
+
+    def test_source_env_canonical_var(self, monkeypatch):
+        monkeypatch.setenv("BUOY_PLUGIN_GITHUB_TOKEN", "from-env")
+        schema = {"token": {"type": "string", "secret": True}}
+        config = _make_config(builtin={"github": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        plugin = self._plugin_with_schema("github", schema, {"token": "from-env"})
+
+        rows = mgr._config_rows("github", plugin)
+
+        assert rows[0]["source"] == "env:BUOY_PLUGIN_GITHUB_TOKEN"
+        assert rows[0]["value"] == "***REDACTED***"
+
+    def test_source_env_hint_var(self, monkeypatch):
+        monkeypatch.delenv("BUOY_PLUGIN_GITHUB_TOKEN", raising=False)
+        monkeypatch.setenv("BUOY_GITHUB_TOKEN", "from-hint")
+        schema = {"token": {"type": "string", "required": True, "env": "BUOY_GITHUB_TOKEN"}}
+        config = _make_config(builtin={"github": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        plugin = self._plugin_with_schema("github", schema, {"token": "from-hint"})
+
+        rows = mgr._config_rows("github", plugin)
+
+        assert rows[0]["source"] == "env:BUOY_GITHUB_TOKEN"
+
+    def test_secret_via_key_name_heuristic_without_explicit_flag(self):
+        schema = {"api_key": {"type": "string", "required": True}}
+        config = _make_config(
+            builtin={"immich": PluginEntry(enabled=True, settings={"api_key": "x"})}
+        )
+        mgr = PluginManager(config)
+        plugin = self._plugin_with_schema("immich", schema, {"api_key": "x"})
+
+        rows = mgr._config_rows("immich", plugin)
+
+        assert rows[0]["secret"] is True
+        assert rows[0]["value"] == "***REDACTED***"
+
+    def test_proxmox_token_id_not_redacted_via_explicit_flag(self):
+        schema = {"token_id": {"type": "string", "required": True, "secret": False}}
+        config = _make_config(
+            builtin={"proxmox": PluginEntry(enabled=True, settings={"token_id": "abc-123"})}
+        )
+        mgr = PluginManager(config)
+        plugin = self._plugin_with_schema("proxmox", schema, {"token_id": "abc-123"})
+
+        rows = mgr._config_rows("proxmox", plugin)
+
+        assert rows[0]["secret"] is False
+        assert rows[0]["value"] == "abc-123"
+
+    def test_non_dict_schema_entry_skipped_without_crashing(self):
+        schema = {"weird": "not-a-dict"}
+        config = _make_config(builtin={"fake": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        plugin = self._plugin_with_schema("fake", schema, {})
+
+        rows = mgr._config_rows("fake", plugin)
+
+        assert rows[0]["key"] == "weird"
+        assert rows[0]["required"] is False
+
+    def test_empty_secret_value_not_redacted(self):
+        schema = {"token": {"type": "string", "secret": True}}
+        config = _make_config(builtin={"github": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        plugin = self._plugin_with_schema("github", schema, {"token": ""})
+
+        rows = mgr._config_rows("github", plugin)
+
+        assert rows[0]["value"] == ""
+
+    def test_detail_payload_includes_config_errors_and_disabled(self):
+        config = _make_config(builtin={"fake": PluginEntry(enabled=True)})
+        mgr = PluginManager(config)
+        mgr._plugins = {"fake": FakePlugin()}
+        mgr._disabled_ids = {"fake"}
+        mgr._config_errors = {"fake": ["fake: missing required field 'token'"]}
+        mgr._latest_data = {"fake": PanelData(status="disabled")}
+
+        payload = mgr.get_plugin_payload("fake", detail=True)
+
+        assert payload["disabled"] is True
+        assert payload["config_errors"] == ["fake: missing required field 'token'"]
+
+
+# =============================================================================
 # Frontend JS
 # =============================================================================
 

@@ -148,6 +148,7 @@ class TestTriggerDevPlugin:
             "label": "Last failed",
             "value": "task-bad",
             "status": "warn",
+            "href": None,
         }
         assert blocks[1]["type"] == "badges"
         labels = {b["label"]: b["status"] for b in blocks[1]["items"]}

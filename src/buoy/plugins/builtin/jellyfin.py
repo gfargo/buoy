@@ -21,7 +21,7 @@ class JellyfinPlugin(Plugin):
         config_schema={
             "url": {"type": "string", "required": True},
             # X-Emby-Token is the broadly supported auth header for Jellyfin instances
-            "api_key": {"type": "string", "required": True},
+            "api_key": {"type": "string", "required": True, "secret": True},
         },
         refresh_interval=60,
     )

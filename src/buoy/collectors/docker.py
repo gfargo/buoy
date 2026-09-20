@@ -379,6 +379,84 @@ class DockerCollector:
         lines = sorted(stdout_lines + stderr_lines, key=_log_line_sort_key)
         return {"container": name, "lines": lines[-tail:]}
 
+    async def stream_logs(self, name: str, tail: int = 100, max_line_bytes: int = 8192):
+        """Follow container logs, yielding ``{"stream": "stdout"|"stderr", "line": str}``.
+
+        Unlike ``get_logs``/``_run``, this is a long-running follow (``docker
+        logs --follow``), not a one-shot call bounded by ``communicate``'s
+        timeout — the caller is responsible for stopping iteration (e.g. by
+        closing the async generator), which cancels the pump tasks and kills
+        the child process in the ``finally`` block below.
+        """
+        if not _valid_name(name):
+            raise ValueError("invalid container name")
+
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "logs",
+            "--follow",
+            "--timestamps",
+            "--tail",
+            str(int(tail)),
+            name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=max_line_bytes * 2,
+        )
+
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        sentinel = object()
+
+        async def _pump(stream, label: str) -> None:
+            try:
+                while True:
+                    try:
+                        raw = await stream.readline()
+                    except (ValueError, asyncio.LimitOverrunError):
+                        # Line exceeded the stream's internal buffer limit.
+                        # readline() already discarded the offending bytes
+                        # from its buffer, so the next call resumes cleanly.
+                        await queue.put({"stream": label, "line": "…[truncated: line too long]"})
+                        continue
+                    if not raw:
+                        break
+                    line = raw.decode("utf-8", errors="replace").rstrip("\n")
+                    encoded = line.encode("utf-8")
+                    if len(encoded) > max_line_bytes:
+                        # Truncate on the encoded bytes (not decoded chars) so
+                        # multi-byte UTF-8 content honors the documented byte
+                        # budget; errors="ignore" drops a boundary-split char.
+                        line = (
+                            encoded[:max_line_bytes].decode("utf-8", errors="ignore")
+                            + "…[truncated]"
+                        )
+                    await queue.put({"stream": label, "line": line})
+            finally:
+                await queue.put(sentinel)
+
+        pumps = [
+            asyncio.create_task(_pump(proc.stdout, "stdout")),
+            asyncio.create_task(_pump(proc.stderr, "stderr")),
+        ]
+
+        try:
+            finished = 0
+            while finished < len(pumps):
+                item = await queue.get()
+                if item is sentinel:
+                    finished += 1
+                    continue
+                yield item
+        finally:
+            for task in pumps:
+                task.cancel()
+            await asyncio.gather(*pumps, return_exceptions=True)
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+
     async def restart_container(self, name: str) -> dict:
         """Restart a container by name."""
         if not _valid_name(name):

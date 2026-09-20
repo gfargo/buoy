@@ -21,7 +21,7 @@ class PlanePlugin(Plugin):
         description="Current cycle progress",
         version="1.0.0",
         config_schema={
-            "api_key": {"type": "string", "required": True},
+            "api_key": {"type": "string", "required": True, "secret": True},
             "url": {"type": "string", "required": True},
             "workspace": {"type": "string", "required": True},
             "project": {"type": "string", "required": True},

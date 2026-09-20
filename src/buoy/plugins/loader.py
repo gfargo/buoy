@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from buoy.config import PluginEntry
 from buoy.demo import DEMO_PLUGIN_IDS
 from buoy.plugins.protocol import PanelData, Plugin
+from buoy.redaction import is_secret_key
 
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
@@ -34,6 +35,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger("buoy.plugins")
 
 ENTRY_POINT_GROUP = "buoy.plugins"
+
+# Wall-clock cap on a single collect() call, enforced by _safe_collect. Shared
+# with the detail payload (health.timeout_seconds) so the frontend's "timed
+# out after Ns" note can never drift from the value actually enforced here.
+COLLECT_TIMEOUT = 30
+
+
+def _env_origin(plugin_id: str, key: str, meta: dict[str, Any] | None) -> str | None:
+    """Return the env var name that would override *key* for *plugin_id*, if any is set.
+
+    Checks the canonical ``BUOY_PLUGIN_<ID>_<KEY>`` var first, then the
+    schema's per-key ``env`` hint — same precedence ``resolve_plugin_env``
+    applies, so the two can't diverge. Returns None when neither is set,
+    regardless of whether either name is declared.
+    """
+    canonical = f"BUOY_PLUGIN_{plugin_id.upper()}_{key.upper()}"
+    if os.environ.get(canonical) is not None:
+        return canonical
+    if isinstance(meta, dict):
+        hint = meta.get("env")
+        if hint and os.environ.get(hint) is not None:
+            return hint
+    return None
 
 
 def resolve_plugin_env(
@@ -51,16 +75,10 @@ def resolve_plugin_env(
     declared config_schema is simply unaffected by env overrides.
     """
     result = dict(settings)
-    plugin_prefix = f"BUOY_PLUGIN_{plugin_id.upper()}_"
     for key, meta in schema.items():
-        canonical = f"{plugin_prefix}{key.upper()}"
-        value = os.environ.get(canonical)
-        if value is None and isinstance(meta, dict):
-            hint = meta.get("env")
-            if hint:
-                value = os.environ.get(hint)
-        if value is not None:
-            result[key] = value
+        origin = _env_origin(plugin_id, key, meta if isinstance(meta, dict) else None)
+        if origin is not None:
+            result[key] = os.environ.get(origin)
     return result
 
 
@@ -158,6 +176,16 @@ class PluginManager:
         # setup() later failed. Lets _configured_not_loaded show a real name
         # instead of reusing the config key.
         self._builtin_names: dict[str, str] = {}
+        # id -> "builtin" | "entrypoint" | "dir", recorded at registration time.
+        self._plugin_sources: dict[str, str] = {}
+        # ids with a collect() currently in flight (scheduled loop or a manual
+        # refresh-now), so a second collect_once() call can report "busy"
+        # instead of running concurrently with itself.
+        self._collecting: set[str] = set()
+        # id -> config validation errors, mirrored here (also stored in the
+        # "disabled" PanelData.detail) so the detail payload can show the
+        # full list without re-deriving it from PanelData.
+        self._config_errors: dict[str, list[str]] = {}
 
     @property
     def plugins(self) -> dict[str, Plugin]:
@@ -214,6 +242,7 @@ class PluginManager:
                 except Exception:
                     logger.debug("%s rollback teardown failed", plugin_id, exc_info=True)
                 del self._plugins[plugin_id]
+                self._plugin_sources.pop(plugin_id, None)
 
         # 5. Start collection loops (skip those disabled by config validation)
         for plugin_id, plugin in self._plugins.items():
@@ -271,6 +300,163 @@ class PluginManager:
             except Exception:
                 logger.debug("%s teardown failed", plugin_id, exc_info=True)
 
+    def get_plugin_payload(self, plugin_id: str, *, detail: bool = False) -> dict[str, Any] | None:
+        """Return the panel payload for one registered plugin, or None if unknown.
+
+        Shared by ``collect_all_now()`` (list view, ``detail=False``) and the
+        ``GET /api/plugins/{id}`` route (``detail=True``). With ``detail=True``,
+        adds ``detail_panel`` (from ``render_detail()``, falling back to
+        ``panel`` and logging on exception, mirroring the ``render()``
+        handling below) and ``manifest``. Keeping these keys out of the
+        non-detail payload is what keeps the 60s poll payload small.
+        """
+        plugin = self._plugins.get(plugin_id)
+        if plugin is None:
+            return None
+        data = self._latest_data.get(plugin_id)
+        if data is None:
+            data = PanelData(status="pending", summary="Collecting…")
+        try:
+            panel = plugin.render(data)
+        except Exception as e:
+            logger.warning("%s render() failed: %s", plugin_id, e, exc_info=True)
+            panel = None
+        health = self._health.get(plugin_id, {})
+        payload = {
+            "id": plugin_id,
+            "name": plugin.manifest.name,
+            "icon": plugin.manifest.icon,
+            "status": data.status,
+            "summary": data.summary,
+            "detail": data.detail,
+            "panel": panel,
+            "loaded": True,
+            "last_collect_at": health.get("last_collect_at"),
+            "last_error": health.get("last_error"),
+            "consecutive_failures": health.get("consecutive_failures", 0),
+        }
+        if detail:
+            try:
+                detail_panel = plugin.render_detail(data)
+            except Exception as e:
+                logger.warning("%s render_detail() failed: %s", plugin_id, e, exc_info=True)
+                detail_panel = panel
+            entry = self.config.plugins.user.get(plugin_id) or self.config.plugins.builtin.get(
+                plugin_id
+            )
+            payload["detail_panel"] = detail_panel
+            payload["manifest"] = {
+                "id": plugin_id,
+                "name": plugin.manifest.name,
+                "icon": plugin.manifest.icon,
+                "description": plugin.manifest.description,
+                "version": plugin.manifest.version,
+                "source": self._plugin_sources.get(plugin_id),
+                "refresh_interval": plugin.manifest.refresh_interval,
+                "refresh_interval_override": entry.refresh_interval if entry else None,
+                "plugins_interval_floor": self.config.refresh.plugins_interval,
+                "effective_refresh_interval": self._resolve_interval(plugin),
+            }
+            payload["health"] = {
+                "last_collect_at": health.get("last_collect_at"),
+                "last_attempt_at": health.get("last_attempt_at"),
+                "last_collect_duration_ms": health.get("last_collect_duration_ms"),
+                "last_error": health.get("last_error"),
+                "consecutive_failures": health.get("consecutive_failures", 0),
+                "timed_out": health.get("last_error") == "collect timed out",
+                "timeout_seconds": COLLECT_TIMEOUT,
+            }
+            payload["config"] = self._config_rows(plugin_id, plugin)
+            payload["config_errors"] = self._config_errors.get(plugin_id, [])
+            payload["disabled"] = plugin_id in self._disabled_ids
+        return payload
+
+    def _config_rows(self, plugin_id: str, plugin: Plugin) -> list[dict[str, Any]]:
+        """Return one row per ``config_schema`` key: effective value, origin, secrecy.
+
+        "Effective value" is the coerced value from ``plugin.config`` (post
+        env-overlay, post validate_plugin_config), not the raw YAML — this is
+        what the plugin actually uses. Secret values are redacted regardless
+        of origin. ``source`` mirrors the precedence resolve_plugin_env
+        applies: canonical env var > per-key env hint > YAML > schema default
+        > unset.
+        """
+        entry = self.config.plugins.user.get(plugin_id) or self.config.plugins.builtin.get(
+            plugin_id
+        )
+        rows = []
+        for key, meta in (plugin.manifest.config_schema or {}).items():
+            meta = meta if isinstance(meta, dict) else {}
+            value = (plugin.config or {}).get(key)
+            secret = is_secret_key(key, meta)
+            env_origin = _env_origin(plugin_id, key, meta)
+            if env_origin:
+                source = f"env:{env_origin}"
+            elif entry and key in entry.settings:
+                source = "yaml"
+            elif "default" in meta:
+                source = "default"
+            else:
+                source = "unset"
+            rows.append(
+                {
+                    "key": key,
+                    "value": "***REDACTED***" if secret and value not in (None, "") else value,
+                    "secret": secret,
+                    "source": source,
+                    "required": bool(meta.get("required")),
+                    "type": meta.get("type"),
+                }
+            )
+        return rows
+
+    def _not_loaded_stub(
+        self, plugin_id: str, name: str, *, detail: bool = False
+    ) -> dict[str, Any]:
+        """Return the ``loaded: False`` stub for a configured-but-not-loaded builtin.
+
+        No plugin instance exists in this case, so detail mode gets ``None``
+        for ``detail_panel``/``manifest`` rather than guessed values.
+        """
+        stub = {
+            "id": plugin_id,
+            "name": name,
+            "icon": "🔌",
+            "status": "error",
+            "summary": "Failed to load",
+            "detail": {},
+            "panel": None,
+            "loaded": False,
+            "last_collect_at": None,
+            "last_error": None,
+            "consecutive_failures": 0,
+        }
+        if detail:
+            stub["detail_panel"] = None
+            stub["manifest"] = None
+            stub["health"] = None
+            stub["config"] = []
+            stub["config_errors"] = []
+            stub["disabled"] = False
+        return stub
+
+    def get_plugin_or_stub_payload(
+        self, plugin_id: str, *, detail: bool = False
+    ) -> dict[str, Any] | None:
+        """Return a plugin's payload, its not-loaded stub, or None if unknown.
+
+        Used by the ``GET /api/plugins/{id}`` route, which needs the same
+        "loaded vs. configured-but-not-loaded vs. unknown" resolution that
+        ``collect_all_now()`` applies across all plugins, but for one id.
+        """
+        payload = self.get_plugin_payload(plugin_id, detail=detail)
+        if payload is not None:
+            return payload
+        for stub_id, name in self._configured_not_loaded():
+            if stub_id == plugin_id:
+                return self._not_loaded_stub(stub_id, name, detail=detail)
+        return None
+
     async def collect_all_now(self) -> dict[str, dict]:
         """Return current panel data for every registered plugin.
 
@@ -284,44 +470,11 @@ class PluginManager:
         vanishing.
         """
         result = {}
-        for plugin_id, plugin in self._plugins.items():
-            data = self._latest_data.get(plugin_id)
-            if data is None:
-                data = PanelData(status="pending", summary="Collecting…")
-            try:
-                panel = plugin.render(data)
-            except Exception as e:
-                logger.warning("%s render() failed: %s", plugin_id, e, exc_info=True)
-                panel = None
-            health = self._health.get(plugin_id, {})
-            result[plugin_id] = {
-                "id": plugin_id,
-                "name": plugin.manifest.name,
-                "icon": plugin.manifest.icon,
-                "status": data.status,
-                "summary": data.summary,
-                "detail": data.detail,
-                "panel": panel,
-                "loaded": True,
-                "last_collect_at": health.get("last_collect_at"),
-                "last_error": health.get("last_error"),
-                "consecutive_failures": health.get("consecutive_failures", 0),
-            }
+        for plugin_id in self._plugins:
+            result[plugin_id] = self.get_plugin_payload(plugin_id)
 
         for plugin_id, name in self._configured_not_loaded():
-            result[plugin_id] = {
-                "id": plugin_id,
-                "name": name,
-                "icon": "🔌",
-                "status": "error",
-                "summary": "Failed to load",
-                "detail": {},
-                "panel": None,
-                "loaded": False,
-                "last_collect_at": None,
-                "last_error": None,
-                "consecutive_failures": 0,
-            }
+            result[plugin_id] = self._not_loaded_stub(plugin_id, name)
         return result
 
     def _configured_not_loaded(self) -> list[tuple[str, str]]:
@@ -388,7 +541,7 @@ class PluginManager:
         """
         for plugin_class in self._iter_entrypoint_classes():
             try:
-                self._register_config_gated_plugin(plugin_class, source="entry point")
+                self._register_config_gated_plugin(plugin_class, source="entrypoint")
             except Exception as e:
                 logger.warning(
                     "Failed to register entry point plugin '%s': %s",
@@ -419,7 +572,7 @@ class PluginManager:
                 # plugin has accepted its configuration. A failed override must
                 # leave the previously registered plugin intact and active.
                 instance.configure(settings)
-                self._warn_on_collision(plugin_id, source="user directory")
+                self._warn_on_collision(plugin_id, source="dir")
                 if errors and self._demo:
                     logger.debug(
                         "%s: ignoring config errors in demo mode: %s",
@@ -428,6 +581,7 @@ class PluginManager:
                     )
                     self._disabled_ids.discard(plugin_id)
                     self._latest_data.pop(plugin_id, None)
+                    self._config_errors.pop(plugin_id, None)
                 elif errors:
                     self._disabled_ids.add(plugin_id)
                     self._latest_data[plugin_id] = PanelData(
@@ -435,10 +589,13 @@ class PluginManager:
                         summary=f"Config error: {'; '.join(errors)}",
                         detail={"errors": errors},
                     )
+                    self._config_errors[plugin_id] = errors
                 else:
                     self._disabled_ids.discard(plugin_id)
                     self._latest_data.pop(plugin_id, None)
+                    self._config_errors.pop(plugin_id, None)
                 self._plugins[plugin_id] = instance
+                self._plugin_sources[plugin_id] = "dir"
             except Exception as e:
                 logger.warning(
                     "Failed to register user plugin '%s': %s",
@@ -447,18 +604,22 @@ class PluginManager:
                     exc_info=True,
                 )
 
+    _SOURCE_LABELS = {"builtin": "builtin", "entrypoint": "entry point", "dir": "user directory"}
+
     def _warn_on_collision(self, plugin_id: str, source: str) -> None:
         """Log when a plugin id from *source* overwrites an already-registered one.
 
         Precedence is defined by load order in ``start()``: builtin < entry
         point < user directory — later sources win, and this makes the
-        override visible instead of silently swapping plugins.
+        override visible instead of silently swapping plugins. *source* is
+        one of the canonical tokens (``builtin``/``entrypoint``/``dir``);
+        mapped to a human label here so the log wording doesn't change.
         """
         if plugin_id in self._plugins:
             logger.info(
                 "'%s' from %s overrides a previously loaded plugin with the same id",
                 plugin_id,
-                source,
+                self._SOURCE_LABELS.get(source, source),
             )
 
     def _register_config_gated_plugin(self, plugin_class: type[Plugin], source: str) -> bool:
@@ -491,6 +652,7 @@ class PluginManager:
             )
             self._disabled_ids.discard(plugin_id)
             self._latest_data.pop(plugin_id, None)
+            self._config_errors.pop(plugin_id, None)
         elif errors:
             self._disabled_ids.add(plugin_id)
             self._latest_data[plugin_id] = PanelData(
@@ -498,14 +660,17 @@ class PluginManager:
                 summary=f"Config error: {'; '.join(errors)}",
                 detail={"errors": errors},
             )
+            self._config_errors[plugin_id] = errors
         else:
             # A later source (e.g. entry point) can override an earlier one
             # (e.g. builtin) that was disabled — clear any stale disabled
             # state so the overriding plugin isn't silently skipped.
             self._disabled_ids.discard(plugin_id)
             self._latest_data.pop(plugin_id, None)
+            self._config_errors.pop(plugin_id, None)
         instance.configure(settings)
         self._plugins[plugin_id] = instance
+        self._plugin_sources[plugin_id] = source
         return True
 
     @staticmethod
@@ -705,37 +870,105 @@ class PluginManager:
             await self._safe_collect(plugin_id, plugin)
 
     async def _safe_collect(self, plugin_id: str, plugin: Plugin):
-        """Collect from a plugin, catching all exceptions."""
-        collect_task = asyncio.create_task(plugin.collect())
-        try:
-            data = await asyncio.wait_for(collect_task, timeout=30)
-            self._latest_data[plugin_id] = data
-            self._record_success(plugin_id)
-        except TimeoutError:
-            collect_task.cancel()
-            await asyncio.gather(collect_task, return_exceptions=True)
-            self._latest_data[plugin_id] = PanelData(
-                status="error", summary="Timeout", detail={"error": "collect timed out"}
-            )
-            self._record_failure(plugin_id, "collect timed out")
-            logger.debug("%s collect() timed out", plugin_id)
-        except Exception as e:
-            self._latest_data[plugin_id] = PanelData(
-                status="error", summary="Error", detail={"error": str(e)}
-            )
-            self._record_failure(plugin_id, str(e))
-            logger.debug("%s collect() failed: %s", plugin_id, e, exc_info=True)
+        """Collect from a plugin, catching all exceptions.
 
-    def _record_success(self, plugin_id: str) -> None:
+        Marks *plugin_id* as in-flight for the duration of the call so a
+        concurrent ``collect_once()`` (manual refresh-now) can report "busy"
+        instead of racing this collect. The ``finally`` also covers
+        ``asyncio.CancelledError`` when ``stop()`` cancels the owning task
+        mid-collect.
+        """
+        attempt_at = time.time()
+        started = time.perf_counter()
+        self._collecting.add(plugin_id)
+        try:
+            collect_task = asyncio.create_task(plugin.collect())
+            try:
+                data = await asyncio.wait_for(collect_task, timeout=COLLECT_TIMEOUT)
+                duration_ms = round((time.perf_counter() - started) * 1000)
+                self._latest_data[plugin_id] = data
+                self._record_success(plugin_id, attempt_at=attempt_at, duration_ms=duration_ms)
+            except TimeoutError:
+                collect_task.cancel()
+                await asyncio.gather(collect_task, return_exceptions=True)
+                duration_ms = round((time.perf_counter() - started) * 1000)
+                self._latest_data[plugin_id] = PanelData(
+                    status="error", summary="Timeout", detail={"error": "collect timed out"}
+                )
+                self._record_failure(
+                    plugin_id,
+                    "collect timed out",
+                    attempt_at=attempt_at,
+                    duration_ms=duration_ms,
+                )
+                logger.debug("%s collect() timed out", plugin_id)
+            except Exception as e:
+                duration_ms = round((time.perf_counter() - started) * 1000)
+                self._latest_data[plugin_id] = PanelData(
+                    status="error", summary="Error", detail={"error": str(e)}
+                )
+                self._record_failure(
+                    plugin_id, str(e), attempt_at=attempt_at, duration_ms=duration_ms
+                )
+                logger.debug("%s collect() failed: %s", plugin_id, e, exc_info=True)
+        finally:
+            self._collecting.discard(plugin_id)
+
+    async def collect_once(self, plugin_id: str) -> str:
+        """Run one out-of-band collect for *plugin_id*, outside the scheduled loop.
+
+        Returns "ok" | "unknown" | "disabled" | "demo" | "busy". The
+        ``plugin_id in self._collecting`` check below and the add to that set
+        at the top of ``_safe_collect`` have no ``await`` between them, so a
+        concurrent call can't slip in and start a second collect in this
+        single-threaded event loop.
+        """
+        plugin = self._plugins.get(plugin_id)
+        if plugin is None:
+            return "unknown"
+        if plugin_id in self._disabled_ids:
+            return "disabled"
+        if self._demo:
+            return "demo"
+        if plugin_id in self._collecting:
+            return "busy"
+        await self._safe_collect(plugin_id, plugin)
+        return "ok"
+
+    def _record_success(
+        self,
+        plugin_id: str,
+        *,
+        attempt_at: float | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
         self._health[plugin_id] = {
             "last_collect_at": time.time(),
+            "last_attempt_at": attempt_at if attempt_at is not None else time.time(),
+            "last_collect_duration_ms": duration_ms,
             "last_error": None,
             "consecutive_failures": 0,
         }
 
-    def _record_failure(self, plugin_id: str, error: str) -> None:
+    def _record_failure(
+        self,
+        plugin_id: str,
+        error: str,
+        *,
+        attempt_at: float | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
         health = self._health.setdefault(
-            plugin_id, {"last_collect_at": None, "last_error": None, "consecutive_failures": 0}
+            plugin_id,
+            {
+                "last_collect_at": None,
+                "last_attempt_at": None,
+                "last_collect_duration_ms": None,
+                "last_error": None,
+                "consecutive_failures": 0,
+            },
         )
+        health["last_attempt_at"] = attempt_at if attempt_at is not None else time.time()
+        health["last_collect_duration_ms"] = duration_ms
         health["last_error"] = error
         health["consecutive_failures"] += 1
