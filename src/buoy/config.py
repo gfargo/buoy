@@ -126,6 +126,7 @@ class FeaturesConfig:
     night_mode: str = "auto"  # auto | always | never
     keyboard_shortcuts: bool = True
     image_updates: bool = False  # Docker image update checker (off by default)
+    pwa: bool = True  # Installable PWA (manifest + offline service worker)
     log_streaming: bool = True  # Live WebSocket container log streaming
     gpu: bool = True  # GPU collector (NVIDIA/AMD/Intel); auto-detects, no-ops without a GPU
 
@@ -251,6 +252,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_WEBSOCKET": ("features", "websocket"),
         "BUOY_FEATURES_HISTORY": ("features", "history"),
         "BUOY_FEATURES_IMAGE_UPDATES": ("features", "image_updates"),
+        "BUOY_FEATURES_PWA": ("features", "pwa"),
         "BUOY_FEATURES_LOG_STREAMING": ("features", "log_streaming"),
         "BUOY_LOGS_DEFAULT_TAIL": ("logs", "default_tail"),
         "BUOY_LOGS_MAX_TAIL": ("logs", "max_tail"),
@@ -297,8 +299,9 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "history",
             "demo_mode",
             "image_updates",
-            "log_streaming",
             "verify_ssl",
+            "pwa",
+            "log_streaming",
             "gpu",
         ):
             raw[section][key] = value.lower() in ("true", "1", "yes")
@@ -518,6 +521,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         night_mode=features_raw.get("night_mode", "auto"),
         keyboard_shortcuts=bool(features_raw.get("keyboard_shortcuts", True)),
         image_updates=bool(features_raw.get("image_updates", False)),
+        pwa=bool(features_raw.get("pwa", True)),
         log_streaming=bool(features_raw.get("log_streaming", True)),
         gpu=bool(features_raw.get("gpu", True)),
     )

@@ -153,6 +153,28 @@ BUOY_AUTH_TOKEN=my-secret
 BUOY_FEATURES_DEMO_MODE=true
 ```
 
+## Install on Your Phone
+
+Buoy is an installable PWA: open it in a mobile browser and use "Add to
+Home Screen" (iOS Safari) or the install prompt (Android Chrome) to get an
+app icon with a standalone window and basic offline support (cached app
+shell + last-known stats). Installability requires a secure context —
+HTTPS or `localhost` — so a plain `http://<lan-ip>:8090` URL won't offer
+install; use your tailnet's HTTPS URL instead. Set `features.pwa: false`
+to disable the manifest and service worker entirely.
+
+Icons under `static/icons/` are committed binaries regenerated from
+`static/favicon.svg` with [`sharp`](https://sharp.pixelplumbing.com/), e.g.:
+```bash
+node -e "
+const sharp = require('sharp');
+sharp('static/favicon.svg', { density: 1024 }).resize(512, 512).png().toFile('static/icons/icon-512.png');
+"
+```
+(the maskable variant additionally scales the artwork to ~80% on a solid
+`#0a0c0f` canvas so Android's circle mask doesn't clip it — see the PR that
+introduced this for the exact script).
+
 ## Reverse Proxy / Sub-Path Hosting
 
 By default buoy assumes it's served at the domain root. To serve it at a

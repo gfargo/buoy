@@ -38,6 +38,17 @@ export function staticUrl(p) {
   return join(BASE, `static/${p.replace(/^\/+/, '')}`);
 }
 
+/**
+ * Join the base path with a root-relative path (not under /api or /static),
+ * e.g. the service worker script at /sw.js.
+ *
+ * @param {string} p
+ * @returns {string}
+ */
+export function rootUrl(p) {
+  return join(BASE, p.replace(/^\/+/, ''));
+}
+
 export function wsUrl(p) {
   const u = new URL(join(BASE, p), location.href);
   u.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
