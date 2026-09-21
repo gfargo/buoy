@@ -122,12 +122,58 @@ entry with no status dot. Checks run in the background on
 `verify_ssl` overrides `network.verify_ssl` per entry — handy for
 self-signed certs on home appliances.
 
+**Grouping and ordering:**
+```yaml
+services:
+  group_label: com.docker.compose.project   # default; "" disables label-based grouping
+  group_order: ["media", "monitoring"]      # unlisted groups sort alphabetically after these
+  order: ["grafana", "prometheus"]          # order within a group; unlisted entries keep discovery order
+  pinned: ["grafana"]                       # lifted into a leading "Pinned" group, in this order
+  overrides:
+    grafana:
+      group: monitoring   # overrides the discovered project label
+  static:
+    - name: NAS
+      group: storage
+```
+
+Cards on "This Node" are grouped into stacks by the `com.docker.compose.project`
+label Compose sets on every container it manages — set `services.group_label`
+to key off a different label instead, or `""` to disable label-based
+grouping entirely. `group`/`pinned`/`order` keys match the same way
+`hidden`/`overrides` do: the Compose service label, else the full container
+name, else (for `services.static` entries) the static entry's `name`.
+A per-entry `group` on `services.overrides`/`services.static` wins over the
+discovered project label.
+
 Environment variables override any YAML value (prefix: `BUOY_`):
 ```bash
 BUOY_NODE_NAME=harbor
 BUOY_AUTH_TOKEN=my-secret
 BUOY_FEATURES_DEMO_MODE=true
 ```
+
+## Install on Your Phone
+
+Buoy is an installable PWA: open it in a mobile browser and use "Add to
+Home Screen" (iOS Safari) or the install prompt (Android Chrome) to get an
+app icon with a standalone window and basic offline support (cached app
+shell + last-known stats). Installability requires a secure context —
+HTTPS or `localhost` — so a plain `http://<lan-ip>:8090` URL won't offer
+install; use your tailnet's HTTPS URL instead. Set `features.pwa: false`
+to disable the manifest and service worker entirely.
+
+Icons under `static/icons/` are committed binaries regenerated from
+`static/favicon.svg` with [`sharp`](https://sharp.pixelplumbing.com/), e.g.:
+```bash
+node -e "
+const sharp = require('sharp');
+sharp('static/favicon.svg', { density: 1024 }).resize(512, 512).png().toFile('static/icons/icon-512.png');
+"
+```
+(the maskable variant additionally scales the artwork to ~80% on a solid
+`#0a0c0f` canvas so Android's circle mask doesn't clip it — see the PR that
+introduced this for the exact script).
 
 ## Reverse Proxy / Sub-Path Hosting
 

@@ -197,6 +197,13 @@ services:
       desc: "Synology DS920+"
       url: https://nas.tailb82ead.ts.net
       health_check: true       # poll `url`; a string polls that URL instead
+  # Group "This Node" cards into stacks by container label (defaults to the
+  # com.docker.compose.project label Compose sets); order groups and
+  # in-group entries; pin entries to a leading "Pinned" group.
+  group_label: com.docker.compose.project
+  group_order: ["media", "monitoring"]
+  order: ["grafana", "prometheus"]
+  pinned: ["grafana"]
 
 theme:
   preset: terminal          # terminal | light | solarized | nord | high-contrast
@@ -299,6 +306,8 @@ services:
     - name: NAS
       url: https://nas.example.ts.net
       health_check: true
+  group_order: ["media", "monitoring"]
+  pinned: ["grafana"]
 
 plugins:
   builtin:

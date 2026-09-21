@@ -89,6 +89,12 @@ def test_wheel_contains_static_assets(tmp_path: Path) -> None:
     assert any(n.startswith("buoy/static/css/") for n in names), (
         "buoy/static/css/ files missing from wheel"
     )
+    assert "buoy/static/icons/icon-512.png" in names, (
+        "buoy/static/icons/icon-512.png missing from wheel — PWA install would ship without an icon"
+    )
+    assert "buoy/static/js/sw.js" in names, (
+        "buoy/static/js/sw.js (service worker) missing from wheel"
+    )
 
 
 def test_resolve_static_dir_dev_path_exists() -> None:

@@ -15,20 +15,23 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from buoy.config import BuoyConfig
 
-# Fake containers that look realistic
+# Fake containers that look realistic. `project` mirrors what a real
+# `com.docker.compose.project` label would report, so `--demo` and Playwright
+# exercise the stack-grouping feature (FEAT-11); a couple of entries are left
+# ungrouped ("") to exercise that path too.
 _DEMO_CONTAINERS = [
-    {"name": "grafana", "host_port": 3000},
-    {"name": "prometheus", "host_port": 9090},
-    {"name": "nginx-proxy", "host_port": 443},
-    {"name": "postgres", "host_port": None},
-    {"name": "redis", "host_port": None},
-    {"name": "plausible", "host_port": 8000},
-    {"name": "uptime-kuma", "host_port": 3001},
-    {"name": "vaultwarden", "host_port": 8080},
-    {"name": "immich-server", "host_port": 2283},
-    {"name": "homeassistant", "host_port": 8123},
-    {"name": "jellyfin", "host_port": 8096},
-    {"name": "actual-budget", "host_port": 5006},
+    {"name": "grafana", "host_port": 3000, "project": "monitoring"},
+    {"name": "prometheus", "host_port": 9090, "project": "monitoring"},
+    {"name": "uptime-kuma", "host_port": 3001, "project": "monitoring"},
+    {"name": "nginx-proxy", "host_port": 443, "project": ""},
+    {"name": "postgres", "host_port": None, "project": ""},
+    {"name": "redis", "host_port": None, "project": ""},
+    {"name": "plausible", "host_port": 8000, "project": ""},
+    {"name": "vaultwarden", "host_port": 8080, "project": ""},
+    {"name": "immich-server", "host_port": 2283, "project": "media"},
+    {"name": "jellyfin", "host_port": 8096, "project": "media"},
+    {"name": "homeassistant", "host_port": 8123, "project": ""},
+    {"name": "actual-budget", "host_port": 5006, "project": ""},
 ]
 
 _START_TIME = time.time()

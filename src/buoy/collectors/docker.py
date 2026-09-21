@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("buoy.collectors.docker")
 
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
+# The group label name is interpolated into the `docker ps --format` Go
+# template, so it must be restricted to safe label-name characters — an
+# unvalidated value would let a config-controlled string break out of the
+# `{{.Label "..."}}` template (quote/brace injection).
+_LABEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 _LIST_CACHE_TTL = 5.0
 
 # Docker appends this to `.Status` for containers with a healthcheck, e.g.
@@ -82,6 +87,7 @@ class DockerCollector:
         self._stats_cache: dict[str, dict] = {}
         self._stats_cache_ts: float = 0.0
         self._stats_task: asyncio.Task | None = None
+        self._group_label_warned = False
 
     async def _run(self, *args: str, timeout: float = 10) -> tuple[int, str, str]:
         """Run a docker command and return (returncode, stdout, stderr)."""
@@ -138,12 +144,27 @@ class DockerCollector:
             return containers
 
     async def _fetch_containers(self) -> list[dict]:
-        """Shell out to `docker ps` and parse the container list, including compose service label."""
-        code, stdout, _ = await self._run(
-            "ps",
-            "--format",
-            '{{.Names}}\t{{.Ports}}\t{{.Label "com.docker.compose.service"}}',
+        """Shell out to `docker ps` and parse the container list, including compose service label
+        and (when configured) a group label such as `com.docker.compose.project`."""
+        group_label = self.config.services.group_label
+        include_group = (
+            isinstance(group_label, str)
+            and bool(group_label)
+            and _LABEL_NAME_RE.match(group_label) is not None
         )
+        if group_label and not include_group and not self._group_label_warned:
+            logger.warning(
+                "services.group_label %r is not a valid Docker label name — falling back to "
+                "no label-based grouping",
+                group_label,
+            )
+            self._group_label_warned = True
+
+        fmt = '{{.Names}}\t{{.Ports}}\t{{.Label "com.docker.compose.service"}}'
+        if include_group:
+            fmt += f'\t{{{{.Label "{group_label}"}}}}'
+
+        code, stdout, _ = await self._run("ps", "--format", fmt)
         if code != 0 or not stdout:
             return []
 
@@ -151,13 +172,24 @@ class DockerCollector:
         for line in stdout.split("\n"):
             if not line.strip():
                 continue
-            parts = line.split("\t", 2)
+            # The group/project field is kept last so a stray tab embedded in
+            # a label value only ever corrupts that trailing field, never
+            # shifts name/ports/service out of position.
+            parts = line.split("\t", 3)
             name = parts[0].strip()
             ports_str = parts[1].strip() if len(parts) > 1 else ""
             service = parts[2].strip() if len(parts) > 2 else ""
+            project = parts[3].strip() if include_group and len(parts) > 3 else ""
 
             host_port = self._parse_first_port(ports_str)
-            containers.append({"name": name, "host_port": host_port, "service": service})
+            containers.append(
+                {
+                    "name": name,
+                    "host_port": host_port,
+                    "service": service,
+                    "project": project,
+                }
+            )
 
         return containers
 
