@@ -206,7 +206,12 @@ header .uptime span { color: var(--green); }
 .ctr { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem 0.75rem; display: flex; align-items: center; gap: 0.5rem; cursor: pointer; transition: border-color 0.2s; }
 .ctr:hover { border-color: var(--cyan-dim); }
 .ctr .dot-sm { width: 4px; height: 4px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+.ctr .dot-sm.unhealthy { background: var(--red); }
+.ctr .dot-sm.stopped { background: var(--text-dim); }
+.ctr .dot-sm.starting { background: var(--amber); }
 .ctr .ctr-name { font-size: 0.6rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctr .ctr-status { font-size: 0.5rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctr .ctr-metrics { font-size: 0.5rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; white-space: nowrap; flex-shrink: 0; }
 
 /* Update status badges on container cards */
 .ctr-update-badge { font-size: 0.5rem; margin-left: auto; padding: 0.1rem 0.3rem; border-radius: 2px; border: 1px solid; flex-shrink: 0; }
@@ -521,6 +526,7 @@ kbd { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; background: 
   .mount-row .mount-info { min-width: unset; }
   header { flex-wrap: wrap; gap: 0.5rem; }
   header .uptime { display: none; }
+  .ctr .ctr-status { display: none; }
   .plugin-dialog { inset: 0; width: 100%; max-width: 100%; max-height: 100dvh; margin: 0; border-radius: 0; }
 }
 

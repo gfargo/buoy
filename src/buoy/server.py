@@ -140,6 +140,7 @@ async def api_config(request: Request) -> JSONResponse:
                 "night_mode": state.config.features.night_mode,
                 "keyboard_shortcuts": state.config.features.keyboard_shortcuts,
                 "image_updates": state.config.features.image_updates,
+                "container_stats": state.config.features.container_stats,
                 "pwa": state.config.features.pwa,
                 "log_streaming": state.config.features.log_streaming,
             },
@@ -153,6 +154,7 @@ async def api_config(request: Request) -> JSONResponse:
                 "fleet_interval": state.config.refresh.fleet_interval,
                 "plugins_interval": state.config.refresh.plugins_interval,
                 "image_updates_interval": state.config.refresh.image_updates_interval,
+                "container_stats_interval": state.config.refresh.container_stats_interval,
                 "health_check_interval": state.config.refresh.health_check_interval,
             },
         }
@@ -980,7 +982,12 @@ async def _stats_loop(state: BuoyAppState):
             if state.config.features.websocket:
                 await broadcast_stats(state, combined)
 
-            # Store in history (if enabled)
+            # Store in history (if enabled). containers_list is trimmed to just
+            # names before persisting — storage.query() only ever extracts
+            # scalars from a recorded "stats" row (the per-container
+            # state/health/cpu/mem fields would otherwise multiply the
+            # per-tick row size and, unpruned, add tens of MB/day of history
+            # for no reader).
             if state.metric_store:
                 # Drop the per-interface breakdown before persisting — it's
                 # ~150 bytes/interface/sample, which balloons the 24h ring
@@ -988,10 +995,15 @@ async def _stats_loop(state: BuoyAppState):
                 # interval) for data the sparkline/gauge don't need from
                 # history (they track an in-memory rolling window instead).
                 stored = combined
-                if "net" in combined and "interfaces" in combined["net"]:
+                if "containers_list" in stored:
                     stored = {
-                        **combined,
-                        "net": {k: v for k, v in combined["net"].items() if k != "interfaces"},
+                        **stored,
+                        "containers_list": [{"name": c["name"]} for c in stored["containers_list"]],
+                    }
+                if "net" in stored and "interfaces" in stored["net"]:
+                    stored = {
+                        **stored,
+                        "net": {k: v for k, v in stored["net"].items() if k != "interfaces"},
                     }
                 await asyncio.to_thread(state.metric_store.record, "stats", stored)
                 # Sample container states every ~30s (every 6th cycle at 5s interval)
@@ -1221,6 +1233,9 @@ async def on_shutdown(state: BuoyAppState):
                 task.cancel()
             if state.background_tasks:
                 await asyncio.gather(*state.background_tasks, return_exceptions=True)
+            docker_coll = state.collectors.get("docker")
+            if docker_coll is not None and hasattr(docker_coll, "aclose"):
+                await docker_coll.aclose()
         finally:
             try:
                 if state.plugin_manager:

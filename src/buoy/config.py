@@ -126,6 +126,7 @@ class FeaturesConfig:
     night_mode: str = "auto"  # auto | always | never
     keyboard_shortcuts: bool = True
     image_updates: bool = False  # Docker image update checker (off by default)
+    container_stats: bool = True  # Per-container CPU/mem via `docker stats` (escape hatch)
     pwa: bool = True  # Installable PWA (manifest + offline service worker)
     log_streaming: bool = True  # Live WebSocket container log streaming
     gpu: bool = True  # GPU collector (NVIDIA/AMD/Intel); auto-detects, no-ops without a GPU
@@ -147,6 +148,7 @@ class RefreshConfig:
     fleet_interval: int = 15
     plugins_interval: int = 60
     image_updates_interval: int = 21600  # 6 hours
+    container_stats_interval: int = 15  # `docker stats` refresh TTL
     health_check_interval: int = 60
 
 
@@ -252,6 +254,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_WEBSOCKET": ("features", "websocket"),
         "BUOY_FEATURES_HISTORY": ("features", "history"),
         "BUOY_FEATURES_IMAGE_UPDATES": ("features", "image_updates"),
+        "BUOY_FEATURES_CONTAINER_STATS": ("features", "container_stats"),
         "BUOY_FEATURES_PWA": ("features", "pwa"),
         "BUOY_FEATURES_LOG_STREAMING": ("features", "log_streaming"),
         "BUOY_LOGS_DEFAULT_TAIL": ("logs", "default_tail"),
@@ -262,6 +265,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_REFRESH_FLEET_INTERVAL": ("refresh", "fleet_interval"),
         "BUOY_REFRESH_PLUGINS_INTERVAL": ("refresh", "plugins_interval"),
         "BUOY_REFRESH_IMAGE_UPDATES_INTERVAL": ("refresh", "image_updates_interval"),
+        "BUOY_REFRESH_CONTAINER_STATS_INTERVAL": ("refresh", "container_stats_interval"),
         "BUOY_REFRESH_HEALTH_CHECK_INTERVAL": ("refresh", "health_check_interval"),
         "BUOY_ALERTS_WEBHOOK_URL": ("alerts", "webhook_url"),
         "BUOY_LOG_LEVEL": ("logging", "level"),
@@ -284,6 +288,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "fleet_interval",
             "plugins_interval",
             "image_updates_interval",
+            "container_stats_interval",
             "default_tail",
             "max_tail",
             "health_check_interval",
@@ -299,6 +304,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "history",
             "demo_mode",
             "image_updates",
+            "container_stats",
             "verify_ssl",
             "pwa",
             "log_streaming",
@@ -521,6 +527,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         night_mode=features_raw.get("night_mode", "auto"),
         keyboard_shortcuts=bool(features_raw.get("keyboard_shortcuts", True)),
         image_updates=bool(features_raw.get("image_updates", False)),
+        container_stats=bool(features_raw.get("container_stats", True)),
         pwa=bool(features_raw.get("pwa", True)),
         log_streaming=bool(features_raw.get("log_streaming", True)),
         gpu=bool(features_raw.get("gpu", True)),
@@ -537,6 +544,9 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         ),
         image_updates_interval=_coerce_int(
             refresh_raw.get("image_updates_interval", 21600), "refresh.image_updates_interval"
+        ),
+        container_stats_interval=_coerce_int(
+            refresh_raw.get("container_stats_interval", 15), "refresh.container_stats_interval"
         ),
         health_check_interval=_coerce_int(
             refresh_raw.get("health_check_interval", 60), "refresh.health_check_interval"

@@ -4,6 +4,7 @@
 
 import { escapeHtml } from './escape.js';
 import { formatUptime, formatRatePair } from './format.js';
+import { refreshContainersPanel } from './detail.js';
 
 const SPARK_MAX = 30;
 const tempHistory = [];
@@ -182,6 +183,7 @@ export function updateGauges(data) {
 
   // Store containers for detail panel
   window._latestContainers = data.containers_list || [];
+  refreshContainersPanel(window._latestContainers);
 }
 
 // ── Helpers ─────────────────────────────────────────────────

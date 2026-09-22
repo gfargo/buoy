@@ -208,6 +208,7 @@ features:
   night_mode: auto           # auto (10pm-6am) | always | never
   keyboard_shortcuts: true   # 1-5 for gauges, Escape to close
   image_updates: false       # Docker image update checker (badges on container cards)
+  container_stats: true      # Per-container CPU/mem/health in the containers panel (via `docker stats`)
   pwa: true                  # Installable PWA + offline service worker (needs HTTPS or localhost)
   log_streaming: true        # Live WebSocket container log streaming (falls back to a
                               # one-shot fetch when off or the socket fails)
@@ -230,6 +231,7 @@ refresh:
   fleet_interval: 15         # Peer node polling
   plugins_interval: 60       # Global minimum interval for server-side plugin collection (plugins may poll less often per their own manifest)
   image_updates_interval: 21600  # Image update check interval (6 hours)
+  container_stats_interval: 15   # `docker stats` refresh TTL for the containers panel
   health_check_interval: 60  # services.static health-check polling interval
 
 # ── Alerts ─────────────────────────────────────────────────
