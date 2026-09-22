@@ -97,6 +97,12 @@ ruff format --check src/ tests/
    JS executed via `new Function()`) still works but is a deprecated escape
    hatch — it can't be used under a strict CSP and every value must be
    escaped by hand.
+6. Optionally implement `render_detail()` for the dashboard's detail dialog
+   (`GET /api/plugins/{id}`) — it defaults to `render()`. Override it when
+   `render()` truncates a list for the card (`entries[:10]`,
+   `panel.cell(..., truncate=True)`) and the dialog should show the full
+   thing instead. It's served at the same trust level as `render()`, so it
+   must not surface anything `render()` wouldn't.
 
 See [Plugin Development](https://github.com/gfargo/buoy/wiki/Plugins) for the full guide.
 

@@ -356,14 +356,34 @@ defaults to `render()`. Override it when the card's `render()` truncates a list 
 escaping, just more of it:
 
 ```python
-class NotificationsPlugin(Plugin):
+class CronHealthPlugin(Plugin):
     ...
     def render(self, data: PanelData) -> list[dict] | None:
-        return [panel.list_(data.detail["entries"][:10], truncate=True)]
+        rows = [
+            [panel.cell(e["time"]), panel.cell(e["user"]), panel.cell(e["cmd"], truncate=True)]
+            for e in data.detail["entries"][:10]
+        ]
+        return [panel.table(["Time", "User", "Command"], rows)]
 
     def render_detail(self, data: PanelData) -> list[dict] | None:
-        return [panel.list_(data.detail["entries"], truncate=False)]
+        rows = [
+            [panel.cell(e["time"]), panel.cell(e["user"]), panel.cell(e["cmd"], wrap=True)]
+            for e in data.detail["entries"]
+        ]
+        blocks = [panel.table(["Time", "User", "Command"], rows)]
+        if data.detail.get("backup_log"):
+            blocks += [panel.heading("Backup log"), panel.log(data.detail["backup_log"])]
+        return blocks
 ```
+
+Clicking a plugin's card opens a detail dialog showing `render_detail()`'s full panel, plus a
+**Health** section (last success/attempt, collect duration, consecutive failures, effective
+refresh interval) and a **Manifest & config** section (one row per `config_schema` key with its
+effective value — secrets redacted — and where it came from: env, YAML, or schema default). A
+**↻ refresh now** button triggers an immediate collect. Opening the dialog sets the URL hash to
+`#plugin=<id>`, so it's directly linkable and shareable.
+
+![Plugin detail dialog](docs/screenshots/plugin-detail.png)
 
 **Distributable plugins** can also be shipped as a pip-installable package. Register your `Plugin`
 subclass (or a module containing one) under the `buoy.plugins` entry-point group:
