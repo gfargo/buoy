@@ -7,6 +7,7 @@ A lightweight, per-node system dashboard for homelabs and small infrastructure.
 ![Arch amd64+arm64](https://img.shields.io/badge/arch-amd64%20%2B%20arm64-orange)
 ![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fgfargo%2Fbuoy-blue)
 ![No Build Step](https://img.shields.io/badge/frontend-no%20build%20step-purple)
+[![Live demo](https://img.shields.io/badge/live%20demo-buoy--demo.fly.dev-brightgreen)](https://buoy-demo.fly.dev)
 
 ---
 
@@ -45,6 +46,11 @@ Try it without any infrastructure — no Docker socket, no host access needed:
 ```bash
 docker run --rm -p 8090:8090 ghcr.io/gfargo/buoy:latest --demo
 ```
+
+Prefer not to run anything? **[Try the live demo →](https://buoy-demo.fly.dev)**
+— same `--demo` build, redeployed on every release. See
+[docs/deployment/demo.md](docs/deployment/demo.md) for how it's hosted and
+why it's safe to expose publicly.
 
 Plugins are stubbed too: in demo mode a plugin's `setup()`/`collect()` are
 never called (so `--demo` never makes a real outbound call), and its panel
@@ -443,6 +449,7 @@ ruff check src/ tests/
 
 - [Configuration Reference](https://github.com/gfargo/buoy/wiki/Configuration) — full YAML config guide
 - [Plugin Development](https://github.com/gfargo/buoy/wiki/Plugins) — create custom plugins
+- [Hosted Demo](docs/deployment/demo.md) — how the public demo is deployed, and how to run your own
 - [Native Install](docs/deployment/native.md) — pip + systemd, no Docker required
 - [Kubernetes](docs/deployment/kubernetes.md) — plain manifests and a Helm chart
 - [Ansible](docs/deployment/ansible.md) — automated native install

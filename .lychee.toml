@@ -40,6 +40,9 @@ exclude = [
   # Actual Budget plugin's `url` config (the actual-http-api sidecar); not a
   # real endpoint.
   '^https?://actual-http-api(:[0-9]+)?',
+  # The hosted demo (buoy-demo.fly.dev) isn't provisioned yet — this exclusion
+  # should be removed once `fly launch` has run and the app is live.
+  '^https?://buoy-demo\.fly\.dev',
   # release-please-generated semver compare links necessarily point at the
   # not-yet-created target tag while a release PR is open, so they return 404
   # until that PR merges. The tags and release workflow verify the range after
