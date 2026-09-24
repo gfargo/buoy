@@ -30,7 +30,7 @@ speedtest = [
     "speedtest-cli>=2.1,<3.0",
 ]
 zigbee2mqtt = [
-    "paho-mqtt>=2.0,<3.0",
+    "paho-mqtt>=2.1.0,<3.0",
 ]
 databases = [
     "asyncpg>=0.30,<1.0",
@@ -43,7 +43,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.16.5",
     "httpx",  # for test client
-    "paho-mqtt>=2.0,<3.0",  # for zigbee2mqtt plugin tests
+    "paho-mqtt>=2.1.0,<3.0",  # for zigbee2mqtt plugin tests
 ]
 
 [project.scripts]
