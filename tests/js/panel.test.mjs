@@ -62,3 +62,66 @@ test('renderPanelSpec routes list item hrefs through safeUrl and escapes the lab
 test('renderPanelSpec skips unknown block types instead of throwing', () => {
   assert.equal(renderPanelSpec([{ type: 'made-up-block' }]), '');
 });
+
+test('renderPanelSpec escapes a hostile heading block', () => {
+  const html = renderPanelSpec([{ type: 'heading', text: '<b>Recent jobs</b>' }]);
+  assert.ok(!html.includes('<b>Recent jobs</b>'));
+  assert.ok(html.includes('&lt;b&gt;Recent jobs&lt;/b&gt;'));
+});
+
+test('renderPanelSpec escapes log lines individually and preserves order', () => {
+  const html = renderPanelSpec([
+    {
+      type: 'log',
+      lines: ['<script>alert(1)</script>', 'ok', '<img src=x onerror=alert(1)>'],
+    },
+  ]);
+  assert.ok(!html.includes('<script>'));
+  assert.ok(!html.includes('<img'));
+  assert.equal((html.match(/&lt;script&gt;/g) || []).length, 1);
+  assert.ok(html.indexOf('ok') < html.indexOf('&lt;img'));
+});
+
+test('renderPanelSpec strips ANSI escape sequences from log lines instead of interpreting them', () => {
+  const html = renderPanelSpec([{ type: 'log', lines: ['\x1b[31mred\x1b[0m'] }]);
+  assert.ok(html.includes('red'));
+  assert.ok(!html.includes('\x1b'));
+  assert.ok(!html.includes('[31m'));
+});
+
+test('a wrap cell has no white-space:nowrap, unlike a truncate cell', () => {
+  const wrapHtml = renderPanelSpec([
+    { type: 'table', columns: ['Msg'], rows: [[{ value: 'long msg', wrap: true }]] },
+  ]);
+  assert.ok(!wrapHtml.includes('white-space:nowrap'));
+
+  const plainHtml = renderPanelSpec([
+    { type: 'table', columns: ['Msg'], rows: [[{ value: 'x', truncate: false }]] },
+  ]);
+  assert.ok(!plainHtml.includes('white-space:nowrap'));
+
+  const truncateHtml = renderPanelSpec([
+    { type: 'table', columns: ['Msg'], rows: [[{ value: 'x', truncate: true }]] },
+  ]);
+  assert.ok(truncateHtml.includes('white-space:nowrap'));
+});
+
+test('renderPanelSpec routes keyvalue hrefs through safeUrl and escapes the label', () => {
+  const blocked = renderPanelSpec([
+    {
+      type: 'keyvalue',
+      rows: [{ label: 'Monitor', value: 'x', href: 'javascript:alert(1)' }],
+    },
+  ]);
+  assert.ok(blocked.includes('href="#"'));
+
+  const allowed = renderPanelSpec([
+    {
+      type: 'keyvalue',
+      rows: [{ label: '<b>Monitor</b>', value: 'web-1', href: 'https://example.com/status' }],
+    },
+  ]);
+  assert.ok(allowed.includes('href="https://example.com/status"'));
+  assert.ok(!allowed.includes('<b>Monitor</b>'));
+  assert.ok(allowed.includes('&lt;b&gt;Monitor&lt;/b&gt;'));
+});

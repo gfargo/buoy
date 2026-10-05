@@ -51,6 +51,7 @@ class Zigbee2MqttPlugin(Plugin):
                 "type": "string",
                 "default": "",
                 "env": "BUOY_PLUGIN_ZIGBEE2MQTT_PASSWORD",
+                "secret": True,
             },
             "base_topic": {"type": "string", "default": "zigbee2mqtt"},
         },

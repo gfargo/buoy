@@ -469,14 +469,20 @@ test('credential state is memory-only, isolated, and not persisted by source', a
   }
 });
 
-test('only protected detail calls use auth; fleet and WebSockets remain untouched', async () => {
+test('only protected detail/logs calls use auth; fleet and WebSockets remain untouched', async () => {
   const detail = await readFile(new URL('../../static/js/detail.js', import.meta.url), 'utf8');
+  const logs = await readFile(new URL('../../static/js/logs.js', import.meta.url), 'utf8');
   const buoy = await readFile(new URL('../../static/js/buoy.js', import.meta.url), 'utf8');
   const fleet = await readFile(new URL('../../static/js/fleet.js', import.meta.url), 'utf8');
   const websocket = await readFile(new URL('../../static/js/ws.js', import.meta.url), 'utf8');
 
-  assert.equal((detail.match(/authedFetch\(/g) || []).length, 4);
+  // Live log streaming (OSS-1551) moved the container-logs fetch out of
+  // detail.js and into logs.js (snapshot fallback + WS ticket issuance),
+  // so the count here dropped from 4 to 3 and logs.js picked up its own 2.
+  assert.equal((detail.match(/authedFetch\(/g) || []).length, 3);
   assert.match(detail, /import \{ authedFetch \} from '\.\/auth\.js';/);
+  assert.equal((logs.match(/authedFetch\(/g) || []).length, 2);
+  assert.match(logs, /import \{ authedFetch \} from '\.\/auth\.js';/);
   assert.match(buoy, /import \{ initAuth \} from '\.\/auth\.js';/);
   assert.match(buoy, /initAuth\(config\.auth\)/);
   assert.equal(fleet.includes('authedFetch'), false);

@@ -23,7 +23,7 @@ class HomeAssistantPlugin(Plugin):
         version="1.0.0",
         config_schema={
             "url": {"type": "string", "required": True},
-            "token": {"type": "string", "required": True},
+            "token": {"type": "string", "required": True, "secret": True},
             "verify_ssl": {"type": "boolean", "default": True},
         },
         refresh_interval=120,

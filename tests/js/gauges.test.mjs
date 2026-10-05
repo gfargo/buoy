@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { activeAlertsHtml, formatMemUsage } from '../../static/js/gauges.js';
+import { activeAlertsHtml, formatGpuSummary, formatMemUsage } from '../../static/js/gauges.js';
 
 test('formatMemUsage renders used/total when both are numbers', () => {
   assert.equal(formatMemUsage(2.1, 8.0), '2.1/8');
@@ -62,4 +62,34 @@ test('activeAlertsHtml escapes a hostile message instead of injecting markup', (
   ]);
   assert.ok(!html.includes('<img'));
   assert.ok(html.includes('&lt;img'));
+});
+
+test('formatGpuSummary renders a placeholder when there are no GPUs', () => {
+  assert.equal(formatGpuSummary([]), 'No GPU detected');
+  assert.equal(formatGpuSummary(null), 'No GPU detected');
+  assert.equal(formatGpuSummary(undefined), 'No GPU detected');
+});
+
+test('formatGpuSummary renders a single GPU', () => {
+  const summary = formatGpuSummary([{ name: 'NVIDIA GeForce RTX 3060', util_pct: 42 }]);
+  assert.equal(summary, 'NVIDIA GeForce RTX 3060 (42%)');
+});
+
+test('formatGpuSummary renders multiple GPUs joined by commas', () => {
+  const summary = formatGpuSummary([
+    { name: 'NVIDIA GeForce RTX 3060', util_pct: 42 },
+    { name: 'AMD GPU (card1)', util_pct: 5 },
+  ]);
+  assert.equal(summary, 'NVIDIA GeForce RTX 3060 (42%), AMD GPU (card1) (5%)');
+});
+
+test('formatGpuSummary falls back to -- when utilization is null', () => {
+  const summary = formatGpuSummary([{ name: 'Intel GPU (card0)', util_pct: null }]);
+  assert.equal(summary, 'Intel GPU (card0) (--)');
+});
+
+test('formatGpuSummary escapes a hostile GPU name instead of injecting markup', () => {
+  const summary = formatGpuSummary([{ name: '<img src=x onerror=alert(1)>', util_pct: 1 }]);
+  assert.ok(!summary.includes('<img'));
+  assert.ok(summary.includes('&lt;img'));
 });

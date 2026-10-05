@@ -1,0 +1,22 @@
+# Recording rules for the metrics exposed by buoy's prometheus_exporter
+# plugin (src/buoy/plugins/builtin/prometheus_exporter.py).
+#
+# All buoy_* metrics are gauges, not counters, so these rules only precompute
+# derived ratios/sums — there is nothing to rate() here. The dashboard
+# (buoy.json) uses the raw expressions directly and does not require these
+# rules to be loaded; they're additive, for users who want the derived
+# series available for their own queries/alerts too.
+#
+# Load with: rule_files: ["recording-rules.yml"] in prometheus.yml.
+groups:
+  - name: buoy.rules
+    interval: 30s
+    rules:
+      - record: buoy:memory_used:percent
+        expr: 100 * buoy_memory_used_bytes / buoy_memory_total_bytes
+
+      - record: buoy:memory_available:bytes
+        expr: buoy_memory_total_bytes - buoy_memory_used_bytes
+
+      - record: buoy:uptime:days
+        expr: buoy_uptime_seconds / 86400
