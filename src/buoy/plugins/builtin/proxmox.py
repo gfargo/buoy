@@ -21,8 +21,8 @@ class ProxmoxPlugin(Plugin):
         version="1.0.0",
         config_schema={
             "url": {"type": "string", "required": True},
-            "token_id": {"type": "string", "required": True},
-            "token_secret": {"type": "string", "required": True},
+            "token_id": {"type": "string", "required": True, "secret": False},
+            "token_secret": {"type": "string", "required": True, "secret": True},
             "node": {"type": "string", "required": True},
             "verify_ssl": {"type": "bool", "required": False},
         },

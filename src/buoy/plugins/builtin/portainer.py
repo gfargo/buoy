@@ -22,7 +22,7 @@ class PortainerPlugin(Plugin):
         version="1.0.0",
         config_schema={
             "url": {"type": "string", "required": True},
-            "api_key": {"type": "string", "required": True},
+            "api_key": {"type": "string", "required": True, "secret": True},
             "endpoint_id": {"type": "string", "required": True},
         },
         refresh_interval=60,
