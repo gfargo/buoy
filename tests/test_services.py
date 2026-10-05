@@ -12,6 +12,7 @@ from buoy.config import (
     PeerConfig,
     ServiceOverride,
     ServicesConfig,
+    StaticService,
 )
 from buoy.services import discover_services
 
@@ -21,7 +22,11 @@ def _make_config(
     peers=None,
     hidden=None,
     overrides=None,
+    static=None,
     tailnet_domain="tailb82ead.ts.net",
+    group_order=None,
+    order=None,
+    pinned=None,
 ):
     config = BuoyConfig()
     config.node = NodeConfig(name=name)
@@ -33,6 +38,10 @@ def _make_config(
     config.services = ServicesConfig(
         hidden=hidden or [],
         overrides=overrides or {},
+        static=static or [],
+        group_order=group_order or [],
+        order=order or [],
+        pinned=pinned or [],
     )
     return config
 
@@ -249,6 +258,319 @@ class TestDiscoverServicesLocal:
             result = await discover_services(config, is_tailscale=False)
 
         assert result["local"] == []
+
+
+class TestDiscoverServicesStatic:
+    """Test static (non-Docker) service entries."""
+
+    @pytest.mark.asyncio
+    async def test_static_entry_appended_after_docker(self):
+        static = [StaticService(name="NAS", icon="💾", desc="Synology", url="https://nas.local")]
+        config = _make_config(static=static)
+        containers = [{"name": "grafana", "host_port": 3000}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["grafana", "NAS"]
+        assert result["local"][1]["source"] == "static"
+        assert result["local"][1]["url"] == "https://nas.local"
+        assert result["local"][0]["source"] == "docker"
+
+    @pytest.mark.asyncio
+    async def test_static_entries_survive_no_containers(self):
+        static = [StaticService(name="Router", url="https://router.local")]
+        config = _make_config(static=static)
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=[])
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "Router"
+
+    @pytest.mark.asyncio
+    async def test_health_map_applied_to_matching_entry(self):
+        static = [
+            StaticService(name="NAS", url="https://nas.local", health_check="https://nas.local")
+        ]
+        config = _make_config(static=static)
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=[])
+
+            result = await discover_services(
+                config, is_tailscale=False, health={"NAS": {"status": "error", "latency_ms": 12.3}}
+            )
+
+        svc = result["local"][0]
+        assert svc["status"] == "error"
+        assert svc["latency_ms"] == 12.3
+
+    @pytest.mark.asyncio
+    async def test_missing_health_entry_yields_none_status(self):
+        static = [
+            StaticService(name="NAS", url="https://nas.local", health_check="https://nas.local")
+        ]
+        config = _make_config(static=static)
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=[])
+
+            result = await discover_services(config, is_tailscale=False, health={})
+
+        assert result["local"][0]["status"] is None
+
+    @pytest.mark.asyncio
+    async def test_hidden_does_not_apply_to_static_entries(self):
+        static = [StaticService(name="nas", url="https://nas.local")]
+        config = _make_config(hidden=["nas"], static=static)
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=[])
+
+            result = await discover_services(config, is_tailscale=False)
+
+        assert len(result["local"]) == 1
+        assert result["local"][0]["name"] == "nas"
+
+    @pytest.mark.asyncio
+    async def test_top_services_includes_static_entries_with_url(self):
+        from buoy.services import top_services
+
+        static = [StaticService(name="NAS", url="https://nas.local")]
+        config = _make_config(static=static)
+        containers = [{"name": "grafana", "host_port": 3000}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+
+            result = await top_services(config, is_tailscale=False)
+
+        assert {s["name"] for s in result} == {"grafana", "NAS"}
+
+
+class TestServiceGrouping:
+    """Tests for group_label/group_order/order/pinned (FEAT-11)."""
+
+    @pytest.mark.asyncio
+    async def test_project_label_becomes_group(self):
+        config = _make_config()
+        containers = [{"name": "grafana", "host_port": 3000, "project": "monitoring"}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert result["local"][0]["group"] == "monitoring"
+        assert result["local"][0]["pinned"] is False
+
+    @pytest.mark.asyncio
+    async def test_missing_project_label_is_ungrouped(self):
+        config = _make_config()
+        containers = [{"name": "grafana", "host_port": 3000}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert result["local"][0]["group"] == ""
+
+    @pytest.mark.asyncio
+    async def test_override_group_beats_project_label(self):
+        overrides = {"grafana": ServiceOverride(group="custom")}
+        config = _make_config(overrides=overrides)
+        containers = [{"name": "grafana", "host_port": 3000, "project": "monitoring"}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert result["local"][0]["group"] == "custom"
+
+    @pytest.mark.asyncio
+    async def test_static_entry_group_places_it_in_stack(self):
+        static = [StaticService(name="NAS", url="https://nas.local", group="monitoring")]
+        config = _make_config(static=static)
+        containers = [{"name": "grafana", "host_port": 3000, "project": "monitoring"}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        groups = {s["name"]: s["group"] for s in result["local"]}
+        assert groups == {"grafana": "monitoring", "NAS": "monitoring"}
+
+    @pytest.mark.asyncio
+    async def test_group_order_respected(self):
+        config = _make_config(group_order=["media", "monitoring"])
+        containers = [
+            {"name": "grafana", "host_port": 3000, "project": "monitoring"},
+            {"name": "jellyfin", "host_port": 8096, "project": "media"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["jellyfin", "grafana"]
+
+    @pytest.mark.asyncio
+    async def test_unlisted_groups_sort_alphabetically_after_listed(self):
+        config = _make_config(group_order=["zzz"])
+        containers = [
+            {"name": "b-svc", "host_port": 1, "project": "bravo"},
+            {"name": "z-svc", "host_port": 2, "project": "zzz"},
+            {"name": "a-svc", "host_port": 3, "project": "alpha"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["z-svc", "a-svc", "b-svc"]
+
+    @pytest.mark.asyncio
+    async def test_ungrouped_sorts_last(self):
+        config = _make_config()
+        containers = [
+            {"name": "ungrouped", "host_port": 1},
+            {"name": "grouped", "host_port": 2, "project": "stack"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["grouped", "ungrouped"]
+
+    @pytest.mark.asyncio
+    async def test_order_sorts_within_group_unlisted_keep_discovery_order(self):
+        config = _make_config(order=["redis"])
+        containers = [
+            {"name": "grafana", "host_port": 1, "project": "stack", "service": "grafana"},
+            {"name": "redis", "host_port": 2, "project": "stack", "service": "redis"},
+            {"name": "postgres", "host_port": 3, "project": "stack", "service": "postgres"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["redis", "grafana", "postgres"]
+
+    @pytest.mark.asyncio
+    async def test_pinned_lifts_entries_to_front_in_config_order(self):
+        config = _make_config(pinned=["redis", "grafana"])
+        containers = [
+            {"name": "grafana", "host_port": 1, "project": "stack", "service": "grafana"},
+            {"name": "redis", "host_port": 2, "project": "stack", "service": "redis"},
+            {"name": "postgres", "host_port": 3, "project": "stack", "service": "postgres"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["redis", "grafana", "postgres"]
+        assert result["local"][0]["group"] == "Pinned"
+        assert result["local"][0]["pinned"] is True
+        assert result["local"][1]["group"] == "Pinned"
+        assert result["local"][2]["group"] == "stack"
+
+    @pytest.mark.asyncio
+    async def test_pinned_key_matching_hidden_container_is_a_noop(self):
+        config = _make_config(hidden=["redis"], pinned=["redis"])
+        containers = [{"name": "redis", "host_port": 1, "service": "redis"}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert result["local"] == []
+
+    @pytest.mark.asyncio
+    async def test_pinned_matches_full_container_name_even_with_service_label(self):
+        # Regression: a container Compose labeled with a service name must
+        # still honor `pinned`/`order` entries written against its full
+        # container name, not just the bare service label.
+        config = _make_config(pinned=["plane-plane-redis-1"])
+        containers = [
+            {"name": "plane-plane-redis-1", "host_port": 1, "project": "plane", "service": "redis"},
+            {"name": "plane-plane-api-1", "host_port": 2, "project": "plane", "service": "api"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["plane-plane-redis-1", "plane-plane-api-1"]
+        assert result["local"][0]["pinned"] is True
+
+    @pytest.mark.asyncio
+    async def test_order_matches_full_container_name_even_with_service_label(self):
+        config = _make_config(order=["plane-plane-redis-1"])
+        containers = [
+            {"name": "plane-plane-api-1", "host_port": 1, "project": "plane", "service": "api"},
+            {"name": "plane-plane-redis-1", "host_port": 2, "project": "plane", "service": "redis"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["plane-plane-redis-1", "plane-plane-api-1"]
+
+    @pytest.mark.asyncio
+    async def test_unknown_pinned_and_order_keys_ignored(self):
+        config = _make_config(pinned=["nonexistent"], order=["also-nonexistent"])
+        containers = [{"name": "grafana", "host_port": 3000}]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await discover_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result["local"]] == ["grafana"]
+
+    @pytest.mark.asyncio
+    async def test_top_services_reflects_pinned_first_order(self):
+        from buoy.services import top_services
+
+        config = _make_config(pinned=["redis"])
+        containers = [
+            {"name": "grafana", "host_port": 1, "service": "grafana"},
+            {"name": "redis", "host_port": 2, "service": "redis"},
+        ]
+
+        with patch("buoy.collectors.docker.DockerCollector") as mock_collector:
+            instance = mock_collector.return_value
+            instance.list_containers = AsyncMock(return_value=containers)
+            result = await top_services(config, is_tailscale=False)
+
+        assert [s["name"] for s in result] == ["redis", "grafana"]
+        assert set(result[0].keys()) == {"name", "icon", "url"}
 
 
 class TestDiscoverServicesNetwork:

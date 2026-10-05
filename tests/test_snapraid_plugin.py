@@ -138,4 +138,5 @@ class TestSnapraidPlugin:
             "label": "Disk errors",
             "value": "YES",
             "status": "error",
+            "href": None,
         }
