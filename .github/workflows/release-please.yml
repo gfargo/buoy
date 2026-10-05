@@ -7,13 +7,27 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v5
+      - id: rp
+        uses: googleapis/release-please-action@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # Tags and releases created with GITHUB_TOKEN deliberately don't fire
+      # `push: tags` / `release` events, so release.yml never ran on its own
+      # (every release needed a manual dispatch). workflow_dispatch is the one
+      # event GITHUB_TOKEN may still trigger, so dispatch the image publish
+      # against the freshly created tag.
+      - name: Publish image for the new release
+        if: steps.rp.outputs.release_created == 'true'
+        run: gh workflow run release.yml --ref "$TAG" --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.rp.outputs.tag_name }}
