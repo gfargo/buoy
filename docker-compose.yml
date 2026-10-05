@@ -19,6 +19,18 @@ services:
     # For the same metrics without `privileged`, see docker-compose.hardened.yml.
     privileged: true
     pid: host
+    # Optional: expose an NVIDIA GPU (requires the NVIDIA Container Toolkit
+    # on the host — see docs/deployment/privilege-matrix.md).
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    # Optional: expose an AMD/Intel GPU (reads /sys/class/drm + /dev/dri).
+    # devices:
+    #   - /dev/dri:/dev/dri
 
 volumes:
   buoy-data:

@@ -65,6 +65,10 @@ class NetworkConfig:
     allowed_origins: list[str] = field(default_factory=list)
     trusted_proxies: list[str] = field(default_factory=list)
     verify_ssl: bool = True  # TLS verification for peer polling (default on)
+    # Explicit allowlist of interface names for throughput collection. Empty
+    # (default) means auto-detect: every interface except loopback/virtual
+    # (lo, veth*, docker*, br-*, virbr*).
+    interfaces: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -74,12 +78,29 @@ class ServiceOverride:
     desc: str = ""
     port: int | None = None
     path: str = ""
+    group: str = ""
+
+
+@dataclass
+class StaticService:
+    name: str = ""
+    icon: str = ""
+    desc: str = ""
+    url: str = ""
+    health_check: str = ""  # "" = no check, else the URL to poll
+    verify_ssl: bool | None = None  # None = inherit network.verify_ssl
+    group: str = ""
 
 
 @dataclass
 class ServicesConfig:
     hidden: list[str] = field(default_factory=list)
     overrides: dict[str, ServiceOverride] = field(default_factory=dict)
+    static: list[StaticService] = field(default_factory=list)
+    group_label: str = "com.docker.compose.project"
+    group_order: list[str] = field(default_factory=list)
+    order: list[str] = field(default_factory=list)
+    pinned: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -105,6 +126,19 @@ class FeaturesConfig:
     night_mode: str = "auto"  # auto | always | never
     keyboard_shortcuts: bool = True
     image_updates: bool = False  # Docker image update checker (off by default)
+    container_stats: bool = True  # Per-container CPU/mem via `docker stats` (escape hatch)
+    pwa: bool = True  # Installable PWA (manifest + offline service worker)
+    log_streaming: bool = True  # Live WebSocket container log streaming
+    gpu: bool = True  # GPU collector (NVIDIA/AMD/Intel); auto-detects, no-ops without a GPU
+
+
+@dataclass
+class LogsConfig:
+    default_tail: int = 100
+    max_tail: int = 1000
+    max_streams: int = 4  # concurrent live log streams per app instance
+    max_line_bytes: int = 8192
+    stream_rate_limit: int = 500  # max lines/sec forwarded to a single client
 
 
 @dataclass
@@ -114,6 +148,8 @@ class RefreshConfig:
     fleet_interval: int = 15
     plugins_interval: int = 60
     image_updates_interval: int = 21600  # 6 hours
+    container_stats_interval: int = 15  # `docker stats` refresh TTL
+    health_check_interval: int = 60
 
 
 @dataclass
@@ -156,6 +192,7 @@ class BuoyConfig:
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    logs: LogsConfig = field(default_factory=LogsConfig)
 
 
 # ── Loader ─────────────────────────────────────────────────────────────────────
@@ -206,6 +243,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_NETWORK_ALLOWED_ORIGINS": ("network", "allowed_origins"),
         "BUOY_NETWORK_TRUSTED_PROXIES": ("network", "trusted_proxies"),
         "BUOY_NETWORK_VERIFY_SSL": ("network", "verify_ssl"),
+        "BUOY_NETWORK_INTERFACES": ("network", "interfaces"),
         "BUOY_AUTH_ENABLED": ("auth", "enabled"),
         "BUOY_AUTH_TOKEN": ("auth", "token"),
         "BUOY_AUTH_TYPE": ("auth", "type"),
@@ -216,11 +254,19 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         "BUOY_FEATURES_WEBSOCKET": ("features", "websocket"),
         "BUOY_FEATURES_HISTORY": ("features", "history"),
         "BUOY_FEATURES_IMAGE_UPDATES": ("features", "image_updates"),
+        "BUOY_FEATURES_CONTAINER_STATS": ("features", "container_stats"),
+        "BUOY_FEATURES_PWA": ("features", "pwa"),
+        "BUOY_FEATURES_LOG_STREAMING": ("features", "log_streaming"),
+        "BUOY_LOGS_DEFAULT_TAIL": ("logs", "default_tail"),
+        "BUOY_LOGS_MAX_TAIL": ("logs", "max_tail"),
+        "BUOY_FEATURES_GPU": ("features", "gpu"),
         "BUOY_REFRESH_STATS_INTERVAL": ("refresh", "stats_interval"),
         "BUOY_REFRESH_SERVICES_INTERVAL": ("refresh", "services_interval"),
         "BUOY_REFRESH_FLEET_INTERVAL": ("refresh", "fleet_interval"),
         "BUOY_REFRESH_PLUGINS_INTERVAL": ("refresh", "plugins_interval"),
         "BUOY_REFRESH_IMAGE_UPDATES_INTERVAL": ("refresh", "image_updates_interval"),
+        "BUOY_REFRESH_CONTAINER_STATS_INTERVAL": ("refresh", "container_stats_interval"),
+        "BUOY_REFRESH_HEALTH_CHECK_INTERVAL": ("refresh", "health_check_interval"),
         "BUOY_ALERTS_WEBHOOK_URL": ("alerts", "webhook_url"),
         "BUOY_LOG_LEVEL": ("logging", "level"),
     }
@@ -242,17 +288,32 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             "fleet_interval",
             "plugins_interval",
             "image_updates_interval",
+            "container_stats_interval",
+            "default_tail",
+            "max_tail",
+            "health_check_interval",
         ):
             # An empty string (e.g. `BUOY_NETWORK_LISTEN_PORT=`) is treated as an
             # explicit invalid value, not "unset" — only a missing env var (checked
             # above) falls back to the YAML/default. There's no sensible int for "",
             # so we surface the same ConfigError as any other unparsable value.
             raw[section][key] = _coerce_int(value, env_key)
-        elif key in ("enabled", "websocket", "history", "demo_mode", "image_updates", "verify_ssl"):
+        elif key in (
+            "enabled",
+            "websocket",
+            "history",
+            "demo_mode",
+            "image_updates",
+            "container_stats",
+            "verify_ssl",
+            "pwa",
+            "log_streaming",
+            "gpu",
+        ):
             raw[section][key] = value.lower() in ("true", "1", "yes")
         elif key == "allowed_origins":
             raw[section][key] = [origin.strip() for origin in value.split(",") if origin.strip()]
-        elif key == "trusted_proxies":
+        elif key in ("trusted_proxies", "interfaces"):
             raw[section][key] = [entry.strip() for entry in value.split(",") if entry.strip()]
         else:
             raw[section][key] = value
@@ -300,8 +361,52 @@ def _parse_overrides(raw_overrides: dict[str, dict]) -> dict[str, ServiceOverrid
             desc=cfg.get("desc", ""),
             port=cfg.get("port"),
             path=cfg.get("path", ""),
+            group=cfg.get("group", ""),
         )
     return overrides
+
+
+def _parse_static_services(raw_static: list) -> list[StaticService]:
+    """Parse ``services.static`` entries (non-Docker services and bookmarks).
+
+    An entry without a ``name`` is skipped with a warning rather than raising,
+    consistent with the "unknown/bad config warns, never crashes" rule
+    (SPEC §3.3) — a typo'd static entry shouldn't take down the whole node.
+    """
+    entries = []
+    for cfg in raw_static:
+        if not isinstance(cfg, dict):
+            logger.warning("services.static: expected a mapping, got %r — skipped", cfg)
+            continue
+
+        name = cfg.get("name", "")
+        if not name:
+            logger.warning("services.static: entry without a 'name' skipped: %r", cfg)
+            continue
+
+        raw_health = cfg.get("health_check")
+        if raw_health is True:
+            health_check = cfg.get("url", "")
+        elif isinstance(raw_health, str) and raw_health:
+            health_check = raw_health
+        else:
+            health_check = ""
+
+        raw_verify = cfg.get("verify_ssl")
+        verify_ssl = bool(raw_verify) if raw_verify is not None else None
+
+        entries.append(
+            StaticService(
+                name=name,
+                icon=cfg.get("icon", ""),
+                desc=cfg.get("desc") or cfg.get("description", ""),
+                url=cfg.get("url", ""),
+                health_check=health_check,
+                verify_ssl=verify_ssl,
+                group=cfg.get("group", ""),
+            )
+        )
+    return entries
 
 
 def _parse_plugins(
@@ -345,6 +450,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
     plugins_raw = raw.get("plugins", {})
     alerts_raw = raw.get("alerts", {})
     logging_raw = raw.get("logging", {})
+    logs_raw = raw.get("logs", {})
 
     node = NodeConfig(
         name=node_raw.get("name", "buoy"),
@@ -361,11 +467,44 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         allowed_origins=list(network_raw.get("allowed_origins", [])),
         trusted_proxies=list(network_raw.get("trusted_proxies", [])),
         verify_ssl=bool(network_raw.get("verify_ssl", True)),
+        interfaces=list(network_raw.get("interfaces", [])),
     )
+
+    raw_static = services_raw.get("static", [])
+    if not isinstance(raw_static, list):
+        logger.warning(
+            "services.static: expected a list, got %s — ignoring", type(raw_static).__name__
+        )
+        raw_static = []
+
+    def _string_list(key: str) -> list[str]:
+        value = services_raw.get(key, [])
+        if not isinstance(value, list):
+            logger.warning(
+                "services.%s: expected a list, got %s — ignoring", key, type(value).__name__
+            )
+            return []
+        return value
+
+    def _string_or_default(key: str, default: str) -> str:
+        value = services_raw.get(key, default)
+        if not isinstance(value, str):
+            logger.warning(
+                "services.%s: expected a string, got %s — using default",
+                key,
+                type(value).__name__,
+            )
+            return default
+        return value
 
     services = ServicesConfig(
         hidden=services_raw.get("hidden", []),
         overrides=_parse_overrides(services_raw.get("overrides", {})),
+        static=_parse_static_services(raw_static),
+        group_label=_string_or_default("group_label", "com.docker.compose.project"),
+        group_order=_string_list("group_order"),
+        order=_string_list("order"),
+        pinned=_string_list("pinned"),
     )
 
     theme = ThemeConfig(
@@ -388,6 +527,10 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         night_mode=features_raw.get("night_mode", "auto"),
         keyboard_shortcuts=bool(features_raw.get("keyboard_shortcuts", True)),
         image_updates=bool(features_raw.get("image_updates", False)),
+        container_stats=bool(features_raw.get("container_stats", True)),
+        pwa=bool(features_raw.get("pwa", True)),
+        log_streaming=bool(features_raw.get("log_streaming", True)),
+        gpu=bool(features_raw.get("gpu", True)),
     )
 
     refresh = RefreshConfig(
@@ -401,6 +544,12 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         ),
         image_updates_interval=_coerce_int(
             refresh_raw.get("image_updates_interval", 21600), "refresh.image_updates_interval"
+        ),
+        container_stats_interval=_coerce_int(
+            refresh_raw.get("container_stats_interval", 15), "refresh.container_stats_interval"
+        ),
+        health_check_interval=_coerce_int(
+            refresh_raw.get("health_check_interval", 60), "refresh.health_check_interval"
         ),
     )
 
@@ -419,6 +568,16 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         level=logging_raw.get("level", "INFO") if isinstance(logging_raw, dict) else "INFO",
     )
 
+    logs = LogsConfig(
+        default_tail=_coerce_int(logs_raw.get("default_tail", 100), "logs.default_tail"),
+        max_tail=_coerce_int(logs_raw.get("max_tail", 1000), "logs.max_tail"),
+        max_streams=_coerce_int(logs_raw.get("max_streams", 4), "logs.max_streams"),
+        max_line_bytes=_coerce_int(logs_raw.get("max_line_bytes", 8192), "logs.max_line_bytes"),
+        stream_rate_limit=_coerce_int(
+            logs_raw.get("stream_rate_limit", 500), "logs.stream_rate_limit"
+        ),
+    )
+
     return BuoyConfig(
         node=node,
         network=network,
@@ -430,6 +589,7 @@ def _build_config(raw: dict[str, Any]) -> BuoyConfig:
         plugins=plugins,
         alerts=alerts,
         logging=logging_cfg,
+        logs=logs,
     )
 
 
@@ -449,6 +609,7 @@ _CONFIG_SECTIONS: dict[str, type] = {
     "plugins": PluginsConfig,
     "alerts": AlertsConfig,
     "logging": LoggingConfig,
+    "logs": LogsConfig,
 }
 
 

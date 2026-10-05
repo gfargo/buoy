@@ -1,0 +1,31 @@
+app = "buoy-demo"
+primary_region = "iad"
+
+[build]
+  image = "ghcr.io/gfargo/buoy:latest"
+
+# ENTRYPOINT is ["python","-m","buoy"]; this replaces the image CMD
+# (["--config","/config/buoy.yaml"]) exactly like CI's smoke job does
+# (.github/workflows/ci.yml: `docker run ... buoy:smoke --demo`).
+[processes]
+  app = "--demo"
+
+[env]
+  BUOY_NODE_NAME = "buoy-demo"
+
+[http_service]
+  internal_port = 8090
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

@@ -1,0 +1,104 @@
+# Alert rules mirroring buoy's own in-app alert engine
+# (DEFAULT_THRESHOLDS in src/buoy/alerts.py) so a Prometheus-based alert
+# and a buoy in-app alert fire on the same thresholds. If you change
+# DEFAULT_THRESHOLDS, update this file to match — tests/test_grafana_dashboard.py
+# asserts the two stay in sync.
+#
+# Deliberately does NOT alert on absence of buoy_cpu_percent / _temperature_/
+# _memory_ metrics: those are legitimately omitted on hosts where the
+# collector can't read them (no sensor, unsupported platform), and an
+# absent() alert there would fire permanently on such hosts.
+#
+# Load with: rule_files: ["alert-rules.yml"] in prometheus.yml.
+groups:
+  - name: buoy.alerts
+    rules:
+      - alert: BuoyCPUHigh
+        expr: buoy_cpu_percent > 80
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU on {{ $labels.host }}"
+          description: "CPU usage on {{ $labels.host }} has been above 80% for 1 minute (current value: {{ $value }}%)."
+
+      - alert: BuoyCPUCritical
+        expr: buoy_cpu_percent > 95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical CPU on {{ $labels.host }}"
+          description: "CPU usage on {{ $labels.host }} has been above 95% for 1 minute (current value: {{ $value }}%)."
+
+      - alert: BuoyMemoryHigh
+        expr: (100 * buoy_memory_used_bytes / buoy_memory_total_bytes) > 85
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.host }}"
+          description: "Memory usage on {{ $labels.host }} has been above 85% for 1 minute (current value: {{ $value }}%)."
+
+      - alert: BuoyMemoryCritical
+        expr: (100 * buoy_memory_used_bytes / buoy_memory_total_bytes) > 95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical memory usage on {{ $labels.host }}"
+          description: "Memory usage on {{ $labels.host }} has been above 95% for 1 minute (current value: {{ $value }}%)."
+
+      - alert: BuoyDiskHigh
+        expr: buoy_disk_used_percent > 80
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High disk usage on {{ $labels.host }}"
+          description: "Root disk usage on {{ $labels.host }} is above 80% (current value: {{ $value }}%)."
+
+      - alert: BuoyDiskCritical
+        expr: buoy_disk_used_percent > 90
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical disk usage on {{ $labels.host }}"
+          description: "Root disk usage on {{ $labels.host }} is above 90% (current value: {{ $value }}%)."
+
+      - alert: BuoyTempHigh
+        expr: buoy_temperature_celsius > 75
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "High temperature on {{ $labels.host }}"
+          description: "CPU temperature on {{ $labels.host }} has been above 75°C for 30 seconds (current value: {{ $value }}°C)."
+
+      - alert: BuoyTempCritical
+        expr: buoy_temperature_celsius > 85
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical temperature on {{ $labels.host }}"
+          description: "CPU temperature on {{ $labels.host }} has been above 85°C for 30 seconds (current value: {{ $value }}°C)."
+
+      - alert: BuoyNVMeWearHigh
+        expr: buoy_nvme_wear_percent > 80
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "High NVMe wear on {{ $labels.host }}"
+          description: "NVMe wear on {{ $labels.host }} is above 80% (current value: {{ $value }}%). Consider planning a drive replacement."
+
+      - alert: BuoyDown
+        expr: up{job="buoy"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Buoy target down: {{ $labels.instance }}"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for 5 minutes."

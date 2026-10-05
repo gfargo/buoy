@@ -112,6 +112,7 @@ class TestSystemdHealthPlugin:
             "status": "error",
             "truncate": False,
             "mono": False,
+            "wrap": False,
         }
 
     def test_render_no_units_shows_text(self):

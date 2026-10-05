@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections import Counter
 
 from buoy.plugins import panel
 from buoy.plugins.protocol import PanelData, Plugin, PluginManifest
@@ -85,8 +86,18 @@ class JournalErrorsPlugin(Plugin):
                 "unit": "docker",
                 "message": "Container jellyfin health check failed, retrying",
             },
+            {
+                "time": "Aug 23 10:02:41",
+                "unit": "docker",
+                "message": "Container jellyfin health check failed, retrying",
+            },
+            {
+                "time": "Aug 23 11:47:19",
+                "unit": "smartd",
+                "message": "Device: /dev/sda [SAT], 3 Currently unreadable (pending) sectors",
+            },
         ]
-        return PanelData(status="warn", summary="1 error (24h)", detail={"entries": entries})
+        return PanelData(status="warn", summary="3 errors (24h)", detail={"entries": entries})
 
     def render(self, data: PanelData) -> list[dict] | None:
         entries = data.detail.get("entries") or []
@@ -102,3 +113,31 @@ class JournalErrorsPlugin(Plugin):
             for e in entries
         ]
         return [panel.table(["Time", "Unit", "Message"], rows)]
+
+    def render_detail(self, data: PanelData) -> list[dict] | None:
+        entries = data.detail.get("entries") or []
+        if not entries:
+            return [panel.text("No journal errors in 24h", status="dim")]
+
+        counts = Counter(e.get("unit") for e in entries if e.get("unit"))
+        blocks: list[dict] = []
+        if counts:
+            blocks.append(
+                panel.badges(
+                    [
+                        panel.badge(f"{unit} ({n})", status="error")
+                        for unit, n in counts.most_common()
+                    ]
+                )
+            )
+
+        rows = [
+            [
+                panel.cell(e.get("time", "")[4:], status="dim"),
+                panel.cell(e.get("unit", ""), mono=True),
+                panel.cell(e.get("message", ""), status="error", wrap=True),
+            ]
+            for e in entries
+        ]
+        blocks.append(panel.table(["Time", "Unit", "Message"], rows))
+        return blocks
