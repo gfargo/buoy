@@ -98,6 +98,23 @@ class TestDemoDockerCollector:
         assert data["containers"] > 0
         assert len(data["containers_list"]) > 0
 
+        by_name = {c["name"]: c for c in data["containers_list"]}
+        # `containers` (the running count) must be strictly less than the
+        # length of containers_list, since demo data includes an exited entry.
+        assert data["containers"] < len(data["containers_list"])
+        assert any(c["health"] == "unhealthy" for c in data["containers_list"])
+        assert any(c["state"] != "running" for c in data["containers_list"])
+        running = [c for c in data["containers_list"] if c["state"] == "running"]
+        assert running, "expected at least one running demo container"
+        assert running[0]["cpu_pct"].endswith("%"), (
+            "cpu_pct must already include the '%' suffix so the frontend can "
+            "render it directly without appending another '%'"
+        )
+        # Non-running containers report no live cpu/mem.
+        non_running = [c for c in data["containers_list"] if c["state"] != "running"]
+        assert non_running[0]["cpu_pct"] is None
+        assert "status" in by_name["grafana"]
+
     @pytest.mark.asyncio
     async def test_inspect_container(self):
         config = _make_config()
@@ -112,6 +129,13 @@ class TestDemoDockerCollector:
             "cpu_pct must already include the '%' suffix so the frontend can "
             "render it directly without appending another '%'"
         )
+
+    @pytest.mark.asyncio
+    async def test_is_available_always_true(self):
+        config = _make_config()
+        coll = DemoDockerCollector(config)
+        assert await coll.is_available() is True
+        assert await coll.is_available(force=True) is True
 
     @pytest.mark.asyncio
     async def test_get_logs(self):
@@ -252,6 +276,387 @@ class TestDockerListContainersCache:
         assert result == [{"name": "already-cached", "host_port": None}]
 
 
+class TestDockerCollectSummary:
+    """Tests for DockerCollector.collect_summary() state/health/cpu/mem merge
+    (OSS-1550 / buoy#192)."""
+
+    @staticmethod
+    def _run_side_effect(ps_a_output="", stats_output="", ps_code=0, stats_code=0):
+        async def _run(*args, **kwargs):
+            if args and args[0] == "ps":
+                return (ps_code, ps_a_output, "")
+            if args and args[0] == "stats":
+                return (stats_code, stats_output, "")
+            return (1, "", "unexpected command")
+
+        return _run
+
+    @pytest.mark.asyncio
+    async def test_merges_state_health_and_stats_by_name(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(return_value=[{"name": "grafana", "host_port": 3000}])
+        coll._run = self._run_side_effect(
+            ps_a_output=(
+                "grafana\trunning\tUp 2 hours (healthy)\nold-job\texited\tExited (0) 3 hours ago"
+            ),
+            stats_output="grafana\t1.23%\t45MiB / 8GiB\t0.55%",
+        )
+
+        data = await coll.collect_summary()
+        await coll._stats_task
+
+        # `containers` stays the running count from list_containers(), while
+        # containers_list includes the exited one too.
+        assert data["containers"] == 1
+        assert len(data["containers_list"]) == 2
+
+        by_name = {c["name"]: c for c in data["containers_list"]}
+        assert by_name["grafana"]["state"] == "running"
+        assert by_name["grafana"]["health"] == "healthy"
+        assert by_name["old-job"]["state"] == "exited"
+        assert by_name["old-job"]["health"] is None
+        assert by_name["old-job"]["cpu_pct"] is None
+
+    @pytest.mark.asyncio
+    async def test_health_starting_and_unhealthy_parsed(self):
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll._run = self._run_side_effect(
+            ps_a_output=(
+                "a\trunning\tUp 1 minute (health: starting)\n"
+                "b\trunning\tUp 1 hour (unhealthy)\n"
+                "c\trunning\tUp 1 hour"
+            )
+        )
+
+        states = await coll._fetch_container_states()
+        by_name = {s["name"]: s for s in states}
+        assert by_name["a"]["health"] == "starting"
+        assert by_name["b"]["health"] == "unhealthy"
+        assert by_name["c"]["health"] is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_container_stats_failure_returns_empty(self):
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll._run = self._run_side_effect(stats_code=1)
+
+        stats = await coll._fetch_container_stats()
+        assert stats == {}
+
+    @pytest.mark.asyncio
+    async def test_collect_summary_survives_stats_failure(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(return_value=[{"name": "grafana", "host_port": 3000}])
+        coll._run = self._run_side_effect(
+            ps_a_output="grafana\trunning\tUp 2 hours",
+            stats_code=1,
+        )
+
+        data = await coll.collect_summary()
+        await coll._stats_task
+
+        assert data["containers_list"][0]["cpu_pct"] is None
+
+    @pytest.mark.asyncio
+    async def test_cold_cache_returns_without_awaiting_stats(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(return_value=[{"name": "grafana", "host_port": 3000}])
+        coll._fetch_container_states = AsyncMock(
+            return_value=[{"name": "grafana", "state": "running", "status": "Up", "health": None}]
+        )
+        fetch_stats = AsyncMock(
+            return_value={"grafana": {"cpu_pct": "1%", "mem_usage": "1MiB", "mem_pct": "1%"}}
+        )
+        coll._fetch_container_stats = fetch_stats
+
+        data = await coll.collect_summary()
+
+        # Cold cache: no cpu/mem yet, and the stats subprocess was only
+        # scheduled, not awaited inline.
+        assert data["containers_list"][0]["cpu_pct"] is None
+        fetch_stats.assert_not_called()
+        assert coll._stats_task is not None
+
+    @pytest.mark.asyncio
+    async def test_stats_cache_reused_within_ttl_then_refreshes(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(return_value=[{"name": "grafana", "host_port": 3000}])
+        coll._fetch_container_states = AsyncMock(
+            return_value=[{"name": "grafana", "state": "running", "status": "Up", "health": None}]
+        )
+        fetch_stats = AsyncMock(
+            return_value={"grafana": {"cpu_pct": "1%", "mem_usage": "1MiB", "mem_pct": "1%"}}
+        )
+        coll._fetch_container_stats = fetch_stats
+
+        await coll.collect_summary()
+        await coll._stats_task
+        fetch_stats.assert_called_once()
+
+        # Second call within TTL: cache is warm, no second subprocess call.
+        data2 = await coll.collect_summary()
+        assert data2["containers_list"][0]["cpu_pct"] == "1%"
+        fetch_stats.assert_called_once()
+
+        # Simulate TTL expiry.
+        coll._stats_cache_ts -= config.refresh.container_stats_interval + 1
+        await coll.collect_summary()
+        await coll._stats_task
+        assert fetch_stats.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_ps_a_failure_falls_back_to_running_set(self):
+        """A transient `docker ps -a` failure/timeout must not empty
+        `containers_list` while `containers` still reports a count — fall
+        back to the already-fetched running set instead."""
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(
+            return_value=[
+                {"name": "grafana", "host_port": 3000},
+                {"name": "redis", "host_port": None},
+            ]
+        )
+        coll._fetch_container_states = AsyncMock(return_value=[])
+        coll._fetch_container_stats = AsyncMock(return_value={})
+
+        data = await coll.collect_summary()
+        await coll._stats_task
+
+        assert data["containers"] == 2
+        assert len(data["containers_list"]) == 2
+        names = {c["name"] for c in data["containers_list"]}
+        assert names == {"grafana", "redis"}
+        assert all(c["state"] == "running" for c in data["containers_list"])
+
+    @pytest.mark.asyncio
+    async def test_ps_a_and_ps_both_empty_stays_empty(self):
+        """No containers running is not a failure — must not be confused
+        with the ps -a fallback path."""
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(return_value=[])
+        coll._fetch_container_states = AsyncMock(return_value=[])
+        coll._fetch_container_stats = AsyncMock(return_value={})
+
+        data = await coll.collect_summary()
+        await coll._stats_task
+
+        assert data["containers"] == 0
+        assert data["containers_list"] == []
+
+    @pytest.mark.asyncio
+    async def test_aclose_cancels_in_flight_stats_refresh(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(return_value=[{"name": "grafana", "host_port": 3000}])
+        coll._fetch_container_states = AsyncMock(
+            return_value=[{"name": "grafana", "state": "running", "status": "Up", "health": None}]
+        )
+
+        async def _slow_fetch():
+            await asyncio.sleep(10)
+            return {}
+
+        coll._fetch_container_stats = _slow_fetch
+
+        await coll.collect_summary()
+        assert coll._stats_task is not None
+        assert not coll._stats_task.done()
+
+        await coll.aclose()
+
+        assert coll._stats_task.cancelled() or coll._stats_task.done()
+
+    @pytest.mark.asyncio
+    async def test_aclose_is_a_noop_with_no_task(self):
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        await coll.aclose()  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_container_stats_feature_flag_disabled_skips_stats(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        config.features.container_stats = False
+        coll = DockerCollector(config)
+        coll.list_containers = AsyncMock(return_value=[{"name": "grafana", "host_port": 3000}])
+        coll._fetch_container_states = AsyncMock(
+            return_value=[{"name": "grafana", "state": "running", "status": "Up", "health": None}]
+        )
+        fetch_stats = AsyncMock(return_value={"grafana": {"cpu_pct": "1%"}})
+        coll._fetch_container_stats = fetch_stats
+
+        data = await coll.collect_summary()
+
+        fetch_stats.assert_not_called()
+        assert coll._stats_task is None
+        assert data["containers_list"][0]["cpu_pct"] is None
+
+
+class TestDockerFetchContainersGroupLabel:
+    """Tests for the group/project label appended to `docker ps --format`
+    (FEAT-11) — the label name is interpolated into a Go template, so it
+    must be validated before use."""
+
+    @pytest.mark.asyncio
+    async def test_default_label_parses_project_field(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        coll = DockerCollector(_make_config())
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana\tmonitoring"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        assert containers == [
+            {"name": "grafana", "host_port": 3000, "service": "grafana", "project": "monitoring"}
+        ]
+        fmt_arg = coll._run.call_args.args[2]
+        assert 'Label "com.docker.compose.project"' in fmt_arg
+
+    @pytest.mark.asyncio
+    async def test_missing_project_column_yields_empty_string(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        coll = DockerCollector(_make_config())
+        # 3-column line: the label was absent on this container
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        assert containers[0]["project"] == ""
+
+    @pytest.mark.asyncio
+    async def test_custom_group_label_used_in_format(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+        from buoy.config import ServicesConfig
+
+        config = _make_config()
+        config.services = ServicesConfig(group_label="my.custom.stack")
+        coll = DockerCollector(config)
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana\tmystack"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        assert containers[0]["project"] == "mystack"
+        fmt_arg = coll._run.call_args.args[2]
+        assert 'Label "my.custom.stack"' in fmt_arg
+
+    @pytest.mark.asyncio
+    async def test_invalid_group_label_rejected_and_warns(self, caplog):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+        from buoy.config import ServicesConfig
+
+        config = _make_config()
+        config.services = ServicesConfig(group_label='"}} {{.Names')
+        coll = DockerCollector(config)
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        with caplog.at_level("WARNING", logger="buoy.collectors.docker"):
+            containers = await coll._fetch_containers()
+
+        fmt_arg = coll._run.call_args.args[2]
+        assert '"}} {{.Names' not in fmt_arg
+        assert containers[0]["project"] == ""
+        assert any("group_label" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_non_string_group_label_does_not_crash(self, caplog):
+        # ServicesConfig is a plain dataclass with no runtime type
+        # enforcement, so a non-string could reach here even though
+        # load_config() itself now guards against it — the regex match must
+        # not blow up on a bool/int/list value.
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+        from buoy.config import ServicesConfig
+
+        config = _make_config()
+        config.services = ServicesConfig(group_label=True)
+        coll = DockerCollector(config)
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        fmt_arg = coll._run.call_args.args[2]
+        assert fmt_arg.count("Label") == 1  # only the compose-service label
+        assert containers[0]["project"] == ""
+
+    @pytest.mark.asyncio
+    async def test_empty_group_label_omits_field(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+        from buoy.config import ServicesConfig
+
+        config = _make_config()
+        config.services = ServicesConfig(group_label="")
+        coll = DockerCollector(config)
+        stdout = "grafana\t0.0.0.0:3000->3000/tcp\tgrafana"
+        coll._run = AsyncMock(return_value=(0, stdout, ""))
+
+        containers = await coll._fetch_containers()
+
+        fmt_arg = coll._run.call_args.args[2]
+        assert fmt_arg.count("Label") == 1  # only the compose-service label
+        assert containers[0]["project"] == ""
+
+
 class TestDockerGetLogs:
     """Tests for DockerCollector.get_logs() stdout/stderr interleaving (BUG-49).
 
@@ -353,6 +758,154 @@ class TestDockerGetLogs:
         assert result == {"error": "invalid container name"}
 
 
+class _FakeStream:
+    """Minimal stand-in for asyncio.StreamReader — yields queued lines, then hangs."""
+
+    def __init__(self, lines):
+        self._lines = list(lines)
+
+    async def readline(self):
+        if self._lines:
+            return self._lines.pop(0)
+        await asyncio.sleep(3600)  # simulate a still-following, quiet container
+
+
+class TestDockerStreamLogs:
+    """Tests for DockerCollector.stream_logs() — the WS-backed `docker logs -f` follow."""
+
+    def _make_proc(self, stdout_lines=(), stderr_lines=()):
+        from unittest.mock import AsyncMock, MagicMock
+
+        proc = MagicMock()
+        proc.stdout = _FakeStream(stdout_lines)
+        proc.stderr = _FakeStream(stderr_lines)
+        proc.kill = MagicMock()
+        proc.wait = AsyncMock()
+        return proc
+
+    @pytest.mark.asyncio
+    async def test_invalid_container_name_raises(self):
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+
+        with pytest.raises(ValueError):
+            async for _ in coll.stream_logs("../../etc/passwd"):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_yields_interleaved_stdout_and_stderr(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        proc = self._make_proc(
+            stdout_lines=[b"2024-01-01T00:00:00Z out1\n"],
+            stderr_lines=[b"2024-01-01T00:00:01Z err1\n"],
+        )
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10)
+            items = []
+            async for item in gen:
+                items.append(item)
+                if len(items) == 2:
+                    break
+            await gen.aclose()
+
+        assert {"stream": "stdout", "line": "2024-01-01T00:00:00Z out1"} in items
+        assert {"stream": "stderr", "line": "2024-01-01T00:00:01Z err1"} in items
+
+    @pytest.mark.asyncio
+    async def test_truncates_over_long_lines(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        long_line = ("x" * 50 + "\n").encode()
+        proc = self._make_proc(stdout_lines=[long_line])
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10, max_line_bytes=10)
+            item = await gen.__anext__()
+            await gen.aclose()
+
+        assert item["line"].endswith("…[truncated]")
+        assert len(item["line"]) <= 10 + len("…[truncated]")
+
+    @pytest.mark.asyncio
+    async def test_truncates_multibyte_utf8_by_byte_budget_not_char_count(self):
+        """`max_line_bytes` is documented (and named) as a byte budget — a
+        line of multi-byte UTF-8 chars must be capped by encoded byte length,
+        not `len()` of the decoded string, or it silently exceeds the cap."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        # Each "é" is 2 bytes in UTF-8 — 20 of them is 40 bytes but len() == 20.
+        long_line = ("é" * 20 + "\n").encode("utf-8")
+        proc = self._make_proc(stdout_lines=[long_line])
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10, max_line_bytes=10)
+            item = await gen.__anext__()
+            await gen.aclose()
+
+        assert item["line"].endswith("…[truncated]")
+        kept = item["line"].removesuffix("…[truncated]")
+        assert len(kept.encode("utf-8")) <= 10
+
+    @pytest.mark.asyncio
+    async def test_kills_and_reaps_process_on_early_close(self):
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        proc = self._make_proc(stdout_lines=[b"2024-01-01T00:00:00Z hello\n"])
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10)
+            await gen.__anext__()
+            await gen.aclose()
+
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_kills_process_on_task_cancellation(self):
+        """Regression: cancellation from the WS handler side (not an explicit
+        aclose()) must still reach the kill/reap `finally` block."""
+        from unittest.mock import AsyncMock, patch
+
+        from buoy.collectors.docker import DockerCollector
+
+        config = _make_config()
+        coll = DockerCollector(config)
+        proc = self._make_proc(stdout_lines=[b"2024-01-01T00:00:00Z hello\n"])
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            gen = coll.stream_logs("grafana", tail=10)
+            await gen.__anext__()
+
+            task = asyncio.ensure_future(gen.__anext__())
+            await asyncio.sleep(0)  # let the task start awaiting the next item
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited()
+
+
 class TestDockerRun:
     """Tests for DockerCollector._run()'s own exception-handling branches."""
 
@@ -393,29 +946,6 @@ class TestDockerRun:
             result = await coll._run("info")
 
         assert result == (1, "", "docker not found")
-
-
-class TestDockerCollectSummary:
-    @pytest.mark.asyncio
-    async def test_collect_summary_reports_count_and_names(self):
-        from unittest.mock import AsyncMock
-
-        from buoy.collectors.docker import DockerCollector
-
-        coll = DockerCollector(_make_config())
-        coll.list_containers = AsyncMock(
-            return_value=[
-                {"name": "grafana", "host_port": 3000, "service": "grafana"},
-                {"name": "redis", "host_port": None, "service": "redis"},
-            ]
-        )
-
-        summary = await coll.collect_summary()
-
-        assert summary == {
-            "containers": 2,
-            "containers_list": [{"name": "grafana"}, {"name": "redis"}],
-        }
 
 
 class TestDockerIsAvailable:
@@ -461,6 +991,22 @@ class TestDockerIsAvailable:
         assert second is True
         coll._run.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_force_resets_the_cache_and_reprobes(self):
+        from unittest.mock import AsyncMock
+
+        from buoy.collectors.docker import DockerCollector
+
+        coll = DockerCollector(_make_config())
+        coll._run = AsyncMock(side_effect=[(1, "", "docker not found"), (0, "abc123", "")])
+
+        first = await coll.is_available()
+        second = await coll.is_available(force=True)
+
+        assert first is False
+        assert second is True
+        assert coll._run.await_count == 2
+
 
 class TestDockerFetchContainers:
     """_fetch_containers() was only ever exercised through a stub — the
@@ -477,7 +1023,9 @@ class TestDockerFetchContainers:
 
         containers = await coll._fetch_containers()
 
-        assert containers == [{"name": "grafana", "host_port": 3000, "service": "grafana"}]
+        assert containers == [
+            {"name": "grafana", "host_port": 3000, "service": "grafana", "project": ""}
+        ]
 
     @pytest.mark.asyncio
     async def test_missing_ports_and_service_columns_default_to_empty(self):
@@ -490,7 +1038,7 @@ class TestDockerFetchContainers:
 
         containers = await coll._fetch_containers()
 
-        assert containers == [{"name": "grafana", "host_port": None, "service": ""}]
+        assert containers == [{"name": "grafana", "host_port": None, "service": "", "project": ""}]
 
     @pytest.mark.asyncio
     async def test_blank_lines_are_skipped(self):
@@ -2469,3 +3017,428 @@ class TestSystemCollectorCgroupCpuQuota:
             cores = coll._effective_cpu_cores()
 
         assert cores == 2
+
+
+_NET_DEV_HEADER = (
+    "Inter-|   Receive                                                |  Transmit\n"
+    " face |bytes    packets errs drop fifo frame compressed multicast|"
+    "bytes    packets errs drop fifo colls carrier compressed\n"
+)
+
+
+def _net_dev_line(name, rx_bytes, tx_bytes, rx_errs=0, rx_drop=0, tx_errs=0, tx_drop=0):
+    fields = [rx_bytes, 0, rx_errs, rx_drop, 0, 0, 0, 0, tx_bytes, 0, tx_errs, tx_drop, 0, 0, 0, 0]
+    return f"{name}: " + " ".join(str(f) for f in fields) + "\n"
+
+
+def _net_dev_text(entries):
+    """entries: list of (name, rx_bytes, tx_bytes, rx_errs, rx_drop, tx_errs, tx_drop)."""
+    return _NET_DEV_HEADER + "".join(_net_dev_line(*e) for e in entries)
+
+
+_ROUTE_HEADER = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+
+
+def _route_line(iface, dest="00000000", metric=0):
+    return f"{iface}\t{dest}\t0102A8C0\t0003\t0\t0\t{metric}\t00000000\t0\t0\t0\n"
+
+
+def _route_text(entries):
+    """entries: list of (iface, dest, metric)."""
+    return _ROUTE_HEADER + "".join(_route_line(*e) for e in entries)
+
+
+class TestNetworkThroughputParsing:
+    """Pure-parsing tests for NetworkCollector's /proc/net/dev + /proc/net/route helpers."""
+
+    def test_header_lines_ignored(self):
+        from buoy.collectors.network import NetworkCollector
+
+        text = _net_dev_text([("eth0", 100, 200)])
+        result = NetworkCollector._parse_net_dev(text)
+
+        assert set(result) == {"eth0"}
+
+    def test_requires_sixteen_fields(self):
+        from buoy.collectors.network import NetworkCollector
+
+        text = _NET_DEV_HEADER + "eth0: 100 200 300\n"
+        result = NetworkCollector._parse_net_dev(text)
+
+        assert result == {}
+
+    def test_colon_flush_against_name_is_handled(self):
+        from buoy.collectors.network import NetworkCollector
+
+        text = _net_dev_text([("wlan0", 111, 222)])
+        result = NetworkCollector._parse_net_dev(text)
+
+        assert "wlan0" in result
+
+    def test_extracts_rx_tx_bytes_errors_drops(self):
+        from buoy.collectors.network import NetworkCollector
+
+        text = _net_dev_text([("eth0", 500000, 300000, 1, 2, 3, 4)])
+        result = NetworkCollector._parse_net_dev(text)
+
+        assert result["eth0"] == {
+            "rx_bytes": 500000,
+            "rx_errors": 1,
+            "rx_dropped": 2,
+            "tx_bytes": 300000,
+            "tx_errors": 3,
+            "tx_dropped": 4,
+        }
+
+    def test_alias_style_names_parsed(self):
+        from buoy.collectors.network import NetworkCollector
+
+        text = _net_dev_text([("eth0:1", 10, 20)])
+        result = NetworkCollector._parse_net_dev(text)
+
+        # partition on first ':' only — an alias suffix after a second colon
+        # ends up folded into the field list and fails the 16-field check,
+        # so it's simply skipped rather than mis-parsed.
+        assert "eth0" not in result
+
+    def test_default_route_picks_lowest_metric(self):
+        from buoy.collectors.network import NetworkCollector
+
+        text = _route_text([("eth1", "00000000", 600), ("eth0", "00000000", 100)])
+        assert NetworkCollector._parse_default_route(text) == "eth0"
+
+    def test_default_route_ignores_non_default_destinations(self):
+        from buoy.collectors.network import NetworkCollector
+
+        text = _route_text([("eth0", "000011AC", 0)])
+        assert NetworkCollector._parse_default_route(text) is None
+
+    def test_default_route_empty_text_returns_none(self):
+        from buoy.collectors.network import NetworkCollector
+
+        assert NetworkCollector._parse_default_route("") is None
+
+
+class TestNetworkThroughputFiltering:
+    """Tests for NetworkCollector._included (interface allow/skip filtering)."""
+
+    @staticmethod
+    def _coll(interfaces=None):
+        from buoy.collectors.network import NetworkCollector
+
+        config = _make_config()
+        config.network.interfaces = interfaces or []
+        return NetworkCollector(config)
+
+    @pytest.mark.parametrize("name", ["lo", "veth1a2b", "docker0", "br-abc123", "virbr0"])
+    def test_default_skips_virtual_interfaces(self, name):
+        coll = self._coll()
+        assert coll._included(name) is False
+
+    @pytest.mark.parametrize("name", ["eth0", "enp3s0", "tailscale0", "wg0"])
+    def test_default_keeps_real_interfaces(self, name):
+        coll = self._coll()
+        assert coll._included(name) is True
+
+    def test_allowlist_includes_normally_skipped_interface(self):
+        coll = self._coll(interfaces=["br-abc123"])
+        assert coll._included("br-abc123") is True
+
+    def test_allowlist_excludes_normally_kept_interface_when_omitted(self):
+        coll = self._coll(interfaces=["eth0"])
+        assert coll._included("wg0") is False
+
+
+class TestNetworkThroughputRates:
+    """Tests for NetworkCollector._compute_rates (pure rate math)."""
+
+    def test_no_prior_sample_yields_zero(self):
+        from buoy.collectors.network import NetworkCollector
+
+        cur = {"eth0": {"rx_bytes": 1000, "tx_bytes": 500}}
+        rates = NetworkCollector._compute_rates({}, cur, elapsed=5.0)
+
+        assert rates == {"eth0": {"rx_bytes_per_sec": 0.0, "tx_bytes_per_sec": 0.0}}
+
+    def test_computes_delta_over_elapsed(self):
+        from buoy.collectors.network import NetworkCollector
+
+        prev = {"eth0": {"rx_bytes": 1000, "tx_bytes": 500}}
+        cur = {"eth0": {"rx_bytes": 6000, "tx_bytes": 1500}}
+        rates = NetworkCollector._compute_rates(prev, cur, elapsed=5.0)
+
+        assert rates == {"eth0": {"rx_bytes_per_sec": 1000.0, "tx_bytes_per_sec": 200.0}}
+
+    def test_counter_regression_clamps_to_zero(self):
+        from buoy.collectors.network import NetworkCollector
+
+        prev = {"eth0": {"rx_bytes": 6000, "tx_bytes": 1500}}
+        cur = {"eth0": {"rx_bytes": 100, "tx_bytes": 50}}  # counter reset/wrapped
+        rates = NetworkCollector._compute_rates(prev, cur, elapsed=5.0)
+
+        assert rates == {"eth0": {"rx_bytes_per_sec": 0.0, "tx_bytes_per_sec": 0.0}}
+
+    def test_non_positive_elapsed_yields_zero(self):
+        from buoy.collectors.network import NetworkCollector
+
+        prev = {"eth0": {"rx_bytes": 1000, "tx_bytes": 500}}
+        cur = {"eth0": {"rx_bytes": 6000, "tx_bytes": 1500}}
+        rates = NetworkCollector._compute_rates(prev, cur, elapsed=0.0)
+
+        assert rates == {"eth0": {"rx_bytes_per_sec": 0.0, "tx_bytes_per_sec": 0.0}}
+
+
+class TestNetworkThroughputPrimarySelection:
+    def test_highest_total_bytes_fallback(self):
+        from buoy.collectors.network import NetworkCollector
+
+        interfaces = {
+            "eth0": {"rx_bytes": 1000, "tx_bytes": 500},
+            "wg0": {"rx_bytes": 50000, "tx_bytes": 20000},
+        }
+        assert NetworkCollector._pick_highest_total(interfaces) == "wg0"
+
+    def test_highest_total_bytes_empty_returns_none(self):
+        from buoy.collectors.network import NetworkCollector
+
+        assert NetworkCollector._pick_highest_total({}) is None
+
+
+class TestNetworkThroughputCollect:
+    """Tests for the stateful NetworkCollector.collect_throughput()."""
+
+    @pytest.mark.asyncio
+    async def test_non_linux_returns_empty(self):
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        coll._is_linux = False  # simulate macOS/Windows without patching platform.system globally
+
+        assert await coll.collect_throughput() == {}
+
+    @pytest.mark.asyncio
+    async def test_unreadable_proc_returns_empty_without_raising(self):
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        with patch("builtins.open", side_effect=OSError("no such file")):
+            result = await coll.collect_throughput()
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_first_sample_reports_zero_rates(self):
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        text = _net_dev_text([("eth0", 500000, 300000)])
+        with patch.object(
+            coll, "_read_net_dev_and_route", return_value=(text, "", "/proc/net/dev")
+        ):
+            result = await coll.collect_throughput()
+
+        assert result["net"]["rx_bytes_per_sec"] == 0.0
+        assert result["net"]["tx_bytes_per_sec"] == 0.0
+        iface = result["net"]["interfaces"][0]
+        assert iface["rx_bytes"] == 500000
+        assert iface["tx_bytes"] == 300000
+
+    @pytest.mark.asyncio
+    async def test_second_sample_computes_rate_against_first(self):
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        first = _net_dev_text([("eth0", 1000, 500)])
+        second = _net_dev_text([("eth0", 6000, 1500)])
+
+        with (
+            patch("time.monotonic", return_value=100.0),
+            patch.object(
+                coll, "_read_net_dev_and_route", return_value=(first, "", "/proc/net/dev")
+            ),
+        ):
+            await coll.collect_throughput()
+
+        with patch.object(
+            coll, "_read_net_dev_and_route", return_value=(second, "", "/proc/net/dev")
+        ):
+            with patch("time.monotonic", return_value=105.0):
+                result = await coll.collect_throughput()
+
+        assert result["net"]["rx_bytes_per_sec"] == 1000.0
+        assert result["net"]["tx_bytes_per_sec"] == 200.0
+
+    @pytest.mark.asyncio
+    async def test_errors_and_drops_surfaced_verbatim(self):
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        text = _net_dev_text([("eth0", 1000, 500, 3, 7, 2, 9)])
+        with patch.object(
+            coll, "_read_net_dev_and_route", return_value=(text, "", "/proc/net/dev")
+        ):
+            result = await coll.collect_throughput()
+
+        iface = result["net"]["interfaces"][0]
+        assert iface["rx_errors"] == 3
+        assert iface["rx_dropped"] == 7
+        assert iface["tx_errors"] == 2
+        assert iface["tx_dropped"] == 9
+
+    @pytest.mark.asyncio
+    async def test_resample_within_min_interval_returns_cached_result(self):
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        text = _net_dev_text([("eth0", 1000, 500)])
+
+        with (
+            patch("time.monotonic", return_value=100.0),
+            patch.object(
+                coll, "_read_net_dev_and_route", return_value=(text, "", "/proc/net/dev")
+            ) as mock_read,
+        ):
+            first = await coll.collect_throughput()
+
+        with (
+            patch("time.monotonic", return_value=100.5),  # < _MIN_SAMPLE_INTERVAL later
+            patch.object(coll, "_read_net_dev_and_route") as mock_read2,
+        ):
+            second = await coll.collect_throughput()
+
+        assert second is first
+        mock_read2.assert_not_called()
+        assert mock_read.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_primary_uses_default_route(self):
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        dev_text = _net_dev_text([("eth0", 1000, 500), ("wg0", 90000, 90000)])
+        route_text = _route_text([("eth0", "00000000", 100)])
+        with patch.object(
+            coll, "_read_net_dev_and_route", return_value=(dev_text, route_text, "/proc/net/dev")
+        ):
+            result = await coll.collect_throughput()
+
+        assert result["net"]["primary"] == "eth0"
+
+    @pytest.mark.asyncio
+    async def test_primary_falls_back_to_highest_total_without_route(self):
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        dev_text = _net_dev_text([("eth0", 1000, 500), ("wg0", 90000, 90000)])
+        with patch.object(
+            coll, "_read_net_dev_and_route", return_value=(dev_text, "", "/proc/net/dev")
+        ):
+            result = await coll.collect_throughput()
+
+        assert result["net"]["primary"] == "wg0"
+
+    @pytest.mark.asyncio
+    async def test_source_reflects_host_netns_path(self):
+        import io
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        text = _net_dev_text([("eth0", 1000, 500)])
+
+        def fake_open(path, *args, **kwargs):
+            if path == "/proc/1/net/dev":
+                return io.StringIO(text)
+            if path == "/proc/1/net/route":
+                return io.StringIO("")
+            raise FileNotFoundError(path)
+
+        with patch("builtins.open", side_effect=fake_open):
+            result = await coll.collect_throughput()
+
+        assert result["net"]["source"] == "/proc/1/net/dev"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_container_netns_path(self):
+        import io
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        text = _net_dev_text([("eth0", 1000, 500)])
+
+        def fake_open(path, *args, **kwargs):
+            if path == "/proc/net/dev":
+                return io.StringIO(text)
+            if path == "/proc/net/route":
+                return io.StringIO("")
+            raise FileNotFoundError(path)
+
+        with patch("builtins.open", side_effect=fake_open):
+            result = await coll.collect_throughput()
+
+        assert result["net"]["source"] == "/proc/net/dev"
+
+    @pytest.mark.asyncio
+    async def test_excluded_interfaces_absent_from_result(self):
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        text = _net_dev_text([("eth0", 1000, 500), ("lo", 10, 10), ("docker0", 20, 20)])
+        with patch.object(
+            coll, "_read_net_dev_and_route", return_value=(text, "", "/proc/net/dev")
+        ):
+            result = await coll.collect_throughput()
+
+        names = {i["name"] for i in result["net"]["interfaces"]}
+        assert names == {"eth0"}
+
+    @pytest.mark.asyncio
+    async def test_stale_interface_dropped_after_disappearing(self):
+        """An interface present in the first sample but gone from the second
+        (e.g. a short-lived veth) must not linger in the rate-tracking state."""
+        from unittest.mock import patch
+
+        from buoy.collectors.network import NetworkCollector
+
+        coll = NetworkCollector(_make_config())
+        first = _net_dev_text([("eth0", 1000, 500), ("wg0", 2000, 1000)])
+        second = _net_dev_text([("eth0", 2000, 1000)])
+
+        with (
+            patch("time.monotonic", return_value=100.0),
+            patch.object(
+                coll, "_read_net_dev_and_route", return_value=(first, "", "/proc/net/dev")
+            ),
+        ):
+            await coll.collect_throughput()
+
+        with (
+            patch("time.monotonic", return_value=105.0),
+            patch.object(
+                coll, "_read_net_dev_and_route", return_value=(second, "", "/proc/net/dev")
+            ),
+        ):
+            result = await coll.collect_throughput()
+
+        names = {i["name"] for i in result["net"]["interfaces"]}
+        assert names == {"eth0"}
+        assert "wg0" not in coll._last_net_sample[1]

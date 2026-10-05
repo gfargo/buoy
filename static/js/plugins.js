@@ -3,6 +3,7 @@
  * Supports both default rendering and custom JS from plugins.
  */
 
+import { authedFetch } from './auth.js';
 import { escapeHtml } from './escape.js';
 import { renderPanelSpec } from './panel.js';
 import { apiUrl } from './paths.js';
@@ -10,6 +11,12 @@ import { apiUrl } from './paths.js';
 let pluginRenderers = {};
 let jsLoaded = false;
 let latestById = new Map();
+// id -> last GET /api/plugins/{id} payload (health/config/manifest). Populated
+// by openPluginDetail()'s fetch and refreshPluginNow(); the 60s list poll
+// (refreshPlugins -> syncOpenPluginDetail) never touches this, so the
+// health/config section survives that poll instead of being wiped back down
+// to the card-level list payload.
+let detailById = new Map();
 
 const PLUGIN_STATUS_COLOR = {
   ok: 'var(--green)',
@@ -137,8 +144,9 @@ function renderPluginCard(plugin) {
  * no try/catch boundary around arbitrary plugin code.
  */
 export function pluginDetailBodyHtml(plugin) {
-  const bodyHtml = Array.isArray(plugin.panel) && plugin.panel.length
-    ? renderPanelSpec(plugin.panel)
+  const panelSpec = plugin.detail_panel ?? plugin.panel;
+  const bodyHtml = Array.isArray(panelSpec) && panelSpec.length
+    ? renderPanelSpec(panelSpec)
     : renderDefaultPlugin(plugin);
 
   let errorHtml = '';
@@ -153,6 +161,122 @@ export function pluginDetailBodyHtml(plugin) {
     return '<div style="font-size:0.65rem;color:var(--text-dim)">No detail data</div>';
   }
   return `${bodyHtml}${errorHtml}`;
+}
+
+/**
+ * Health section: last success (absolute + relative), last attempt, collect
+ * duration, failure count, full error text, an explicit timeout note when
+ * health.timed_out, and the effective/manifest/override/floor refresh
+ * interval breakdown from _resolve_interval. Returns '' when the payload has
+ * no health block yet (cached-list rendering before the detail fetch lands).
+ */
+export function pluginHealthHtml(plugin) {
+  const health = plugin.health;
+  if (!health) return '';
+
+  const successAbs = health.last_collect_at ? new Date(health.last_collect_at * 1000).toLocaleString() : '';
+  const successAgo = formatAgo(health.last_collect_at);
+  const attemptAbs = health.last_attempt_at ? new Date(health.last_attempt_at * 1000).toLocaleString() : '';
+  const attemptAgo = formatAgo(health.last_attempt_at);
+  const duration = health.last_collect_duration_ms != null ? `${health.last_collect_duration_ms} ms` : '—';
+
+  const manifest = plugin.manifest || {};
+  const intervalParts = [
+    `manifest default ${manifest.refresh_interval ?? '—'}s`,
+    `config override ${manifest.refresh_interval_override ?? 'none'}`,
+    `global floor ${manifest.plugins_interval_floor ?? '—'}s`,
+  ];
+  const intervalLine = `${manifest.effective_refresh_interval ?? '—'}s (${intervalParts.join(' · ')})`;
+
+  const rows = [
+    ['Last success', successAbs ? `${successAbs} (${successAgo || 'just now'})` : 'never'],
+    ['Last attempt', attemptAbs ? `${attemptAbs} (${attemptAgo || 'just now'})` : 'never'],
+    ['Last duration', duration],
+    ['Consecutive failures', String(health.consecutive_failures || 0)],
+    ['Refresh interval', intervalLine],
+  ];
+  const rowsHtml = rows
+    .map(([label, value]) => `<tr><td class="plugin-kv-label">${escapeHtml(label)}</td><td class="plugin-kv-value">${escapeHtml(value)}</td></tr>`)
+    .join('');
+
+  let errorHtml = '';
+  if (health.last_error) {
+    const timeoutNote = health.timed_out
+      ? `<div class="plugin-health-timeout">timed out after ${escapeHtml(String(health.timeout_seconds))}s</div>`
+      : '';
+    errorHtml = `<div class="plugin-health-error">${escapeHtml(health.last_error)}</div>${timeoutNote}`;
+  }
+
+  return `<div class="plugin-health">
+    <h3 class="plugin-section-title">Health</h3>
+    <table class="plugin-kv">${rowsHtml}</table>
+    ${errorHtml}
+  </div>`;
+}
+
+/**
+ * Manifest & config section: identity fields plus one row per config_schema
+ * key (effective value, secret-redacted, origin), and the full disabled-by-
+ * config-validation error list when the plugin is disabled. Returns '' when
+ * the payload has no manifest block yet.
+ */
+export function pluginConfigHtml(plugin) {
+  const manifest = plugin.manifest;
+  if (!manifest) return '';
+
+  const metaRows = [
+    ['ID', manifest.id],
+    ['Version', manifest.version],
+    ['Source', manifest.source],
+    ['Description', manifest.description],
+  ].filter(([, value]) => value);
+  const metaHtml = metaRows.length
+    ? `<table class="plugin-kv">${metaRows.map(([label, value]) => `<tr><td class="plugin-kv-label">${escapeHtml(label)}</td><td class="plugin-kv-value">${escapeHtml(value)}</td></tr>`).join('')}</table>`
+    : '';
+
+  const configRows = plugin.config || [];
+  const configHtml = configRows.length
+    ? `<table class="plugin-config-table">
+        <thead><tr><th>Key</th><th>Value</th><th>Source</th></tr></thead>
+        <tbody>${configRows
+          .map(row => `<tr>
+            <td>${escapeHtml(row.key)}${row.required ? ' <span title="required">*</span>' : ''}</td>
+            <td>${row.value === null || row.value === undefined || row.value === '' ? '<span class="plugin-config-unset">unset</span>' : escapeHtml(row.value)}</td>
+            <td class="plugin-config-source">${escapeHtml(row.source)}</td>
+          </tr>`)
+          .join('')}</tbody>
+      </table>`
+    : '';
+
+  let errorsHtml = '';
+  if (plugin.disabled && plugin.config_errors?.length) {
+    errorsHtml = `<div class="plugin-config-errors">${plugin.config_errors.map(err => `<div>${escapeHtml(err)}</div>`).join('')}</div>`;
+  }
+
+  return `<div class="plugin-config">
+    <h3 class="plugin-section-title">Manifest &amp; config</h3>
+    ${metaHtml}
+    ${configHtml}
+    ${errorsHtml}
+  </div>`;
+}
+
+/**
+ * Refresh-now button. Non-destructive (unlike restartContainer()), so no
+ * confirm step — one click fires the request. Delegated click handling in
+ * initPluginDetail() reads the plugin id from dialog.dataset.pluginId,
+ * since #plugin-detail-body's innerHTML is replaced on every render.
+ * Omitted for plugins disabled by config validation, since POST /collect
+ * always 400s for them and the config-errors list above already explains
+ * why — a button that can only fail isn't useful.
+ */
+export function pluginRefreshHtml(plugin) {
+  if (plugin.disabled) return '';
+  return '<div class="plugin-refresh"><button type="button" class="plugin-refresh-btn">&#8635; refresh now</button></div>';
+}
+
+function pluginDetailFullBodyHtml(plugin) {
+  return pluginDetailBodyHtml(plugin) + pluginHealthHtml(plugin) + pluginConfigHtml(plugin) + pluginRefreshHtml(plugin);
 }
 
 function pluginDialogEls() {
@@ -186,7 +310,14 @@ function clearPluginHash() {
   }
 }
 
-export function openPluginDetail(id) {
+/**
+ * Open the detail dialog, painting instantly from the cached list entry,
+ * then fetching GET /api/plugins/{id} for the health/config/manifest
+ * section. If the dialog has moved on to a different plugin (or closed) by
+ * the time the fetch resolves, or the fetch fails, the cached rendering is
+ * left in place rather than clobbered.
+ */
+export async function openPluginDetail(id) {
   if (!id) return;
   const plugin = latestById.get(id);
   if (!plugin) return;
@@ -194,10 +325,22 @@ export function openPluginDetail(id) {
   const els = pluginDialogEls();
   els.dialog.dataset.pluginId = id;
   paintPluginDialogHeader(els, plugin);
-  els.body.innerHTML = pluginDetailBodyHtml(plugin);
+  els.body.innerHTML = pluginDetailFullBodyHtml(detailById.get(id) || plugin);
   els.body.scrollTop = 0;
   els.dialog.showModal();
   location.hash = `#plugin=${encodeURIComponent(id)}`;
+
+  try {
+    const r = await fetch(apiUrl(`plugins/${encodeURIComponent(id)}`));
+    if (!r.ok) return;
+    const detail = await r.json();
+    if (els.dialog.dataset.pluginId !== id) return; // dialog moved on while fetching
+    detailById.set(id, detail);
+    paintPluginDialogHeader(els, detail);
+    els.body.innerHTML = pluginDetailFullBodyHtml(detail);
+  } catch (e) {
+    console.warn('[buoy:plugins] detail fetch failed:', e);
+  }
 }
 
 function closePluginDetail() {
@@ -206,10 +349,14 @@ function closePluginDetail() {
 }
 
 /**
- * Re-render the open dialog's body from a fresh payload without closing it,
- * stealing focus, or resetting scroll position. If the plugin has vanished
- * from the payload (disabled at runtime, etc.) the stale content is kept
- * rather than closing the dialog out from under the user.
+ * Re-render the open dialog on the 60s list poll without closing it,
+ * stealing focus, or resetting scroll position. The header repaints from
+ * the fresh list entry (status dot, "updated Xm ago"), but the body renders
+ * from the cached detailById entry (falling back to the list entry before
+ * the first detail fetch lands) so the health/config section isn't wiped
+ * back down to card-level data every poll. If the plugin has vanished from
+ * the payload (disabled at runtime, etc.) the stale content is kept rather
+ * than closing the dialog out from under the user.
  */
 function syncOpenPluginDetail() {
   const els = pluginDialogEls();
@@ -219,11 +366,65 @@ function syncOpenPluginDetail() {
   if (!plugin) return;
 
   paintPluginDialogHeader(els, plugin);
-  const nextHtml = pluginDetailBodyHtml(plugin);
+  const nextHtml = pluginDetailFullBodyHtml(detailById.get(id) || plugin);
   if (nextHtml !== els.body.innerHTML) {
     const scrollTop = els.body.scrollTop;
     els.body.innerHTML = nextHtml;
     els.body.scrollTop = scrollTop;
+  }
+}
+
+/**
+ * Refresh-now: POST /api/plugins/{id}/collect and re-render the dialog body
+ * from the fresh detail payload it returns — no separate GET round-trip.
+ * Non-destructive, so unlike restartContainer() there's no confirm step.
+ */
+async function refreshPluginNow(id, btn) {
+  if (!id) return;
+  btn.textContent = 'refreshing...';
+  btn.disabled = true;
+  btn.classList.remove('success', 'error');
+
+  const reset = () => {
+    btn.textContent = '↻ refresh now';
+    btn.classList.remove('success', 'error');
+    btn.disabled = false;
+  };
+
+  try {
+    const r = await authedFetch(apiUrl(`plugins/${encodeURIComponent(id)}/collect`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (r.status === 409) throw new Error('already running');
+    if (r.status === 429) throw new Error('rate limited');
+    if (r.status === 401) throw new Error('auth required');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+
+    const data = await r.json();
+    if (!data.demo) {
+      detailById.set(id, data);
+      const els = pluginDialogEls();
+      if (els.dialog.dataset.pluginId === id) {
+        paintPluginDialogHeader(els, data);
+        els.body.innerHTML = pluginDetailFullBodyHtml(data);
+      }
+    }
+
+    const freshBtn = document.querySelector('.plugin-refresh-btn') || btn;
+    freshBtn.textContent = '✓ refreshed';
+    freshBtn.classList.add('success');
+    freshBtn.disabled = true;
+    setTimeout(() => {
+      freshBtn.textContent = '↻ refresh now';
+      freshBtn.classList.remove('success');
+      freshBtn.disabled = false;
+    }, 3000);
+  } catch (e) {
+    btn.textContent = `✗ ${e.message}`;
+    btn.classList.add('error');
+    setTimeout(reset, 3000);
   }
 }
 
@@ -254,7 +455,9 @@ export function initPluginDetail() {
   });
 
   dialog.addEventListener('click', (e) => {
-    if (e.target === dialog || e.target.closest('.plugin-dialog-close')) closePluginDetail();
+    if (e.target === dialog || e.target.closest('.plugin-dialog-close')) { closePluginDetail(); return; }
+    const refreshBtn = e.target.closest('.plugin-refresh-btn');
+    if (refreshBtn) refreshPluginNow(dialog.dataset.pluginId, refreshBtn);
   });
   // Native Esc fires 'cancel' then 'close'; don't preventDefault() cancel or
   // Esc stops closing the dialog. Do the hash/focus cleanup on 'close' so it

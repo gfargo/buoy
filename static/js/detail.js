@@ -4,9 +4,22 @@
 
 import { authedFetch } from './auth.js';
 import { escapeHtml } from './escape.js';
+import { openLogViewer } from './logs.js';
 import { apiUrl } from './paths.js';
+import { formatRate } from './format.js';
 
 let currentDetail = null;
+let buoyConfig = null;
+
+/**
+ * detail.js is initialized before buoy.js finishes fetching /api/config
+ * (see initDetail() in buoy.js's init()), so the log viewer — which needs
+ * auth/logs/features to build its ticket + tail-depth flow — is handed the
+ * config once it's available rather than fetching its own copy.
+ */
+export function setDetailConfig(config) {
+  buoyConfig = config;
+}
 
 export function initDetail() {
   document.querySelectorAll('.gauge[data-detail]').forEach(gauge => {
@@ -59,6 +72,7 @@ async function openDetail(type) {
       case 'cpu': content.innerHTML = renderCpuDetail(d); break;
       case 'memory': content.innerHTML = renderMemoryDetail(d); break;
       case 'disk': content.innerHTML = renderDiskDetail(d); break;
+      case 'network': content.innerHTML = renderNetworkDetail(d); break;
       case 'gpu': content.innerHTML = renderGpuDetail(d); break;
       default: content.innerHTML = '';
     }
@@ -132,6 +146,88 @@ function renderDiskDetail(d) {
   return html;
 }
 
+// Non-running/unhealthy containers sort to the top so they're visible
+// without scrolling. Whitelisted lookups only — never derive a CSS class
+// from a raw Docker string (health/state values reach us from the daemon).
+const _HEALTH_DOT_CLASS = { unhealthy: 'unhealthy', starting: 'starting', healthy: '' };
+const _STATE_DOT_CLASS = { running: '' };
+
+function _dotClass(c) {
+  if (c.health && Object.hasOwn(_HEALTH_DOT_CLASS, c.health)) return _HEALTH_DOT_CLASS[c.health];
+  return Object.hasOwn(_STATE_DOT_CLASS, c.state) ? _STATE_DOT_CLASS[c.state] : 'stopped';
+}
+
+function _sortPriority(c) {
+  if (c.health === 'unhealthy') return 0;
+  if (c.state !== 'running') return 1;
+  if (c.health === 'starting') return 2;
+  return 3;
+}
+
+/**
+ * Order containers problem-first: unhealthy, then non-running, then
+ * starting, then everything else. Stable within each group.
+ */
+export function sortContainers(containers) {
+  return [...containers]
+    .map((c, i) => [c, i])
+    .sort((a, b) => _sortPriority(a[0]) - _sortPriority(b[0]) || a[1] - b[1])
+    .map(([c]) => c);
+}
+
+/**
+ * Render one container row. Every daemon-sourced string (name, status,
+ * cpu/mem) goes through escapeHtml; the dot's CSS class comes only from the
+ * whitelists above, never from string-concatenating `health`/`state` directly.
+ */
+export function containerRowHtml(c) {
+  const badge = _updateBadge(c.update_status);
+  const cpu = c.cpu_pct ?? '--';
+  const mem = c.mem_usage ?? '--';
+  // History is only fetched for running containers (see renderContainersDetail) —
+  // on a host with many one-shot/exited containers, firing one
+  // /api/container/<name>/history request per row on open would self-inflict
+  // 429s against the shared 60/60s rate limit. Omit data-ctr for the rest so
+  // the fetch loop's selector skips them entirely.
+  const uptimeAttr = c.state === 'running' ? ` data-ctr="${escapeHtml(c.name)}"` : '';
+  return `<div class="ctr" data-ctr-name="${escapeHtml(c.name)}">` +
+    `<div class="dot-sm ${_dotClass(c)}"></div>` +
+    `<div class="ctr-name">${escapeHtml(c.name)}</div>` +
+    `<div class="ctr-status" title="${escapeHtml(c.status || '')}">${escapeHtml(c.status || '')}</div>` +
+    `<div class="ctr-metrics">${escapeHtml(cpu)} &middot; ${escapeHtml(mem)}</div>` +
+    `<div class="ctr-uptime"${uptimeAttr}></div>${badge}</div>`;
+}
+
+function _containersHeaderText(containers) {
+  const running = containers.filter(c => c.state === 'running').length;
+  return `Containers (${running} running / ${containers.length} total)`;
+}
+
+function renderNetworkDetail(d) {
+  const net = d.net || {};
+  const interfaces = net.interfaces || [];
+  let html = `
+    <div class="detail-header">
+      <div class="detail-title">Network — Interfaces${net.primary ? ` (primary: ${escapeHtml(net.primary)})` : ''}</div>
+      <button class="detail-close">&#10005; close</button>
+    </div>`;
+
+  if (interfaces.length) {
+    html += `<table class="process-table"><thead><tr><th>Interface</th><th>Down</th><th>Up</th><th>Rx Err/Drop</th><th>Tx Err/Drop</th></tr></thead><tbody>`;
+    interfaces.forEach((iface) => {
+      const rx = formatRate(iface.rx_bytes_per_sec);
+      const tx = formatRate(iface.tx_bytes_per_sec);
+      const hasErrors = (iface.rx_errors || 0) + (iface.tx_errors || 0) + (iface.rx_dropped || 0) + (iface.tx_dropped || 0) > 0;
+      const errCls = hasErrors ? ' class="warn"' : '';
+      html += `<tr><td>${escapeHtml(iface.name)}</td><td>&#8595; ${rx.value} ${rx.unit}</td><td>&#8593; ${tx.value} ${tx.unit}</td><td${errCls}>${iface.rx_errors || 0}/${iface.rx_dropped || 0}</td><td${errCls}>${iface.tx_errors || 0}/${iface.tx_dropped || 0}</td></tr>`;
+    });
+    html += `</tbody></table>`;
+  } else {
+    html += `<div style="color:var(--text-dim);font-size:0.7rem">No interfaces reporting</div>`;
+  }
+  return html;
+}
+
 function renderGpuDetail(d) {
   const gpuDetail = d.gpu || {};
   const gpus = gpuDetail.gpus || [];
@@ -181,35 +277,107 @@ function renderGpuDetail(d) {
 }
 
 function renderContainersDetail() {
-  const containers = window._latestContainers || [];
+  const containers = sortContainers(window._latestContainers || []);
   let html = `
     <div class="detail-header">
-      <div class="detail-title">Running Containers (${containers.length})</div>
+      <div class="detail-title">${_containersHeaderText(containers)}</div>
       <button class="detail-close">&#10005; close</button>
     </div>`;
 
   if (containers.length) {
-    html += `<div class="container-grid">`;
-    containers.forEach(c => {
-      const badge = _updateBadge(c.update_status);
-      html += `<div class="ctr" data-ctr-name="${escapeHtml(c.name)}"><div class="dot-sm"></div><div class="ctr-name">${escapeHtml(c.name)}</div><div class="ctr-uptime" data-ctr="${escapeHtml(c.name)}"></div>${badge}</div>`;
-    });
-    html += `</div>`;
+    html += `<div class="container-grid">${containers.map(containerRowHtml).join('')}</div>`;
     html += `<div id="container-inspect-panel"></div>`;
 
-    // Fire off history fetches after the DOM settles
+    // Fire off history fetches after the DOM settles (skip when the server
+    // has told us history is disabled — the endpoint 404s in that case).
     setTimeout(() => {
-      document.querySelectorAll('.ctr-uptime[data-ctr]').forEach(el => {
-        loadContainerHistory(el.dataset.ctr, el);
-      });
+      if (buoyConfig?.features?.history !== false) {
+        document.querySelectorAll('.ctr-uptime[data-ctr]').forEach(el => {
+          loadContainerHistory(el.dataset.ctr, el);
+        });
+      }
       document.querySelectorAll('.ctr[data-ctr-name]').forEach(el => {
         el.addEventListener('click', () => inspectContainer(el.dataset.ctrName));
       });
     }, 0);
   } else {
-    html += `<div style="color:var(--text-dim);font-size:0.7rem">No containers running</div>`;
+    html += `<div style="color:var(--text-dim);font-size:0.7rem">No containers found</div>`;
   }
   return html;
+}
+
+function _applyRowUpdate(row, c) {
+  const dot = row.querySelector('.dot-sm');
+  if (dot) dot.className = `dot-sm ${_dotClass(c)}`;
+  const statusEl = row.querySelector('.ctr-status');
+  if (statusEl) {
+    statusEl.textContent = c.status || '';
+    statusEl.title = c.status || '';
+  }
+  const metricsEl = row.querySelector('.ctr-metrics');
+  if (metricsEl) metricsEl.textContent = `${c.cpu_pct ?? '--'} · ${c.mem_usage ?? '--'}`;
+
+  // A stopped/exited row has no data-ctr (see containerRowHtml) and so never
+  // got a history fetch on initial render. If it transitions to running on a
+  // later tick, wire it up now instead of leaving the uptime bar empty until
+  // the panel is closed and reopened.
+  const uptimeEl = row.querySelector('.ctr-uptime');
+  if (uptimeEl && c.state === 'running' && !uptimeEl.hasAttribute('data-ctr')) {
+    uptimeEl.setAttribute('data-ctr', c.name);
+    if (buoyConfig?.features?.history !== false) loadContainerHistory(c.name, uptimeEl);
+  }
+}
+
+/**
+ * Called on every stats tick (WebSocket or poll) while the containers panel
+ * is open. Updates existing rows in place (dot/status/cpu/mem) instead of
+ * re-rendering — a full re-render every 5s would wipe the uptime bars and
+ * re-fire one history fetch per container. When the set of names changes,
+ * rows are added/removed in place rather than blowing away
+ * `#container-inspect-panel` (and any open logs view) with a full
+ * `content.innerHTML` replace. New rows are appended rather than re-sorted
+ * into position, which is an acceptable tradeoff to keep an open panel alive.
+ */
+export function refreshContainersPanel(containers) {
+  if (currentDetail !== 'containers') return;
+  const content = document.getElementById('detail-content');
+  if (!content) return;
+
+  const sorted = sortContainers(containers || []);
+  const grid = content.querySelector('.container-grid');
+
+  if (!grid || !sorted.length) {
+    content.innerHTML = renderContainersDetail();
+    return;
+  }
+
+  const title = content.querySelector('.detail-title');
+  if (title) title.textContent = _containersHeaderText(sorted);
+
+  const rows = Array.from(grid.querySelectorAll('.ctr[data-ctr-name]'));
+  const existingNames = new Set(rows.map(el => el.dataset.ctrName));
+  const newNames = new Set(sorted.map(c => c.name));
+
+  rows.forEach(row => {
+    if (!newNames.has(row.dataset.ctrName)) row.remove();
+  });
+
+  const byName = new Map(sorted.map(c => [c.name, c]));
+  grid.querySelectorAll('.ctr[data-ctr-name]').forEach(row => {
+    const c = byName.get(row.dataset.ctrName);
+    if (c) _applyRowUpdate(row, c);
+  });
+
+  sorted.forEach(c => {
+    if (existingNames.has(c.name)) return;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = containerRowHtml(c);
+    const rowEl = wrapper.firstElementChild;
+    grid.appendChild(rowEl);
+    rowEl.addEventListener('click', () => inspectContainer(rowEl.dataset.ctrName));
+    const uptimeEl = rowEl.querySelector('.ctr-uptime[data-ctr]');
+    if (uptimeEl) loadContainerHistory(uptimeEl.dataset.ctr, uptimeEl);
+  });
 }
 
 /**
@@ -327,9 +495,10 @@ function renderContainerInspect(d, name) {
   const blockIO = res.block_io || 'N/A';
   const imageAge = formatAge(d.image_created);
 
-  // Find update_status from the containers list (already in ws data)
+  // Find update_status/health from the containers list (already in ws data)
   const ctrData = (window._latestContainers || []).find(c => c.name === name);
   const updateStatus = ctrData?.update_status;
+  const health = ctrData?.health;
 
   return `<div class="ctr-inspect">
     <div class="ctr-inspect-header">
@@ -338,6 +507,7 @@ function renderContainerInspect(d, name) {
     </div>
     <div class="ctr-inspect-grid">
       <div class="ctr-stat"><span class="ctr-stat-label">Status</span><span class="ctr-stat-value">${escapeHtml(status)}</span></div>
+      ${health ? `<div class="ctr-stat"><span class="ctr-stat-label">Health</span><span class="ctr-stat-value">${escapeHtml(health)}</span></div>` : ''}
       <div class="ctr-stat"><span class="ctr-stat-label">Started</span><span class="ctr-stat-value">${escapeHtml(started)}</span></div>
       <div class="ctr-stat"><span class="ctr-stat-label">Image</span><span class="ctr-stat-value ctr-image">${escapeHtml(image)}</span></div>
       ${imageAge ? `<div class="ctr-stat"><span class="ctr-stat-label">Image Age</span><span class="ctr-stat-value">${escapeHtml(imageAge)}</span></div>` : ''}
@@ -413,27 +583,11 @@ async function restartContainer(name, btn) {
 }
 
 /**
- * Show recent logs for a container inline.
+ * Toggle a live log viewer for the container inline (WS streaming with a
+ * one-shot fallback — see logs.js).
  */
-async function showContainerLogs(name) {
+function showContainerLogs(name) {
   const panel = document.getElementById('container-inspect-panel');
   if (!panel) return;
-
-  try {
-    const r = await authedFetch(apiUrl(`container/${encodeURIComponent(name)}/logs`));
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-
-    const lines = (d.lines || []).join('\n');
-    const existing = panel.querySelector('.ctr-logs');
-    if (existing) { existing.remove(); return; }
-
-    const logsDiv = document.createElement('div');
-    logsDiv.className = 'ctr-logs';
-    logsDiv.innerHTML = `<div class="ctr-logs-header">Logs — ${escapeHtml(name)} (last ${d.lines?.length || 0} lines)<button class="ctr-logs-close">&#10005;</button></div><pre class="ctr-logs-pre">${escapeHtml(lines)}</pre>`;
-    logsDiv.querySelector('.ctr-logs-close')?.addEventListener('click', () => logsDiv.remove());
-    panel.appendChild(logsDiv);
-  } catch (e) {
-    // Silently fail
-  }
+  openLogViewer(name, panel, buoyConfig);
 }
